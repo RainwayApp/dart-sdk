@@ -348,7 +348,7 @@ template("build_gen_snapshot_dart_io") {
       "*_test.cc",
       "*_test.h",
     ]
-    if (!is_mac && !is_ios) {
+    if (!is_mac && !is_ios && !is_tvos) {
       # Dart tree uses *_macos.* instead of *_mac.*
       custom_sources_filter += [
         "*_macos.h",
@@ -438,7 +438,7 @@ template("dart_io") {
       "*_test.h",
       "builtin_gen_snapshot.cc",
     ]
-    if (!is_mac && !is_ios) {
+    if (!is_mac && !is_ios && !is_tvos) {
       # Dart tree uses *_macos.* instead of *_mac.*
       custom_sources_filter += [
         "*_macos.h",
@@ -449,7 +449,7 @@ template("dart_io") {
 
     defines = []
     deps = [ "//third_party/zlib" ] + extra_deps
-    if (is_mac || is_ios) {
+    if (is_mac || is_ios || is_tvos) {
       libs = [
         "CoreFoundation.framework",
         "Security.framework",

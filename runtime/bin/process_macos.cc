@@ -5,6 +5,15 @@
 #include "platform/globals.h"
 #if defined(HOST_OS_MACOS)
 
+// fork() is marked "prohibited" on tvOS and watchOS.
+#if defined(__APPLE__) && (TARGET_OS_TV || TARGET_OS_WATCH)
+#define TRY_FORK() ((errno = ENOSYS), -1)
+#define TRY_EXECVP(filename, argv) ((errno = ENOSYS), -1)
+#else
+#define TRY_FORK() (TEMP_FAILURE_RETRY(fork()))
+#define TRY_EXECVP(filename, argv) (execvp(filename, argv))
+#endif
+
 #include "bin/process.h"
 
 #if !HOST_OS_IOS
@@ -161,7 +170,7 @@ class ExitCodeHandler {
     running_ = false;
 
     // Fork to wake up waitpid.
-    if (TEMP_FAILURE_RETRY(fork()) == 0) {
+    if (TRY_FORK() == 0) {
       exit(0);
     }
 
@@ -299,7 +308,7 @@ class ProcessStarter {
     }
 
     // Fork to create the new process.
-    pid_t pid = TEMP_FAILURE_RETRY(fork());
+    pid_t pid = TRY_FORK();
     if (pid < 0) {
       // Failed to fork.
       return CleanupAndReturnError();
@@ -469,7 +478,7 @@ class ProcessStarter {
     }
 #endif
 
-    execvp(path_, const_cast<char* const*>(program_arguments_));
+    TRY_EXECVP(path_, const_cast<char* const*>(program_arguments_));
     ReportChildError();
   }
 
@@ -490,7 +499,7 @@ class ProcessStarter {
       ASSERT(mode_ == kDetachedWithStdio);
     }
     // Fork once more to start a new session.
-    pid_t pid = TEMP_FAILURE_RETRY(fork());
+    pid_t pid = TRY_FORK();
     if (pid < 0) {
       ReportChildError();
     } else if (pid == 0) {
@@ -499,7 +508,7 @@ class ProcessStarter {
         ReportChildError();
       } else {
         // Do a final fork to not be the session leader.
-        pid = TEMP_FAILURE_RETRY(fork());
+        pid = TRY_FORK();
         if (pid < 0) {
           ReportChildError();
         } else if (pid == 0) {
@@ -524,7 +533,7 @@ class ProcessStarter {
 
           // Report the final PID and do the exec.
           ReportPid(getpid());  // getpid cannot fail.
-          execvp(path_, const_cast<char* const*>(program_arguments_));
+          TRY_EXECVP(path_, const_cast<char* const*>(program_arguments_));
           ReportChildError();
         } else {
           // Exit the intermeiate process.
@@ -1089,4 +1098,5 @@ void Process::ClearSignalHandler(intptr_t signal, Dart_Port port) {
 }  // namespace bin
 }  // namespace dart
 
+#undef TRY_FORK
 #endif  // defined(HOST_OS_MACOS)
