@@ -50,7 +50,7 @@ def Main():
         return -1
 
     with open(options.output, "w") as output_file:
-        if options.target_os in ["mac", "ios"]:
+        if options.target_os in ["mac", "ios", "tvos"]:
             if options.executable:
                 output_file.write(".text\n")
             else:
@@ -90,7 +90,7 @@ def Main():
                     output_file.write(".byte %d\n" % (byte if isinstance(byte, int) else ord(byte)))
                     size += 1
 
-        if options.target_os not in ["mac", "ios", "win"]:
+        if options.target_os not in ["mac", "ios", "tvos", "win"]:
             output_file.write(".size {0}, .-{0}\n".format(options.symbol_name))
 
         if options.size_symbol_name:
@@ -112,7 +112,7 @@ def Main():
                 else:
                     output_file.write("dword %d\n" % size)
             else:
-                if options.target_os in ["mac", "ios"]:
+                if options.target_os in ["mac", "ios", "tvos"]:
                     output_file.write(
                         ".global _%s\n" % options.size_symbol_name)
                     output_file.write("_%s:\n" % options.size_symbol_name)
