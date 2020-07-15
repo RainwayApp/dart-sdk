@@ -6,6 +6,10 @@
 
 part of 'experiments.dart';
 
+/// The current version of the Dart language (or, for non-stable releases, the
+/// version of the language currently in the process of being developed).
+const _currentVersion = '2.9.0';
+
 /// A map containing information about all known experimental flags.
 const _knownFeatures = <String, ExperimentalFeature>{
   EnableString.constant_update_2018: ExperimentalFeatures.constant_update_2018,
@@ -19,11 +23,6 @@ const _knownFeatures = <String, ExperimentalFeature>{
   EnableString.spread_collections: ExperimentalFeatures.spread_collections,
   EnableString.triple_shift: ExperimentalFeatures.triple_shift,
   EnableString.variance: ExperimentalFeatures.variance,
-
-  // ignore: deprecated_member_use_from_same_package
-  EnableString.bogus_disabled: ExperimentalFeatures.bogus_disabled,
-  // ignore: deprecated_member_use_from_same_package
-  EnableString.bogus_enabled: ExperimentalFeatures.bogus_enabled,
 };
 
 List<bool> _buildExperimentalFlagsArray() => <bool>[
@@ -36,8 +35,6 @@ List<bool> _buildExperimentalFlagsArray() => <bool>[
       true, // spread-collections
       IsEnabledByDefault.triple_shift,
       IsEnabledByDefault.variance,
-      false, // bogus-disabled
-      true, // bogus-enabled
     ];
 
 /// Constant strings for enabling each of the currently known experimental
@@ -69,95 +66,89 @@ class EnableString {
 
   /// String to enable the experiment "variance"
   static const String variance = 'variance';
-
-  /// String to enable the experiment "bogus-disabled"
-  @deprecated
-  static const String bogus_disabled = 'bogus-disabled';
-
-  /// String to enable the experiment "bogus-enabled"
-  @deprecated
-  static const String bogus_enabled = 'bogus-enabled';
 }
 
 class ExperimentalFeatures {
   static const constant_update_2018 = ExperimentalFeature(
-      0,
-      EnableString.constant_update_2018,
-      IsEnabledByDefault.constant_update_2018,
-      IsExpired.constant_update_2018,
-      'Enhanced constant expressions',
-      firstSupportedVersion: '2.4.1');
+    index: 0,
+    enableString: EnableString.constant_update_2018,
+    isEnabledByDefault: IsEnabledByDefault.constant_update_2018,
+    isExpired: IsExpired.constant_update_2018,
+    documentation: 'Enhanced constant expressions',
+    firstSupportedVersion: '2.4.1',
+  );
 
   static const control_flow_collections = ExperimentalFeature(
-      1,
-      EnableString.control_flow_collections,
-      IsEnabledByDefault.control_flow_collections,
-      IsExpired.control_flow_collections,
-      'Control Flow Collections',
-      firstSupportedVersion: '2.2.2');
+    index: 1,
+    enableString: EnableString.control_flow_collections,
+    isEnabledByDefault: IsEnabledByDefault.control_flow_collections,
+    isExpired: IsExpired.control_flow_collections,
+    documentation: 'Control Flow Collections',
+    firstSupportedVersion: '2.2.2',
+  );
 
   static const extension_methods = ExperimentalFeature(
-      2,
-      EnableString.extension_methods,
-      IsEnabledByDefault.extension_methods,
-      IsExpired.extension_methods,
-      'Extension Methods',
-      firstSupportedVersion: '2.6.0');
+    index: 2,
+    enableString: EnableString.extension_methods,
+    isEnabledByDefault: IsEnabledByDefault.extension_methods,
+    isExpired: IsExpired.extension_methods,
+    documentation: 'Extension Methods',
+    firstSupportedVersion: '2.6.0',
+  );
 
   static const non_nullable = ExperimentalFeature(
-      3,
-      EnableString.non_nullable,
-      IsEnabledByDefault.non_nullable,
-      IsExpired.non_nullable,
-      'Non Nullable by default');
+    index: 3,
+    enableString: EnableString.non_nullable,
+    isEnabledByDefault: IsEnabledByDefault.non_nullable,
+    isExpired: IsExpired.non_nullable,
+    documentation: 'Non Nullable by default',
+    firstSupportedVersion: null,
+  );
 
   static const nonfunction_type_aliases = ExperimentalFeature(
-      4,
-      EnableString.nonfunction_type_aliases,
-      IsEnabledByDefault.nonfunction_type_aliases,
-      IsExpired.nonfunction_type_aliases,
-      'Type aliases define a <type>, not just a <functionType>.');
+    index: 4,
+    enableString: EnableString.nonfunction_type_aliases,
+    isEnabledByDefault: IsEnabledByDefault.nonfunction_type_aliases,
+    isExpired: IsExpired.nonfunction_type_aliases,
+    documentation: 'Type aliases define a <type>, not just a <functionType>',
+    firstSupportedVersion: null,
+  );
 
-  static const set_literals = ExperimentalFeature(5, EnableString.set_literals,
-      IsEnabledByDefault.set_literals, IsExpired.set_literals, 'Set Literals',
-      firstSupportedVersion: '2.2.0');
+  static const set_literals = ExperimentalFeature(
+    index: 5,
+    enableString: EnableString.set_literals,
+    isEnabledByDefault: IsEnabledByDefault.set_literals,
+    isExpired: IsExpired.set_literals,
+    documentation: 'Set Literals',
+    firstSupportedVersion: '2.2.0',
+  );
 
   static const spread_collections = ExperimentalFeature(
-      6,
-      EnableString.spread_collections,
-      IsEnabledByDefault.spread_collections,
-      IsExpired.spread_collections,
-      'Spread Collections',
-      firstSupportedVersion: '2.2.2');
+    index: 6,
+    enableString: EnableString.spread_collections,
+    isEnabledByDefault: IsEnabledByDefault.spread_collections,
+    isExpired: IsExpired.spread_collections,
+    documentation: 'Spread Collections',
+    firstSupportedVersion: '2.2.2',
+  );
 
   static const triple_shift = ExperimentalFeature(
-      7,
-      EnableString.triple_shift,
-      IsEnabledByDefault.triple_shift,
-      IsExpired.triple_shift,
-      'Triple-shift operator');
+    index: 7,
+    enableString: EnableString.triple_shift,
+    isEnabledByDefault: IsEnabledByDefault.triple_shift,
+    isExpired: IsExpired.triple_shift,
+    documentation: 'Triple-shift operator',
+    firstSupportedVersion: null,
+  );
 
-  static const variance = ExperimentalFeature(8, EnableString.variance,
-      IsEnabledByDefault.variance, IsExpired.variance, 'Sound variance.');
-
-  @deprecated
-  static const bogus_disabled = ExperimentalFeature(
-      9,
-      // ignore: deprecated_member_use_from_same_package
-      EnableString.bogus_disabled,
-      IsEnabledByDefault.bogus_disabled,
-      IsExpired.bogus_disabled,
-      null);
-
-  @deprecated
-  static const bogus_enabled = ExperimentalFeature(
-      10,
-      // ignore: deprecated_member_use_from_same_package
-      EnableString.bogus_enabled,
-      IsEnabledByDefault.bogus_enabled,
-      IsExpired.bogus_enabled,
-      null,
-      firstSupportedVersion: '1.0.0');
+  static const variance = ExperimentalFeature(
+    index: 8,
+    enableString: EnableString.variance,
+    isEnabledByDefault: IsEnabledByDefault.variance,
+    isExpired: IsExpired.variance,
+    documentation: 'Sound variance',
+    firstSupportedVersion: null,
+  );
 }
 
 /// Constant bools indicating whether each experimental flag is currently
@@ -189,14 +180,6 @@ class IsEnabledByDefault {
 
   /// Default state of the experiment "variance"
   static const bool variance = false;
-
-  /// Default state of the experiment "bogus-disabled"
-  @deprecated
-  static const bool bogus_disabled = false;
-
-  /// Default state of the experiment "bogus-enabled"
-  @deprecated
-  static const bool bogus_enabled = true;
 }
 
 /// Constant bools indicating whether each experimental flag is currently
@@ -229,23 +212,9 @@ class IsExpired {
 
   /// Expiration status of the experiment "variance"
   static const bool variance = false;
-
-  /// Expiration status of the experiment "bogus-disabled"
-  static const bool bogus_disabled = true;
-
-  /// Expiration status of the experiment "bogus-enabled"
-  static const bool bogus_enabled = true;
 }
 
 mixin _CurrentState {
-  /// Current state for the flag "bogus-disabled"
-  @deprecated
-  bool get bogus_disabled => isEnabled(ExperimentalFeatures.bogus_disabled);
-
-  /// Current state for the flag "bogus-enabled"
-  @deprecated
-  bool get bogus_enabled => isEnabled(ExperimentalFeatures.bogus_enabled);
-
   /// Current state for the flag "constant-update-2018"
   bool get constant_update_2018 =>
       isEnabled(ExperimentalFeatures.constant_update_2018);

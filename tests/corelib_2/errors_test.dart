@@ -39,15 +39,14 @@ main() {
   Expect.equals("RangeError: message: 42",
       new RangeError.value(42, null, "message").toString());
 
-  Expect.equals("RangeError: Invalid value: Not in range 2..9, inclusive: 42",
+  Expect.equals("RangeError: Invalid value: Not in inclusive range 2..9: 42",
       new RangeError.range(42, 2, 9).toString());
   Expect.equals(
-      "RangeError (foo): Invalid value: Not in range 2..9, "
-      "inclusive: 42",
+      "RangeError (foo): Invalid value: Not in inclusive range 2..9: 42",
       new RangeError.range(42, 2, 9, "foo").toString());
-  Expect.equals("RangeError (foo): message: Not in range 2..9, inclusive: 42",
+  Expect.equals("RangeError (foo): message: Not in inclusive range 2..9: 42",
       new RangeError.range(42, 2, 9, "foo", "message").toString());
-  Expect.equals("RangeError: message: Not in range 2..9, inclusive: 42",
+  Expect.equals("RangeError: message: Not in inclusive range 2..9: 42",
       new RangeError.range(42, 2, 9, null, "message").toString());
 
   Expect.equals(
@@ -74,4 +73,27 @@ main() {
       "RangeError: Index out of range: "
       "index must not be negative: -5",
       new RangeError.index(-5, [1, 2, 3]).toString());
+
+  Expect.equals(42, ArgumentError.checkNotNull(42));
+  Expect.equals(42, ArgumentError.checkNotNull(42, "name"));
+  Expect.throwsArgumentError(() => ArgumentError.checkNotNull(null));
+
+  Expect.equals(1, RangeError.checkNotNegative(1));
+  Expect.equals(0, RangeError.checkNotNegative(0));
+  Expect.throwsRangeError(() => RangeError.checkNotNegative(-1));
+
+  Expect.equals(1, RangeError.checkValueInInterval(1, 0, 2));
+  Expect.equals(1, RangeError.checkValueInInterval(1, 1, 2));
+  Expect.equals(1, RangeError.checkValueInInterval(1, 0, 1));
+  Expect.equals(1, RangeError.checkValueInInterval(1, 1, 1));
+  Expect.throwsRangeError(() => RangeError.checkValueInInterval(1, 2, 3));
+  Expect.throwsRangeError(() => RangeError.checkValueInInterval(1, 1, 0));
+  Expect.throwsRangeError(() => RangeError.checkValueInInterval(0, 1, 0));
+
+  Expect.equals(1, RangeError.checkValidIndex(1, [1, 2]));
+  Expect.equals(1, RangeError.checkValidIndex(1, null, null, 2));
+  Expect.throwsRangeError(() => RangeError.checkValidIndex(1, []));
+  Expect.throwsRangeError(() => RangeError.checkValidIndex(1, null, null, 1));
+  Expect.throwsRangeError(() => RangeError.checkValidIndex(-1, [1, 2, 3]));
+  Expect.throwsRangeError(() => RangeError.checkValidIndex(-1, null, null, 3));
 }

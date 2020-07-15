@@ -12,7 +12,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'utils.dart';
 
-main() {
+void main() {
   defineReflectiveTests(ErrorUpgradeFailsCli);
 }
 
@@ -39,10 +39,9 @@ class ErrorUpgradeFailsCli {
     exitHandler = savedExitHandler;
   }
 
-  test_once() async {
-    String testDir =
-        path.join(testDirectory, 'data', 'error_upgrade_fails_cli');
-    Driver driver = Driver(isTesting: true);
+  Future<void> test_once() async {
+    var testDir = path.join(testDirectory, 'data', 'error_upgrade_fails_cli');
+    var driver = Driver(isTesting: true);
     await driver.start([path.join(testDir, 'foo.dart')]);
 
     expect(exitCode, 3);

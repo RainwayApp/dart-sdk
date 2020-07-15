@@ -158,7 +158,7 @@ class Flag {
     OptionHandler option_handler_;
   };
   FlagType type_;
-  bool changed_;
+  bool changed_ = false;
 };
 
 Flag* Flags::Lookup(const char* name) {
@@ -291,7 +291,7 @@ bool Flags::SetFlagFromString(Flag* flag, const char* argument) {
       break;
     }
     case Flag::kString: {
-      *flag->charp_ptr_ = argument == NULL ? NULL : strdup(argument);
+      *flag->charp_ptr_ = argument == NULL ? NULL : Utils::StrDup(argument);
       break;
     }
     case Flag::kInteger: {
@@ -423,7 +423,7 @@ int Flags::CompareFlagNames(const void* left, const void* right) {
 char* Flags::ProcessCommandLineFlags(int number_of_vm_flags,
                                      const char** vm_flags) {
   if (initialized_) {
-    return strdup("Flags already set");
+    return Utils::StrDup("Flags already set");
   }
 
   qsort(flags_, num_flags_, sizeof flags_[0], CompareFlagNames);
@@ -487,9 +487,6 @@ void Flags::PrintFlags() {
 
 #ifndef PRODUCT
 void Flags::PrintFlagToJSONArray(JSONArray* jsarr, const Flag* flag) {
-  if (!FLAG_support_service) {
-    return;
-  }
   if (flag->IsUnrecognized() || flag->type_ == Flag::kFlagHandler ||
       flag->type_ == Flag::kOptionHandler) {
     return;
@@ -531,9 +528,6 @@ void Flags::PrintFlagToJSONArray(JSONArray* jsarr, const Flag* flag) {
 }
 
 void Flags::PrintJSON(JSONStream* js) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject jsobj(js);
   jsobj.AddProperty("type", "FlagList");
   JSONArray jsarr(&jsobj, "flags");

@@ -2,19 +2,16 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'package:analyzer/dart/analysis/features.dart';
-import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/engine.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../../generated/test_support.dart';
+import '../dart/constant/potentially_constant_test.dart';
 import '../dart/resolution/driver_resolution.dart';
 
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(UseOfVoidResultTest);
-    defineReflectiveTests(UseOfVoidResultWithExtensionMethodsTest);
     defineReflectiveTests(UseOfVoidResultTest_NonNullable);
   });
 }
@@ -98,10 +95,26 @@ void main() {
 
   test_await() async {
     await assertNoErrorsInCode('''
-main() async {
-  void x;
+main(void x) async {
   await x;
-}''');
+}
+''');
+  }
+
+  test_extensionApplication() async {
+    await assertErrorsInCode('''
+extension E on String {
+  int get g => 0;
+}
+
+void f() {}
+
+main() {
+  E(f()).g;
+}
+''', [
+      error(StaticWarningCode.USE_OF_VOID_RESULT, 71, 3),
+    ]);
   }
 
   test_implicitReturnValue() async {
@@ -546,6 +559,20 @@ void main() {
     ]);
   }
 
+  test_useOfVoidReturnInExtensionMethod() async {
+    await assertErrorsInCode('''
+extension on void {
+  testVoid() {
+    // No access on void. Static type of `this` is void!
+    this.toString();
+  }
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 22, 8),
+      error(StaticWarningCode.USE_OF_VOID_RESULT, 96, 4),
+    ]);
+  }
+
   @failingTest
   test_useOfVoidReturnInNonVoidFunctionError() async {
     // TODO(mfairhurst) Get this test to pass once codebase is compliant.
@@ -700,63 +727,25 @@ main(void x) sync* {
 }
 
 @reflectiveTest
-class UseOfVoidResultTest_NonNullable extends DriverResolutionTest {
-  @override
-  AnalysisOptionsImpl get analysisOptions =>
-      AnalysisOptionsImpl()..enabledExperiments = [EnableString.non_nullable];
-
-  test_bang_nonVoid() async {
-    await assertNoErrorsInCode(r'''
-int? f() => 1;
-g() {
-  f()!;
+class UseOfVoidResultTest_NonNullable extends DriverResolutionTest
+    with WithNullSafetyMixin {
+  test_await() async {
+    await assertErrorsInCode('''
+main(void x) async {
+  await x;
 }
-''');
+''', [
+      error(StaticWarningCode.USE_OF_VOID_RESULT, 29, 1),
+    ]);
   }
 
-  test_bang_void() async {
+  test_nullCheck() async {
     await assertErrorsInCode(r'''
-void f() => 1;
-g() {
-  f()!;
+f(void x) {
+  x!;
 }
-''', [ExpectedError(StaticWarningCode.USE_OF_VOID_RESULT, 23, 4)]);
-  }
-}
+''', [ExpectedError(StaticWarningCode.USE_OF_VOID_RESULT, 14, 2)]);
 
-@reflectiveTest
-class UseOfVoidResultWithExtensionMethodsTest extends UseOfVoidResultTest {
-  @override
-  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..contextFeatures = FeatureSet.forTesting(
-        sdkVersion: '2.3.0', additionalFeatures: [Feature.extension_methods]);
-
-  test_useOfVoidReturnInExtensionMethod() async {
-    await assertErrorsInCode('''
-extension on void {
-  testVoid() {
-    // No access on void. Static type of `this` is void!
-    this.toString();
-  }
-}
-''', [
-      error(StaticWarningCode.USE_OF_VOID_RESULT, 96, 4),
-    ]);
-  }
-
-  test_void() async {
-    await assertErrorsInCode('''
-extension E on String {
-  int get g => 0;
-}
-
-void f() {}
-
-main() {
-  E(f()).g;
-}
-''', [
-      error(StaticWarningCode.USE_OF_VOID_RESULT, 71, 3),
-    ]);
+    assertType(findNode.postfix('x!'), 'void');
   }
 }

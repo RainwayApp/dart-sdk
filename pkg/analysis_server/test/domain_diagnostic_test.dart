@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'analysis_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(DiagnosticDomainTest);
   });
@@ -19,17 +19,16 @@ main() {
 class DiagnosticDomainTest extends AbstractAnalysisTest {
   @override
   void setUp() {
-    generateSummaryFiles = true;
     super.setUp();
     handler = DiagnosticDomainHandler(server);
     server.handlers = [handler];
   }
 
-  test_getDiagnostics() async {
+  Future<void> test_getDiagnostics() async {
     newFile('/project/pubspec.yaml', content: 'name: project');
     newFile('/project/bin/test.dart', content: 'main() {}');
 
-    server.setAnalysisRoots('0', [convertPath('/project')], [], {});
+    server.setAnalysisRoots('0', [convertPath('/project')], []);
 
     await server.onAnalysisComplete;
 
@@ -39,7 +38,7 @@ class DiagnosticDomainTest extends AbstractAnalysisTest {
 
     expect(result.contexts, hasLength(1));
 
-    ContextData context = result.contexts[0];
+    var context = result.contexts[0];
     expect(context.name, convertPath('/project'));
     expect(context.explicitFileCount, 1); /* test.dart */
 
@@ -48,7 +47,7 @@ class DiagnosticDomainTest extends AbstractAnalysisTest {
     expect(context.workItemQueueLength, isNotNull);
   }
 
-  test_getDiagnostics_noRoot() async {
+  Future<void> test_getDiagnostics_noRoot() async {
     var request = DiagnosticGetDiagnosticsParams().toRequest('0');
     var response = handler.handleRequest(request);
     var result = DiagnosticGetDiagnosticsResult.fromResponse(response);

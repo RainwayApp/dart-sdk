@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'code_actions_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AssistsCodeActionsTest);
   });
@@ -16,7 +16,7 @@ main() {
 
 @reflectiveTest
 class AssistsCodeActionsTest extends AbstractCodeActionsTest {
-  test_appliesCorrectEdits_withDocumentChangesSupport() async {
+  Future<void> test_appliesCorrectEdits_withDocumentChangesSupport() async {
     // This code should get an assist to add a show combinator.
     const content = '''
     import '[[dart:async]]';
@@ -40,7 +40,9 @@ class AssistsCodeActionsTest extends AbstractCodeActionsTest {
     final codeActions = await getCodeActions(mainFileUri.toString(),
         range: rangeFromMarkers(content));
     final assist = findEditAction(
-        codeActions, CodeActionKind.Refactor, "Add explicit 'show' combinator");
+        codeActions,
+        CodeActionKind('refactor.add.showCombinator'),
+        "Add explicit 'show' combinator");
 
     // Ensure the edit came back, and using documentChanges.
     expect(assist, isNotNull);
@@ -55,7 +57,7 @@ class AssistsCodeActionsTest extends AbstractCodeActionsTest {
     expect(contents[mainFilePath], equals(expectedContent));
   }
 
-  test_appliesCorrectEdits_withoutDocumentChangesSupport() async {
+  Future<void> test_appliesCorrectEdits_withoutDocumentChangesSupport() async {
     // This code should get an assist to add a show combinator.
     const content = '''
     import '[[dart:async]]';
@@ -77,7 +79,9 @@ class AssistsCodeActionsTest extends AbstractCodeActionsTest {
     final codeActions = await getCodeActions(mainFileUri.toString(),
         range: rangeFromMarkers(content));
     final assistAction = findEditAction(
-        codeActions, CodeActionKind.Refactor, "Add explicit 'show' combinator");
+        codeActions,
+        CodeActionKind('refactor.add.showCombinator'),
+        "Add explicit 'show' combinator");
 
     // Ensure the edit came back, and using changes.
     expect(assistAction, isNotNull);
@@ -92,7 +96,7 @@ class AssistsCodeActionsTest extends AbstractCodeActionsTest {
     expect(contents[mainFilePath], equals(expectedContent));
   }
 
-  test_nonDartFile() async {
+  Future<void> test_nonDartFile() async {
     await newFile(pubspecFilePath, content: simplePubspecContent);
     await initialize(
       textDocumentCapabilities: withCodeActionKinds(

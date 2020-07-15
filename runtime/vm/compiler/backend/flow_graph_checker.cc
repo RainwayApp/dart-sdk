@@ -2,7 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
 #if defined(DEBUG)
 
 #include "vm/compiler/backend/flow_graph_checker.h"
@@ -103,7 +102,7 @@ static bool IsControlFlow(Instruction* instruction) {
   return instruction->IsBranch() || instruction->IsGoto() ||
          instruction->IsIndirectGoto() || instruction->IsReturn() ||
          instruction->IsThrow() || instruction->IsReThrow() ||
-         instruction->IsStop() || instruction->IsTailCall();
+         instruction->IsTailCall();
 }
 
 // Asserts that arguments appear in environment at the right place.
@@ -474,4 +473,3 @@ void FlowGraphChecker::Check(const char* pass_name) {
 }  // namespace dart
 
 #endif  // defined(DEBUG)
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

@@ -172,8 +172,14 @@ class VMPage extends MatchingPage {
     app.vm.reload().then((serviceObject) {
       VM vm = serviceObject;
       container.children = <Element>[
-        new VMViewElement(vm, _vmrepository, app.events, app.notifications,
-                new IsolateRepository(app.vm), _scriptRepository,
+        new VMViewElement(
+                vm,
+                _vmrepository,
+                app.events,
+                app.notifications,
+                new IsolateRepository(app.vm),
+                new IsolateGroupRepository(app.vm),
+                _scriptRepository,
                 queue: app.queue)
             .element
       ];
@@ -1000,4 +1006,20 @@ class TimelineDashboardPage extends Page {
   }
 
   bool canVisit(Uri uri) => uri.path == 'timeline-dashboard';
+}
+
+class ProcessSnapshotPage extends Page {
+  ProcessSnapshotPage(app) : super(app);
+
+  void onInstall() {
+    element = new ProcessSnapshotElement(app.vm, app.events, app.notifications,
+            queue: app.queue)
+        .element;
+  }
+
+  void _visit(Uri uri) {
+    assert(canVisit(uri));
+  }
+
+  bool canVisit(Uri uri) => uri.path == 'process-snapshot';
 }

@@ -6,19 +6,24 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/element.dart';
+import 'package:analyzer/src/dart/element/extensions.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
+import 'package:analyzer/src/generated/utilities_dart.dart';
 
 class TopMergeHelper {
-  /**
-   * Merges two types into a single type.
-   * Compute the canonical representation of [T].
-   *
-   * https://github.com/dart-lang/language/
-   * See `accepted/future-releases/nnbd/feature-specification.md`
-   * See `#classes-defined-in-opted-in-libraries`
-   */
-  static DartType topMerge(DartType T, DartType S) {
+  final TypeSystemImpl typeSystem;
+
+  TopMergeHelper(this.typeSystem);
+
+  /// Merges two types into a single type.
+  /// Compute the canonical representation of [T].
+  ///
+  /// https://github.com/dart-lang/language/
+  /// See `accepted/future-releases/nnbd/feature-specification.md`
+  /// See `#classes-defined-in-opted-in-libraries`
+  DartType topMerge(DartType T, DartType S) {
     var T_nullability = T.nullabilitySuffix;
     var S_nullability = S.nullabilitySuffix;
 
@@ -38,6 +43,11 @@ class TopMergeHelper {
       return DynamicTypeImpl.instance;
     }
 
+    if (identical(T, NeverTypeImpl.instance) &&
+        identical(S, NeverTypeImpl.instance)) {
+      return NeverTypeImpl.instance;
+    }
+
     // NNBD_TOP_MERGE(void, void) = void
     var T_isVoid = identical(T, VoidTypeImpl.instance);
     var S_isVoid = identical(S, VoidTypeImpl.instance);
@@ -45,16 +55,26 @@ class TopMergeHelper {
       return VoidTypeImpl.instance;
     }
 
-    // NNBD_TOP_MERGE(void, Object?) = void
     // NNBD_TOP_MERGE(Object?, void) = void
-    if (T_isVoid && S_isObjectQuestion || T_isObjectQuestion && S_isVoid) {
-      return VoidTypeImpl.instance;
+    // NNBD_TOP_MERGE(void, Object?) = void
+    if (T_isObjectQuestion && S_isVoid || T_isVoid && S_isObjectQuestion) {
+      return typeSystem.objectQuestion;
     }
 
-    // NNBD_TOP_MERGE(void, dynamic) = void
+    // NNBD_TOP_MERGE(Object*, void) = void
+    // NNBD_TOP_MERGE(void, Object*) = void
+    var T_isObjectStar =
+        T_nullability == NullabilitySuffix.star && T.isDartCoreObject;
+    var S_isObjectStar =
+        S_nullability == NullabilitySuffix.star && S.isDartCoreObject;
+    if (T_isObjectStar && S_isVoid || T_isVoid && S_isObjectStar) {
+      return typeSystem.objectQuestion;
+    }
+
     // NNBD_TOP_MERGE(dynamic, void) = void
-    if (T_isVoid && S_isDynamic || T_isDynamic && S_isVoid) {
-      return VoidTypeImpl.instance;
+    // NNBD_TOP_MERGE(void, dynamic) = void
+    if (T_isDynamic && S_isVoid || T_isVoid && S_isDynamic) {
+      return typeSystem.objectQuestion;
     }
 
     // NNBD_TOP_MERGE(Object?, dynamic) = Object?
@@ -64,6 +84,12 @@ class TopMergeHelper {
     }
     if (T_isDynamic && S_isObjectQuestion) {
       return S;
+    }
+
+    // NNBD_TOP_MERGE(Object*, dynamic) = Object?
+    // NNBD_TOP_MERGE(dynamic, Object*) = Object?
+    if (T_isObjectStar && S_isDynamic || T_isDynamic && S_isObjectStar) {
+      return typeSystem.objectQuestion;
     }
 
     // NNBD_TOP_MERGE(Never*, Null) = Null
@@ -144,7 +170,7 @@ class TopMergeHelper {
     throw _TopMergeStateError(T, S, 'Unexpected pair');
   }
 
-  static FunctionTypeImpl _functionTypes(FunctionType T, FunctionType S) {
+  FunctionTypeImpl _functionTypes(FunctionType T, FunctionType S) {
     var T_typeParameters = T.typeFormals;
     var S_typeParameters = S.typeFormals;
     if (T_typeParameters.length != S_typeParameters.length) {
@@ -191,13 +217,8 @@ class TopMergeHelper {
       var T_parameter = T_parameters[i];
       var S_parameter = S_parameters[i];
 
-      // ignore: deprecated_member_use_from_same_package
-      var T_kind = T_parameter.parameterKind;
-
-      // ignore: deprecated_member_use_from_same_package
-      var S_kind = S_parameter.parameterKind;
-
-      if (T_kind != S_kind) {
+      var R_kind = _parameterKind(T_parameter, S_parameter);
+      if (R_kind == null) {
         throw _TopMergeStateError(T, S, 'Different formal parameter kinds');
       }
 
@@ -205,11 +226,37 @@ class TopMergeHelper {
         throw _TopMergeStateError(T, S, 'Different named parameter names');
       }
 
-      var R_type = mergeTypes(T_parameter.type, S_parameter.type);
-      R_parameters[i] = ParameterElementImpl.synthetic(
-        T_parameter.name,
-        R_type,
-        T_kind,
+      DartType R_type;
+
+      // Given two corresponding parameters of type `T1` and `T2`, where at least
+      // one of the parameters is covariant:
+      var T_isCovariant = T_parameter.isCovariant;
+      var S_isCovariant = S_parameter.isCovariant;
+      var R_isCovariant = T_isCovariant || S_isCovariant;
+      if (R_isCovariant) {
+        var T1 = T_parameter.type;
+        var T2 = S_parameter.type;
+        var T1_isSubtype = typeSystem.isSubtypeOf2(T1, T2);
+        var T2_isSubtype = typeSystem.isSubtypeOf2(T2, T1);
+        if (T1_isSubtype && T2_isSubtype) {
+          // if `T1 <: T2` and `T2 <: T1`, then the result is
+          // `NNBD_TOP_MERGE(T1, T2)`, and it is covariant.
+          R_type = mergeTypes(T_parameter.type, S_parameter.type);
+        } else if (T1_isSubtype) {
+          // otherwise, if `T1 <: T2`, then the result is
+          // `T2` and it is covariant.
+          R_type = T2;
+        } else {
+          // otherwise, the result is `T1` and it is covariant.
+          R_type = T1;
+        }
+      } else {
+        R_type = mergeTypes(T_parameter.type, S_parameter.type);
+      }
+
+      R_parameters[i] = T_parameter.copyWith(
+        type: R_type,
+        kind: R_kind,
       );
     }
 
@@ -221,7 +268,7 @@ class TopMergeHelper {
     );
   }
 
-  static InterfaceType _interfaceTypes(InterfaceType T, InterfaceType S) {
+  InterfaceType _interfaceTypes(InterfaceType T, InterfaceType S) {
     if (T.element != S.element) {
       throw _TopMergeStateError(T, S, 'Different class elements');
     }
@@ -242,7 +289,32 @@ class TopMergeHelper {
     }
   }
 
-  static _MergeTypeParametersResult _typeParameters(
+  ParameterKind _parameterKind(
+    ParameterElement T_parameter,
+    ParameterElement S_parameter,
+  ) {
+    // ignore: deprecated_member_use_from_same_package
+    var T_kind = T_parameter.parameterKind;
+
+    // ignore: deprecated_member_use_from_same_package
+    var S_kind = S_parameter.parameterKind;
+
+    if (T_kind == S_kind) {
+      return T_kind;
+    }
+
+    // Legacy named vs. Required named.
+    if (T_kind == ParameterKind.NAMED_REQUIRED &&
+            S_kind == ParameterKind.NAMED ||
+        T_kind == ParameterKind.NAMED &&
+            S_kind == ParameterKind.NAMED_REQUIRED) {
+      return ParameterKind.NAMED_REQUIRED;
+    }
+
+    return null;
+  }
+
+  _MergeTypeParametersResult _typeParameters(
     List<TypeParameterElement> aParameters,
     List<TypeParameterElement> bParameters,
   ) {

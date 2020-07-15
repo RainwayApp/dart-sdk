@@ -46,10 +46,10 @@ class AbstractLspAnalysisServerIntegrationTest
     }
   }
 
-  newFile(String path, {String content}) =>
+  void newFile(String path, {String content}) =>
       File(path).writeAsStringSync(content ?? '');
 
-  newFolder(String path) => Directory(path).createSync(recursive: true);
+  void newFolder(String path) => Directory(path).createSync(recursive: true);
 
   @override
   void sendNotificationToServer(NotificationMessage notification) =>
@@ -102,7 +102,7 @@ class AbstractLspAnalysisServerIntegrationTest
     });
   }
 
-  tearDown() {
+  void tearDown() {
     // TODO(dantup): Graceful shutdown?
     client.close();
   }
@@ -123,13 +123,11 @@ class LspServerClient {
     _process.kill();
   }
 
-  /**
-   * Find the root directory of the analysis_server package by proceeding
-   * upward to the 'test' dir, and then going up one more directory.
-   */
+  /// Find the root directory of the analysis_server package by proceeding
+  /// upward to the 'test' dir, and then going up one more directory.
   String findRoot(String pathname) {
     while (!['benchmark', 'test'].contains(basename(pathname))) {
-      String parent = dirname(pathname);
+      var parent = dirname(pathname);
       if (parent.length >= pathname.length) {
         throw Exception("Can't find root directory");
       }
@@ -143,9 +141,9 @@ class LspServerClient {
       throw Exception('Process already started');
     }
 
-    String dartBinary = Platform.executable;
+    var dartBinary = Platform.executable;
 
-    final bool useSnapshot = true;
+    var useSnapshot = true;
     String serverPath;
 
     if (useSnapshot) {

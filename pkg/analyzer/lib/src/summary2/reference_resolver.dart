@@ -10,6 +10,7 @@ import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/resolver/scope.dart';
 import 'package:analyzer/src/summary/idl.dart';
 import 'package:analyzer/src/summary2/function_type_builder.dart';
@@ -30,6 +31,7 @@ import 'package:analyzer/src/summary2/types_builder.dart';
 /// the type is set, otherwise we keep it empty, so we will attempt to infer
 /// it later).
 class ReferenceResolver extends ThrowingAstVisitor<void> {
+  final TypeSystemImpl _typeSystem;
   final NodesToBuildType nodesToBuildType;
   final LinkedElementFactory elementFactory;
   final LibraryElement _libraryElement;
@@ -54,7 +56,8 @@ class ReferenceResolver extends ThrowingAstVisitor<void> {
     this.unitReference,
     this.isNNBD,
     this.scope,
-  ) : reference = unitReference;
+  )   : _typeSystem = _libraryElement.typeSystem,
+        reference = unitReference;
 
   @override
   void visitBlockFunctionBody(BlockFunctionBody node) {}
@@ -509,12 +512,12 @@ class ReferenceResolver extends ThrowingAstVisitor<void> {
     var nullabilitySuffix = _getNullabilitySuffix(node.question != null);
     if (element is TypeParameterElement) {
       node.type = TypeParameterTypeImpl(
-        element,
+        element: element,
         nullabilitySuffix: nullabilitySuffix,
       );
     } else {
       var builder = NamedTypeBuilder.of(
-        isNNBD,
+        _typeSystem,
         node,
         element,
         nullabilitySuffix,

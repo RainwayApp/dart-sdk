@@ -261,6 +261,11 @@ class HInstructionStringifier implements HVisitor<String> {
   }
 
   @override
+  String visitFunctionReference(HFunctionReference node) {
+    return 'FunctionReference: ${node.element}';
+  }
+
+  @override
   String visitReadModifyWrite(HReadModifyWrite node) {
     String fieldName = node.element.name;
     String receiverId = temporaryId(node.receiver);
@@ -283,14 +288,14 @@ class HInstructionStringifier implements HVisitor<String> {
   @override
   String visitLocalGet(HLocalGet node) {
     String localName = node.variable.name;
-    return 'LocalGet: ${temporaryId(node.local)}.$localName';
+    return 'LocalGet: ${temporaryId(node.receiver)}.$localName';
   }
 
   @override
   String visitLocalSet(HLocalSet node) {
     String valueId = temporaryId(node.value);
     String localName = node.variable.name;
-    return 'LocalSet: ${temporaryId(node.local)}.$localName to $valueId';
+    return 'LocalSet: ${temporaryId(node.receiver)}.$localName to $valueId';
   }
 
   @override
@@ -402,6 +407,20 @@ class HInstructionStringifier implements HVisitor<String> {
   }
 
   @override
+  String visitInvokeExternal(HInvokeExternal node) {
+    var target = node.element;
+    var inputs = node.inputs;
+    String targetString;
+    if (target.isInstanceMember) {
+      targetString = temporaryId(inputs.first) + '.${target.name}';
+      inputs = inputs.sublist(1);
+    } else {
+      targetString = target.name;
+    }
+    return handleGenericInvoke('InvokeExternal', targetString, inputs);
+  }
+
+  @override
   String visitForeignCode(HForeignCode node) {
     var template = node.codeTemplate;
     String code = '${template.ast}';
@@ -472,7 +491,10 @@ class HInstructionStringifier implements HVisitor<String> {
   }
 
   @override
-  String visitReturn(HReturn node) => "Return: ${temporaryId(node.inputs[0])}";
+  String visitReturn(HReturn node) {
+    if (node.inputs.isEmpty) return "Return";
+    return "Return: ${temporaryId(node.inputs.single)}";
+  }
 
   @override
   String visitShiftLeft(HShiftLeft node) =>
@@ -575,38 +597,6 @@ class HInstructionStringifier implements HVisitor<String> {
   }
 
   @override
-  String visitIs(HIs node) {
-    String type = node.typeExpression.toString();
-    return "Is: ${temporaryId(node.expression)} is $type";
-  }
-
-  @override
-  String visitIsViaInterceptor(HIsViaInterceptor node) {
-    String type = node.typeExpression.toString();
-    return "IsViaInterceptor: ${temporaryId(node.inputs[0])} is $type";
-  }
-
-  @override
-  String visitTypeConversion(HTypeConversion node) {
-    String checkedInput = temporaryId(node.checkedInput);
-    String rest;
-    if (node.inputs.length == 2) {
-      rest = " ${temporaryId(node.inputs.last)}";
-    } else {
-      assert(node.inputs.length == 1);
-      rest = "";
-    }
-    String kind = _typeConversionKind(node);
-    return "TypeConversion: $kind $checkedInput to ${node.instructionType}$rest";
-  }
-
-  String _typeConversionKind(HTypeConversion node) {
-    if (node.isTypeCheck) return 'TYPE_CHECK';
-    if (node.isCastCheck) return 'CAST_CHECK';
-    return '?';
-  }
-
-  @override
   String visitPrimitiveCheck(HPrimitiveCheck node) {
     String checkedInput = temporaryId(node.checkedInput);
     assert(node.inputs.length == 1);
@@ -650,25 +640,6 @@ class HInstructionStringifier implements HVisitor<String> {
   @override
   String visitRangeConversion(HRangeConversion node) {
     return "RangeConversion: ${node.checkedInput}";
-  }
-
-  @override
-  String visitTypeInfoReadRaw(HTypeInfoReadRaw node) {
-    var inputs = node.inputs.map(temporaryId).join(', ');
-    return "TypeInfoReadRaw: $inputs";
-  }
-
-  @override
-  String visitTypeInfoReadVariable(HTypeInfoReadVariable node) {
-    var inputs = node.inputs.map(temporaryId).join(', ');
-    return "TypeInfoReadVariable: ${node.variable}  $inputs";
-  }
-
-  @override
-  String visitTypeInfoExpression(HTypeInfoExpression node) {
-    var inputs = node.inputs.map(temporaryId).join(', ');
-    return "TypeInfoExpression: ${node.kindAsString} ${node.dartType}"
-        " ($inputs)";
   }
 
   @override

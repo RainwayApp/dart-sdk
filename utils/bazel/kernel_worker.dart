@@ -143,7 +143,8 @@ final summaryArgsParser = new ArgParser()
   ..addFlag('track-widget-creation', defaultsTo: false)
   ..addMultiOption('enable-experiment',
       help: 'Enable a language experiment when invoking the CFE.')
-  ..addMultiOption('define', abbr: 'D');
+  ..addMultiOption('define', abbr: 'D')
+  ..addFlag('verbose', defaultsTo: false);
 
 class ComputeKernelResult {
   final bool succeeded;
@@ -247,6 +248,7 @@ Future<ComputeKernelResult> computeKernel(List<String> args,
   bool usingIncrementalCompiler = false;
   bool recordUsedInputs = parsedArgs["used-inputs"] != null;
   var environmentDefines = _parseEnvironmentDefines(parsedArgs['define']);
+  var verbose = parsedArgs['verbose'] as bool;
 
   if (parsedArgs['use-incremental-compiler']) {
     usingIncrementalCompiler = true;
@@ -291,7 +293,8 @@ Future<ComputeKernelResult> computeKernel(List<String> args,
         (parsedArgs['enable-experiment'] as List<String>),
         summaryOnly,
         environmentDefines,
-        trackNeededDillLibraries: recordUsedInputs);
+        trackNeededDillLibraries: recordUsedInputs,
+        verbose: verbose);
   } else {
     state = await fe.initializeCompiler(
         // TODO(sigmund): pass an old state once we can make use of it.
@@ -299,17 +302,19 @@ Future<ComputeKernelResult> computeKernel(List<String> args,
         _toUri(parsedArgs['dart-sdk-summary']),
         _toUri(parsedArgs['libraries-file']),
         _toUri(parsedArgs['packages-file']),
-        summaryInputs,
-        linkedInputs,
+        [...summaryInputs, ...linkedInputs],
         target,
         fileSystem,
         parsedArgs['enable-experiment'] as List<String>,
-        environmentDefines);
+        environmentDefines,
+        verbose: verbose);
   }
 
   void onDiagnostic(fe.DiagnosticMessage message) {
     fe.printDiagnosticMessage(message, out.writeln);
-    succeeded = false;
+    if (message.severity == fe.Severity.error) {
+      succeeded = false;
+    }
   }
 
   List<int> kernel;
@@ -340,7 +345,8 @@ Future<ComputeKernelResult> computeKernel(List<String> args,
       if (summaryOnly) {
         incrementalComponent.uriToSource.clear();
         incrementalComponent.problemsAsJson = null;
-        incrementalComponent.mainMethod = null;
+        incrementalComponent.setMainMethodAndMode(
+            null, true, incrementalComponent.mode);
         target.performOutlineTransformations(incrementalComponent);
         makeStable(incrementalComponent);
         return Future.value(fe.serializeComponent(incrementalComponent,

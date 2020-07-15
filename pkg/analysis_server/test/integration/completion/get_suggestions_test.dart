@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../support/integration_tests.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(GetSuggestionsTest);
   });
@@ -26,13 +26,13 @@ class GetSuggestionsTest extends AbstractAnalysisServerIntegrationTest {
     expect(completionOffset, isNull, reason: 'Call addTestUnit exactly once');
     completionOffset = content.indexOf('^');
     expect(completionOffset, isNot(equals(-1)), reason: 'missing ^');
-    int nextOffset = content.indexOf('^', completionOffset + 1);
+    var nextOffset = content.indexOf('^', completionOffset + 1);
     expect(nextOffset, equals(-1), reason: 'too many ^');
     this.content = content.substring(0, completionOffset) +
         content.substring(completionOffset + 1);
   }
 
-  test_getSuggestions() async {
+  Future<void> test_getSuggestions() async {
     setTestSource('test.dart', r'''
 String test = '';
 main() {
@@ -42,10 +42,9 @@ main() {
     writeFile(path, content);
     await standardAnalysisSetup();
     await analysisFinished;
-    CompletionGetSuggestionsResult result =
-        await sendCompletionGetSuggestions(path, completionOffset);
-    String completionId = result.id;
-    CompletionResultsParams param = await onCompletionResults.firstWhere(
+    var result = await sendCompletionGetSuggestions(path, completionOffset);
+    var completionId = result.id;
+    var param = await onCompletionResults.firstWhere(
         (CompletionResultsParams param) =>
             param.id == completionId && param.isLast);
     expect(param.replacementOffset, completionOffset);
@@ -54,7 +53,7 @@ main() {
         (CompletionSuggestion suggestion) => suggestion.completion == 'length');
   }
 
-  test_getSuggestions_onlyOverlay() async {
+  Future<void> test_getSuggestions_onlyOverlay() async {
     setTestSource('test.dart', r'''
 String test = '';
 main() {
@@ -66,10 +65,9 @@ main() {
     await standardAnalysisSetup();
     await sendAnalysisUpdateContent({path: AddContentOverlay(content)});
     await analysisFinished;
-    CompletionGetSuggestionsResult result =
-        await sendCompletionGetSuggestions(path, completionOffset);
-    String completionId = result.id;
-    CompletionResultsParams param = await onCompletionResults.firstWhere(
+    var result = await sendCompletionGetSuggestions(path, completionOffset);
+    var completionId = result.id;
+    var param = await onCompletionResults.firstWhere(
         (CompletionResultsParams param) =>
             param.id == completionId && param.isLast);
     expect(param.replacementOffset, completionOffset);
@@ -78,7 +76,7 @@ main() {
         (CompletionSuggestion suggestion) => suggestion.completion == 'length');
   }
 
-  test_getSuggestions_onlyOverlay_noWait() async {
+  Future<void> test_getSuggestions_onlyOverlay_noWait() async {
     setTestSource('test.dart', r'''
 String test = '';
 main() {
@@ -91,7 +89,7 @@ main() {
     standardAnalysisSetup(subscribeStatus: false);
     sendAnalysisUpdateContent({path: AddContentOverlay(content)});
     sendCompletionGetSuggestions(path, completionOffset);
-    CompletionResultsParams param = await onCompletionResults
+    var param = await onCompletionResults
         .firstWhere((CompletionResultsParams param) => param.isLast);
     expect(param.replacementOffset, completionOffset);
     expect(param.replacementLength, 0);
@@ -99,7 +97,7 @@ main() {
         (CompletionSuggestion suggestion) => suggestion.completion == 'length');
   }
 
-  test_getSuggestions_sourceMissing_noWait() {
+  Future<void> test_getSuggestions_sourceMissing_noWait() {
     path = sourcePath('does_not_exist.dart');
     // Do not write the file to "disk"
     //   writeFile(pathname, text);

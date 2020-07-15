@@ -28,7 +28,7 @@ export 'snapshot_graph.dart'
         HeapSnapshotObjectNoData,
         HeapSnapshotObjectNullData;
 
-const String vmServiceVersion = '3.27.0';
+const String vmServiceVersion = '3.35.0';
 
 /// @optional
 const String optional = 'optional';
@@ -80,11 +80,9 @@ dynamic _createSpecificObject(
   if (json is List) {
     return json.map((e) => creator(e)).toList();
   } else if (json is Map) {
-    Map<String, dynamic> map = {};
-    for (dynamic key in json.keys) {
-      map[key as String] = json[key];
-    }
-    return creator(map);
+    return creator({
+      for (String key in json.keys) key: json[key],
+    });
   } else {
     // Handle simple types.
     return json;
@@ -119,6 +117,7 @@ Map<String, Function> _typeFactories = {
   'Class': Class.parse,
   'ClassHeapStats': ClassHeapStats.parse,
   'ClassList': ClassList.parse,
+  'ClientName': ClientName.parse,
   '@Code': CodeRef.parse,
   'Code': Code.parse,
   '@Context': ContextRef.parse,
@@ -159,6 +158,8 @@ Map<String, Function> _typeFactories = {
   '@Object': ObjRef.parse,
   'Object': Obj.parse,
   'ProfileFunction': ProfileFunction.parse,
+  'ProtocolList': ProtocolList.parse,
+  'Protocol': Protocol.parse,
   'ReloadReport': ReloadReport.parse,
   'RetainingObject': RetainingObject.parse,
   'RetainingPath': RetainingPath.parse,
@@ -191,22 +192,25 @@ Map<String, List<String>> _methodReturnTypes = {
   'addBreakpointAtEntry': const ['Breakpoint'],
   'clearCpuSamples': const ['Success'],
   'clearVMTimeline': const ['Success'],
-  'invoke': const ['InstanceRef', 'ErrorRef', 'Sentinel'],
-  'evaluate': const ['InstanceRef', 'ErrorRef', 'Sentinel'],
-  'evaluateInFrame': const ['InstanceRef', 'ErrorRef', 'Sentinel'],
+  'invoke': const ['InstanceRef', 'ErrorRef'],
+  'evaluate': const ['InstanceRef', 'ErrorRef'],
+  'evaluateInFrame': const ['InstanceRef', 'ErrorRef'],
   'getAllocationProfile': const ['AllocationProfile'],
+  'getClassList': const ['ClassList'],
+  'getClientName': const ['ClientName'],
   'getCpuSamples': const ['CpuSamples'],
   'getFlagList': const ['FlagList'],
-  'getInboundReferences': const ['InboundReferences', 'Sentinel'],
+  'getInboundReferences': const ['InboundReferences'],
   'getInstances': const ['InstanceSet'],
-  'getIsolate': const ['Isolate', 'Sentinel'],
-  'getIsolateGroup': const ['IsolateGroup', 'Sentinel'],
-  'getMemoryUsage': const ['MemoryUsage', 'Sentinel'],
-  'getIsolateGroupMemoryUsage': const ['MemoryUsage', 'Sentinel'],
+  'getIsolate': const ['Isolate'],
+  'getIsolateGroup': const ['IsolateGroup'],
+  'getMemoryUsage': const ['MemoryUsage'],
+  'getIsolateGroupMemoryUsage': const ['MemoryUsage'],
   'getScripts': const ['ScriptList'],
-  'getObject': const ['Obj', 'Sentinel'],
+  'getObject': const ['Obj'],
   'getRetainingPath': const ['RetainingPath'],
   'getStack': const ['Stack'],
+  'getSupportedProtocols': const ['ProtocolList'],
   'getSourceReport': const ['SourceReport'],
   'getVersion': const ['Version'],
   'getVM': const ['VM'],
@@ -219,7 +223,9 @@ Map<String, List<String>> _methodReturnTypes = {
   'reloadSources': const ['ReloadReport'],
   'removeBreakpoint': const ['Success'],
   'requestHeapSnapshot': const ['Success'],
+  'requirePermissionToResume': const ['Success'],
   'resume': const ['Success'],
+  'setClientName': const ['Success'],
   'setExceptionPauseMode': const ['Success'],
   'setFlag': const ['Success', 'Error'],
   'setLibraryDebuggable': const ['Success'],
@@ -261,11 +267,17 @@ abstract class VmServiceInterface {
   /// breakpoints.
   ///
   /// If no breakpoint is possible at that line, the `102` (Cannot add
-  /// breakpoint) error code is returned.
+  /// breakpoint) [RPC error] code is returned.
   ///
   /// Note that breakpoints are added and removed on a per-isolate basis.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Breakpoint].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Breakpoint> addBreakpoint(
     String isolateId,
     String scriptId,
@@ -292,11 +304,17 @@ abstract class VmServiceInterface {
   /// breakpoints.
   ///
   /// If no breakpoint is possible at that line, the `102` (Cannot add
-  /// breakpoint) error code is returned.
+  /// breakpoint) [RPC error] code is returned.
   ///
   /// Note that breakpoints are added and removed on a per-isolate basis.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Breakpoint].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Breakpoint> addBreakpointWithScriptUri(
     String isolateId,
     String scriptUri,
@@ -308,16 +326,28 @@ abstract class VmServiceInterface {
   /// entrypoint of some function.
   ///
   /// If no breakpoint is possible at the function entry, the `102` (Cannot add
-  /// breakpoint) error code is returned.
+  /// breakpoint) [RPC error] code is returned.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
   ///
   /// See [Breakpoint].
   ///
   /// Note that breakpoints are added and removed on a per-isolate basis.
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Breakpoint> addBreakpointAtEntry(String isolateId, String functionId);
 
   /// Clears all CPU profiling samples.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> clearCpuSamples(String isolateId);
 
   /// Clears all VM timeline events.
@@ -345,17 +375,23 @@ abstract class VmServiceInterface {
   /// has been collected by the VM's garbage collector, then the `Collected`
   /// [Sentinel] is returned.
   ///
-  /// If invocation triggers a failed compilation then [rpc error] 113
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// If invocation triggers a failed compilation then [RPC error] 113
   /// "Expression compilation error" is returned.
   ///
-  /// If an runtime error occurs while evaluating the invocation, an [ErrorRef]
+  /// If a runtime error occurs while evaluating the invocation, an [ErrorRef]
   /// reference will be returned.
   ///
   /// If the invocation is evaluated successfully, an [InstanceRef] reference
   /// will be returned.
   ///
-  /// The return value can be one of [InstanceRef], [ErrorRef] or [Sentinel].
-  Future<dynamic> invoke(
+  /// The return value can be one of [InstanceRef] or [ErrorRef].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<Response> invoke(
     String isolateId,
     String targetId,
     String selector,
@@ -374,6 +410,9 @@ abstract class VmServiceInterface {
   /// If `targetId` refers to an object which has been collected by the VM's
   /// garbage collector, then the `Collected` [Sentinel] is returned.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// If `scope` is provided, it should be a map from identifiers to object ids.
   /// These bindings will be added to the scope in which the expression is
   /// evaluated, which is a child scope of the class or library for
@@ -385,7 +424,7 @@ abstract class VmServiceInterface {
   /// as a result of this evaluation are ignored. Defaults to false if not
   /// provided.
   ///
-  /// If the expression fails to parse and compile, then [rpc error] 113
+  /// If the expression fails to parse and compile, then [RPC error] 113
   /// "Expression compilation error" is returned.
   ///
   /// If an error occurs while evaluating the expression, an [ErrorRef]
@@ -394,8 +433,11 @@ abstract class VmServiceInterface {
   /// If the expression is evaluated successfully, an [InstanceRef] reference
   /// will be returned.
   ///
-  /// The return value can be one of [InstanceRef], [ErrorRef] or [Sentinel].
-  Future<dynamic> evaluate(
+  /// The return value can be one of [InstanceRef] or [ErrorRef].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<Response> evaluate(
     String isolateId,
     String targetId,
     String expression, {
@@ -417,7 +459,7 @@ abstract class VmServiceInterface {
   /// as a result of this evaluation are ignored. Defaults to false if not
   /// provided.
   ///
-  /// If the expression fails to parse and compile, then [rpc error] 113
+  /// If the expression fails to parse and compile, then [RPC error] 113
   /// "Expression compilation error" is returned.
   ///
   /// If an error occurs while evaluating the expression, an [ErrorRef]
@@ -426,8 +468,14 @@ abstract class VmServiceInterface {
   /// If the expression is evaluated successfully, an [InstanceRef] reference
   /// will be returned.
   ///
-  /// The return value can be one of [InstanceRef], [ErrorRef] or [Sentinel].
-  Future<dynamic> evaluateInFrame(
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// The return value can be one of [InstanceRef] or [ErrorRef].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<Response> evaluateInFrame(
     String isolateId,
     int frameIndex,
     String expression, {
@@ -444,16 +492,47 @@ abstract class VmServiceInterface {
   /// If `gc` is provided and is set to true, a garbage collection will be
   /// attempted before collecting allocation information. There is no guarantee
   /// that a garbage collection will be actually be performed.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<AllocationProfile> getAllocationProfile(String isolateId,
       {bool reset, bool gc});
+
+  /// The `getClassList` RPC is used to retrieve a `ClassList` containing all
+  /// classes for an isolate based on the isolate's `isolateId`.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// See [ClassList].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<ClassList> getClassList(String isolateId);
+
+  /// The `getClientName` RPC is used to retrieve the name associated with the
+  /// currently connected VM service client. If no name was previously set
+  /// through the [setClientName] RPC, a default name will be returned.
+  ///
+  /// See [ClientName].
+  Future<ClientName> getClientName();
 
   /// The `getCpuSamples` RPC is used to retrieve samples collected by the CPU
   /// profiler. Only samples collected in the time range `[timeOriginMicros,
   /// timeOriginMicros + timeExtentMicros]` will be reported.
   ///
-  /// If the profiler is disabled, an error response will be returned.
+  /// If the profiler is disabled, an [RPC error] response will be returned.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
   ///
   /// See [CpuSamples].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<CpuSamples> getCpuSamples(
       String isolateId, int timeOriginMicros, int timeExtentMicros);
 
@@ -483,10 +562,14 @@ abstract class VmServiceInterface {
   /// If `targetId` refers to an object which has been collected by the VM's
   /// garbage collector, then the `Collected` [Sentinel] is returned.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [InboundReferences].
   ///
-  /// The return value can be one of [InboundReferences] or [Sentinel].
-  Future<dynamic> getInboundReferences(
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<InboundReferences> getInboundReferences(
       String isolateId, String targetId, int limit);
 
   /// The `getInstances` RPC is used to retrieve a set of instances which are of
@@ -502,11 +585,17 @@ abstract class VmServiceInterface {
   /// yet been garbage collected.
   ///
   /// `objectId` is the ID of the `Class` to retrieve instances for. `objectId`
-  /// must be the ID of a `Class`, otherwise an error is returned.
+  /// must be the ID of a `Class`, otherwise an [RPC error] is returned.
   ///
   /// `limit` is the maximum number of instances to be returned.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [InstanceSet].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<InstanceSet> getInstances(
       String isolateId, String objectId, int limit);
 
@@ -517,8 +606,9 @@ abstract class VmServiceInterface {
   ///
   /// See [Isolate].
   ///
-  /// The return value can be one of [Isolate] or [Sentinel].
-  Future<dynamic> getIsolate(String isolateId);
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<Isolate> getIsolate(String isolateId);
 
   /// The `getIsolateGroup` RPC is used to lookup an `IsolateGroup` object by
   /// its `id`.
@@ -532,8 +622,9 @@ abstract class VmServiceInterface {
   ///
   /// See [IsolateGroup], [VM].
   ///
-  /// The return value can be one of [IsolateGroup] or [Sentinel].
-  Future<dynamic> getIsolateGroup(String isolateGroupId);
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<IsolateGroup> getIsolateGroup(String isolateGroupId);
 
   /// The `getMemoryUsage` RPC is used to lookup an isolate's memory usage
   /// statistics by its `id`.
@@ -543,8 +634,9 @@ abstract class VmServiceInterface {
   ///
   /// See [Isolate].
   ///
-  /// The return value can be one of [MemoryUsage] or [Sentinel].
-  Future<dynamic> getMemoryUsage(String isolateId);
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<MemoryUsage> getMemoryUsage(String isolateId);
 
   /// The `getIsolateGroupMemoryUsage` RPC is used to lookup an isolate group's
   /// memory usage statistics by its `id`.
@@ -554,19 +646,29 @@ abstract class VmServiceInterface {
   ///
   /// See [IsolateGroup].
   ///
-  /// The return value can be one of [MemoryUsage] or [Sentinel].
-  Future<dynamic> getIsolateGroupMemoryUsage(String isolateGroupId);
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<MemoryUsage> getIsolateGroupMemoryUsage(String isolateGroupId);
 
   /// The `getScripts` RPC is used to retrieve a `ScriptList` containing all
   /// scripts for an isolate based on the isolate's `isolateId`.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [ScriptList].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<ScriptList> getScripts(String isolateId);
 
   /// The `getObject` RPC is used to lookup an `object` from some isolate by its
   /// `id`.
   ///
   /// If `objectId` is a temporary id which has expired, then the `Expired`
+  /// [Sentinel] is returned.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
   /// [Sentinel] is returned.
   ///
   /// If `objectId` refers to a heap object which has been collected by the VM's
@@ -584,8 +686,9 @@ abstract class VmServiceInterface {
   /// Int32List, Int64List, Flooat32List, Float64List, Inst32x3List,
   /// Float32x4List, and Float64x2List. These parameters are otherwise ignored.
   ///
-  /// The return value can be one of [Obj] or [Sentinel].
-  Future<dynamic> getObject(
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
+  Future<Obj> getObject(
     String isolateId,
     String objectId, {
     int offset,
@@ -595,6 +698,9 @@ abstract class VmServiceInterface {
   /// The `getRetainingPath` RPC is used to lookup a path from an object
   /// specified by `targetId` to a GC root (i.e., the object which is preventing
   /// this object from being garbage collected).
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
   ///
   /// If `targetId` refers to a heap object which has been collected by the VM's
   /// garbage collector, then the `Collected` [Sentinel] is returned.
@@ -610,14 +716,33 @@ abstract class VmServiceInterface {
   /// truncated at the root end of the path.
   ///
   /// See [RetainingPath].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<RetainingPath> getRetainingPath(
       String isolateId, String targetId, int limit);
 
   /// The `getStack` RPC is used to retrieve the current execution stack and
   /// message queue for an isolate. The isolate does not need to be paused.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Stack].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Stack> getStack(String isolateId);
+
+  /// The `getSupportedProtocols` RPC is used to determine which protocols are
+  /// supported by the current server.
+  ///
+  /// The result of this call should be intercepted by any middleware that
+  /// extends the core VM service protocol and should add its own protocol to
+  /// the list of protocols before forwarding the response to the client.
+  ///
+  /// See [ProtocolList].
+  Future<ProtocolList> getSupportedProtocols();
 
   /// The `getSourceReport` RPC is used to generate a set of reports tied to
   /// source locations in an isolate.
@@ -651,7 +776,13 @@ abstract class VmServiceInterface {
   /// compilation error, which could terminate the running Dart program. If this
   /// parameter is not provided, it is considered to have the value `false`.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [SourceReport].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<SourceReport> getSourceReport(
     String isolateId,
     /*List<SourceReportKind>*/
@@ -690,8 +821,9 @@ abstract class VmServiceInterface {
   /// `(timeOriginMicros, timeOriginMicros + timeExtentMicros)`.
   ///
   /// If `getVMTimeline` is invoked while the current recorder is one of Fuchsia
-  /// or Systrace, the `114` error code, invalid timeline request, will be
-  /// returned as timeline events are handled by the OS in these modes.
+  /// or Macos or Systrace, an [RPC error] with error code `114`, `invalid
+  /// timeline request`, will be returned as timeline events are handled by the
+  /// OS in these modes.
   Future<Timeline> getVMTimeline({int timeOriginMicros, int timeExtentMicros});
 
   /// The `getVMTimelineFlags` RPC returns information about the current VM
@@ -716,7 +848,13 @@ abstract class VmServiceInterface {
   ///
   /// When the isolate is paused an event will be sent on the `Debug` stream.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> pause(String isolateId);
 
   /// The `kill` RPC is used to kill an isolate as if by dart:isolate's
@@ -724,7 +862,13 @@ abstract class VmServiceInterface {
   ///
   /// The isolate is killed regardless of whether it is paused or running.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> kill(String isolateId);
 
   /// Registers a service that can be invoked by other VM service clients, where
@@ -751,6 +895,12 @@ abstract class VmServiceInterface {
   ///
   /// if the `packagesUri` parameter is provided, it indicates the new uri to
   /// the Isolate's package map (.packages) file.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<ReloadReport> reloadSources(
     String isolateId, {
     bool force,
@@ -763,7 +913,13 @@ abstract class VmServiceInterface {
   ///
   /// Note that breakpoints are added and removed on a per-isolate basis.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> removeBreakpoint(String isolateId, String breakpointId);
 
   /// Requests a dump of the Dart heap of the given isolate.
@@ -773,7 +929,46 @@ abstract class VmServiceInterface {
   /// events, when concatenated together, conforms to the [SnapshotGraph] type.
   /// The splitting of the SnapshotGraph into events can happen at any byte
   /// offset.
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> requestHeapSnapshot(String isolateId);
+
+  /// The `requirePermissionToResume` RPC is used to change the pause/resume
+  /// behavior of isolates by providing a way for the VM service to wait for
+  /// approval to resume from some set of clients. This is useful for clients
+  /// which want to perform some operation on an isolate after a pause without
+  /// it being resumed by another client.
+  ///
+  /// If the `onPauseStart` parameter is `true`, isolates will not resume after
+  /// pausing on start until the client sends a `resume` request and all other
+  /// clients which need to provide resume approval for this pause type have
+  /// done so.
+  ///
+  /// If the `onPauseReload` parameter is `true`, isolates will not resume after
+  /// pausing after a reload until the client sends a `resume` request and all
+  /// other clients which need to provide resume approval for this pause type
+  /// have done so.
+  ///
+  /// If the `onPauseExit` parameter is `true`, isolates will not resume after
+  /// pausing on exit until the client sends a `resume` request and all other
+  /// clients which need to provide resume approval for this pause type have
+  /// done so.
+  ///
+  /// **Important Notes:**
+  ///
+  /// - All clients with the same client name share resume permissions. Only a
+  /// single client of a given name is required to provide resume approval.
+  /// - When a client requiring approval disconnects from the service, a paused
+  /// isolate may resume if all other clients requiring resume approval have
+  /// already given approval. In the case that no other client requires resume
+  /// approval for the current pause event, the isolate will be resumed if at
+  /// least one other client has attempted to [resume] the isolate.
+  Future<Success> requirePermissionToResume(
+      {bool onPauseStart, bool onPauseReload, bool onPauseExit});
 
   /// The `resume` RPC is used to resume execution of a paused isolate.
   ///
@@ -797,9 +992,24 @@ abstract class VmServiceInterface {
   ///
   /// If the `frameIndex` parameter is not provided, it defaults to 1.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success], [StepOption].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> resume(String isolateId,
       {/*StepOption*/ String step, int frameIndex});
+
+  /// The `setClientName` RPC is used to set a name to be associated with the
+  /// currently connected VM service client. If the `name` parameter is a
+  /// non-empty string, `name` will become the new name associated with the
+  /// client. If `name` is an empty string, the client's name will be reset to
+  /// its default name.
+  ///
+  /// See [Success].
+  Future<Success> setClientName(String name);
 
   /// The `setExceptionPauseMode` RPC is used to control if an isolate pauses
   /// when an exception is thrown.
@@ -809,6 +1019,12 @@ abstract class VmServiceInterface {
   /// None | Do not pause isolate on thrown exceptions
   /// Unhandled | Pause isolate on unhandled exceptions
   /// All  | Pause isolate on all thrown exceptions
+  ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> setExceptionPauseMode(
       String isolateId, /*ExceptionPauseMode*/ String mode);
 
@@ -818,19 +1034,48 @@ abstract class VmServiceInterface {
   ///
   /// The following flags may be set at runtime:
   ///
+  /// - pause_isolates_on_start
+  /// - pause_isolates_on_exit
+  /// - pause_isolates_on_unhandled_exceptions
+  /// - profile_period
+  /// - profiler
+  ///
+  /// Notes:
+  ///
+  /// - `profile_period` can be set to a minimum value of 50. Attempting to set
+  /// `profile_period` to a lower value will result in a value of 50 being set.
+  /// - Setting `profiler` will enable or disable the profiler depending on the
+  /// provided value. If set to false when the profiler is already running, the
+  /// profiler will be stopped but may not free its sample buffer depending on
+  /// platform limitations.
+  ///
+  /// See [Success].
+  ///
   /// The return value can be one of [Success] or [Error].
-  Future<dynamic> setFlag(String name, String value);
+  Future<Response> setFlag(String name, String value);
 
   /// The `setLibraryDebuggable` RPC is used to enable or disable whether
   /// breakpoints and stepping work for a given library.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> setLibraryDebuggable(
       String isolateId, String libraryId, bool isDebuggable);
 
   /// The `setName` RPC is used to change the debugging name for an isolate.
   ///
+  /// If `isolateId` refers to an isolate which has exited, then the `Collected`
+  /// [Sentinel] is returned.
+  ///
   /// See [Success].
+  ///
+  /// This method will throw a [SentinelException] in the case a [Sentinel] is
+  /// returned.
   Future<Success> setName(String isolateId, String name);
 
   /// The `setVMName` RPC is used to change the debugging name for the vm.
@@ -845,6 +1090,9 @@ abstract class VmServiceInterface {
   /// are to be enabled. Streams not explicitly specified will be disabled.
   /// Invalid stream names are ignored.
   ///
+  /// A `TimelineStreamSubscriptionsUpdate` event is sent on the `Timeline`
+  /// stream as a result of invoking this RPC.
+  ///
   /// To get the list of currently enabled timeline streams, see
   /// [getVMTimelineFlags].
   ///
@@ -854,7 +1102,7 @@ abstract class VmServiceInterface {
   /// The `streamCancel` RPC cancels a stream subscription in the VM.
   ///
   /// If the client is not subscribed to the stream, the `104` (Stream not
-  /// subscribed) error code is returned.
+  /// subscribed) [RPC error] code is returned.
   ///
   /// See [Success].
   Future<Success> streamCancel(String streamId);
@@ -863,7 +1111,7 @@ abstract class VmServiceInterface {
   /// the client will begin receiving events from the stream.
   ///
   /// If the client is already subscribed to the stream, the `103` (Stream
-  /// already subscribed) error code is returned.
+  /// already subscribed) [RPC error] code is returned.
   ///
   /// The `streamId` parameter may have the following published values:
   ///
@@ -877,7 +1125,7 @@ abstract class VmServiceInterface {
   /// BreakpointResolved, BreakpointRemoved, Inspect, None
   /// GC | GC
   /// Extension | Extension
-  /// Timeline | TimelineEvents
+  /// Timeline | TimelineEvents, TimelineStreamsSubscriptionUpdate
   /// Logging | Logging
   /// Service | ServiceRegistered, ServiceUnregistered
   /// HeapSnapshot | HeapSnapshot
@@ -964,7 +1212,8 @@ class VmServerConnection {
       }
       var method = request['method'] as String;
       if (method == null) {
-        throw RPCError(null, -32600, 'Invalid Request', request);
+        throw RPCError(
+            null, RPCError.kInvalidRequest, 'Invalid Request', request);
       }
       var params = request['params'] as Map;
       Response response;
@@ -1038,6 +1287,14 @@ class VmServerConnection {
             gc: params['gc'],
           );
           break;
+        case 'getClassList':
+          response = await _serviceImplementation.getClassList(
+            params['isolateId'],
+          );
+          break;
+        case 'getClientName':
+          response = await _serviceImplementation.getClientName();
+          break;
         case 'getCpuSamples':
           response = await _serviceImplementation.getCpuSamples(
             params['isolateId'],
@@ -1107,6 +1364,9 @@ class VmServerConnection {
             params['isolateId'],
           );
           break;
+        case 'getSupportedProtocols':
+          response = await _serviceImplementation.getSupportedProtocols();
+          break;
         case 'getSourceReport':
           response = await _serviceImplementation.getSourceReport(
             params['isolateId'],
@@ -1165,11 +1425,23 @@ class VmServerConnection {
             params['isolateId'],
           );
           break;
+        case 'requirePermissionToResume':
+          response = await _serviceImplementation.requirePermissionToResume(
+            onPauseStart: params['onPauseStart'],
+            onPauseReload: params['onPauseReload'],
+            onPauseExit: params['onPauseExit'],
+          );
+          break;
         case 'resume':
           response = await _serviceImplementation.resume(
             params['isolateId'],
             step: params['step'],
             frameIndex: params['frameIndex'],
+          );
+          break;
+        case 'setClientName':
+          response = await _serviceImplementation.setClientName(
+            params['name'],
           );
           break;
         case 'setExceptionPauseMode':
@@ -1211,9 +1483,12 @@ class VmServerConnection {
           var id = params['streamId'];
           var existing = _streamSubscriptions.remove(id);
           if (existing == null) {
-            throw RPCError('streamCancel', 104, 'Stream not subscribed', {
-              'details': "The stream '$id' is not subscribed",
-            });
+            throw RPCError.withDetails(
+              'streamCancel',
+              104,
+              'Stream not subscribed',
+              details: "The stream '$id' is not subscribed",
+            );
           }
           await existing.cancel();
           response = Success();
@@ -1221,9 +1496,12 @@ class VmServerConnection {
         case 'streamListen':
           var id = params['streamId'];
           if (_streamSubscriptions.containsKey(id)) {
-            throw RPCError('streamListen', 103, 'Stream already subscribed', {
-              'details': "The stream '$id' is already subscribed",
-            });
+            throw RPCError.withDetails(
+              'streamListen',
+              103,
+              'Stream already subscribed',
+              details: "The stream '$id' is already subscribed",
+            );
           }
 
           var stream = id == 'Service'
@@ -1259,7 +1537,8 @@ class VmServerConnection {
             response = await _serviceImplementation.callServiceExtension(method,
                 isolateId: isolateId, args: args);
           } else {
-            throw RPCError(method, -32601, 'Method not found', request);
+            throw RPCError(
+                method, RPCError.kMethodNotFound, 'Method not found', request);
           }
       }
       if (response == null) {
@@ -1272,8 +1551,12 @@ class VmServerConnection {
       });
     } catch (e, st) {
       var error = e is RPCError
-          ? {'code': e.code, 'data': e.data, 'message': e.message}
-          : {'code': -32603, 'message': '$e\n$st'};
+          ? e.toMap()
+          : {
+              'code': RPCError.kInternalError,
+              'message': '${request['method']}: $e',
+              'data': {'details': '$st'},
+            };
       _responseSink.add({
         'jsonrpc': '2.0',
         'id': request['id'],
@@ -1348,7 +1631,7 @@ class VmService implements VmServiceInterface {
   // Extension
   Stream<Event> get onExtensionEvent => _getEventController('Extension').stream;
 
-  // TimelineEvents
+  // TimelineEvents, TimelineStreamsSubscriptionUpdate
   Stream<Event> get onTimelineEvent => _getEventController('Timeline').stream;
 
   // Logging
@@ -1373,13 +1656,13 @@ class VmService implements VmServiceInterface {
     String scriptId,
     int line, {
     int column,
-  }) {
-    Map m = {'isolateId': isolateId, 'scriptId': scriptId, 'line': line};
-    if (column != null) {
-      m['column'] = column;
-    }
-    return _call('addBreakpoint', m);
-  }
+  }) =>
+      _call('addBreakpoint', {
+        'isolateId': isolateId,
+        'scriptId': scriptId,
+        'line': line,
+        if (column != null) 'column': column,
+      });
 
   @override
   Future<Breakpoint> addBreakpointWithScriptUri(
@@ -1387,186 +1670,165 @@ class VmService implements VmServiceInterface {
     String scriptUri,
     int line, {
     int column,
-  }) {
-    Map m = {'isolateId': isolateId, 'scriptUri': scriptUri, 'line': line};
-    if (column != null) {
-      m['column'] = column;
-    }
-    return _call('addBreakpointWithScriptUri', m);
-  }
+  }) =>
+      _call('addBreakpointWithScriptUri', {
+        'isolateId': isolateId,
+        'scriptUri': scriptUri,
+        'line': line,
+        if (column != null) 'column': column,
+      });
 
   @override
-  Future<Breakpoint> addBreakpointAtEntry(String isolateId, String functionId) {
-    return _call('addBreakpointAtEntry',
-        {'isolateId': isolateId, 'functionId': functionId});
-  }
+  Future<Breakpoint> addBreakpointAtEntry(
+          String isolateId, String functionId) =>
+      _call('addBreakpointAtEntry',
+          {'isolateId': isolateId, 'functionId': functionId});
 
   @override
-  Future<Success> clearCpuSamples(String isolateId) {
-    return _call('clearCpuSamples', {'isolateId': isolateId});
-  }
+  Future<Success> clearCpuSamples(String isolateId) =>
+      _call('clearCpuSamples', {'isolateId': isolateId});
 
   @override
   Future<Success> clearVMTimeline() => _call('clearVMTimeline');
 
   @override
-  Future<dynamic> invoke(
+  Future<Response> invoke(
     String isolateId,
     String targetId,
     String selector,
     List<String> argumentIds, {
     bool disableBreakpoints,
-  }) {
-    Map m = {
-      'isolateId': isolateId,
-      'targetId': targetId,
-      'selector': selector,
-      'argumentIds': argumentIds
-    };
-    if (disableBreakpoints != null) {
-      m['disableBreakpoints'] = disableBreakpoints;
-    }
-    return _call('invoke', m);
-  }
+  }) =>
+      _call('invoke', {
+        'isolateId': isolateId,
+        'targetId': targetId,
+        'selector': selector,
+        'argumentIds': argumentIds,
+        if (disableBreakpoints != null)
+          'disableBreakpoints': disableBreakpoints,
+      });
 
   @override
-  Future<dynamic> evaluate(
+  Future<Response> evaluate(
     String isolateId,
     String targetId,
     String expression, {
     Map<String, String> scope,
     bool disableBreakpoints,
-  }) {
-    Map m = {
-      'isolateId': isolateId,
-      'targetId': targetId,
-      'expression': expression
-    };
-    if (scope != null) {
-      m['scope'] = scope;
-    }
-    if (disableBreakpoints != null) {
-      m['disableBreakpoints'] = disableBreakpoints;
-    }
-    return _call('evaluate', m);
-  }
+  }) =>
+      _call('evaluate', {
+        'isolateId': isolateId,
+        'targetId': targetId,
+        'expression': expression,
+        if (scope != null) 'scope': scope,
+        if (disableBreakpoints != null)
+          'disableBreakpoints': disableBreakpoints,
+      });
 
   @override
-  Future<dynamic> evaluateInFrame(
+  Future<Response> evaluateInFrame(
     String isolateId,
     int frameIndex,
     String expression, {
     Map<String, String> scope,
     bool disableBreakpoints,
-  }) {
-    Map m = {
-      'isolateId': isolateId,
-      'frameIndex': frameIndex,
-      'expression': expression
-    };
-    if (scope != null) {
-      m['scope'] = scope;
-    }
-    if (disableBreakpoints != null) {
-      m['disableBreakpoints'] = disableBreakpoints;
-    }
-    return _call('evaluateInFrame', m);
-  }
+  }) =>
+      _call('evaluateInFrame', {
+        'isolateId': isolateId,
+        'frameIndex': frameIndex,
+        'expression': expression,
+        if (scope != null) 'scope': scope,
+        if (disableBreakpoints != null)
+          'disableBreakpoints': disableBreakpoints,
+      });
 
   @override
   Future<AllocationProfile> getAllocationProfile(String isolateId,
-      {bool reset, bool gc}) {
-    Map m = {'isolateId': isolateId};
-    if (reset != null && reset) {
-      m['reset'] = reset;
-    }
-    if (gc != null && gc) {
-      m['gc'] = gc;
-    }
-    return _call('getAllocationProfile', m);
-  }
+          {bool reset, bool gc}) =>
+      _call('getAllocationProfile', {
+        'isolateId': isolateId,
+        if (reset != null && reset) 'reset': reset,
+        if (gc != null && gc) 'gc': gc,
+      });
+
+  @override
+  Future<ClassList> getClassList(String isolateId) =>
+      _call('getClassList', {'isolateId': isolateId});
+
+  @override
+  Future<ClientName> getClientName() => _call('getClientName');
 
   @override
   Future<CpuSamples> getCpuSamples(
-      String isolateId, int timeOriginMicros, int timeExtentMicros) {
-    return _call('getCpuSamples', {
-      'isolateId': isolateId,
-      'timeOriginMicros': timeOriginMicros,
-      'timeExtentMicros': timeExtentMicros
-    });
-  }
+          String isolateId, int timeOriginMicros, int timeExtentMicros) =>
+      _call('getCpuSamples', {
+        'isolateId': isolateId,
+        'timeOriginMicros': timeOriginMicros,
+        'timeExtentMicros': timeExtentMicros
+      });
 
   @override
   Future<FlagList> getFlagList() => _call('getFlagList');
 
   @override
-  Future<dynamic> getInboundReferences(
-      String isolateId, String targetId, int limit) {
-    return _call('getInboundReferences',
-        {'isolateId': isolateId, 'targetId': targetId, 'limit': limit});
-  }
+  Future<InboundReferences> getInboundReferences(
+          String isolateId, String targetId, int limit) =>
+      _call('getInboundReferences',
+          {'isolateId': isolateId, 'targetId': targetId, 'limit': limit});
 
   @override
   Future<InstanceSet> getInstances(
-      String isolateId, String objectId, int limit) {
-    return _call('getInstances',
-        {'isolateId': isolateId, 'objectId': objectId, 'limit': limit});
-  }
+          String isolateId, String objectId, int limit) =>
+      _call('getInstances',
+          {'isolateId': isolateId, 'objectId': objectId, 'limit': limit});
 
   @override
-  Future<dynamic> getIsolate(String isolateId) {
-    return _call('getIsolate', {'isolateId': isolateId});
-  }
+  Future<Isolate> getIsolate(String isolateId) =>
+      _call('getIsolate', {'isolateId': isolateId});
 
   @override
-  Future<dynamic> getIsolateGroup(String isolateGroupId) {
-    return _call('getIsolateGroup', {'isolateGroupId': isolateGroupId});
-  }
+  Future<IsolateGroup> getIsolateGroup(String isolateGroupId) =>
+      _call('getIsolateGroup', {'isolateGroupId': isolateGroupId});
 
   @override
-  Future<dynamic> getMemoryUsage(String isolateId) {
-    return _call('getMemoryUsage', {'isolateId': isolateId});
-  }
+  Future<MemoryUsage> getMemoryUsage(String isolateId) =>
+      _call('getMemoryUsage', {'isolateId': isolateId});
 
   @override
-  Future<dynamic> getIsolateGroupMemoryUsage(String isolateGroupId) {
-    return _call(
-        'getIsolateGroupMemoryUsage', {'isolateGroupId': isolateGroupId});
-  }
+  Future<MemoryUsage> getIsolateGroupMemoryUsage(String isolateGroupId) =>
+      _call('getIsolateGroupMemoryUsage', {'isolateGroupId': isolateGroupId});
 
   @override
-  Future<ScriptList> getScripts(String isolateId) {
-    return _call('getScripts', {'isolateId': isolateId});
-  }
+  Future<ScriptList> getScripts(String isolateId) =>
+      _call('getScripts', {'isolateId': isolateId});
 
   @override
-  Future<dynamic> getObject(
+  Future<Obj> getObject(
     String isolateId,
     String objectId, {
     int offset,
     int count,
-  }) {
-    Map m = {'isolateId': isolateId, 'objectId': objectId};
-    if (offset != null) {
-      m['offset'] = offset;
-    }
-    if (count != null) {
-      m['count'] = count;
-    }
-    return _call('getObject', m);
-  }
+  }) =>
+      _call('getObject', {
+        'isolateId': isolateId,
+        'objectId': objectId,
+        if (offset != null) 'offset': offset,
+        if (count != null) 'count': count,
+      });
 
   @override
   Future<RetainingPath> getRetainingPath(
-      String isolateId, String targetId, int limit) {
-    return _call('getRetainingPath',
-        {'isolateId': isolateId, 'targetId': targetId, 'limit': limit});
-  }
+          String isolateId, String targetId, int limit) =>
+      _call('getRetainingPath',
+          {'isolateId': isolateId, 'targetId': targetId, 'limit': limit});
 
   @override
-  Future<Stack> getStack(String isolateId) {
-    return _call('getStack', {'isolateId': isolateId});
-  }
+  Future<Stack> getStack(String isolateId) =>
+      _call('getStack', {'isolateId': isolateId});
+
+  @override
+  Future<ProtocolList> getSupportedProtocols() =>
+      _call('getSupportedProtocols');
 
   @override
   Future<SourceReport> getSourceReport(
@@ -1577,22 +1839,15 @@ class VmService implements VmServiceInterface {
     int tokenPos,
     int endTokenPos,
     bool forceCompile,
-  }) {
-    Map m = {'isolateId': isolateId, 'reports': reports};
-    if (scriptId != null) {
-      m['scriptId'] = scriptId;
-    }
-    if (tokenPos != null) {
-      m['tokenPos'] = tokenPos;
-    }
-    if (endTokenPos != null) {
-      m['endTokenPos'] = endTokenPos;
-    }
-    if (forceCompile != null) {
-      m['forceCompile'] = forceCompile;
-    }
-    return _call('getSourceReport', m);
-  }
+  }) =>
+      _call('getSourceReport', {
+        'isolateId': isolateId,
+        'reports': reports,
+        if (scriptId != null) 'scriptId': scriptId,
+        if (tokenPos != null) 'tokenPos': tokenPos,
+        if (endTokenPos != null) 'endTokenPos': endTokenPos,
+        if (forceCompile != null) 'forceCompile': forceCompile,
+      });
 
   @override
   Future<Version> getVersion() => _call('getVersion');
@@ -1601,16 +1856,12 @@ class VmService implements VmServiceInterface {
   Future<VM> getVM() => _call('getVM');
 
   @override
-  Future<Timeline> getVMTimeline({int timeOriginMicros, int timeExtentMicros}) {
-    Map m = {};
-    if (timeOriginMicros != null) {
-      m['timeOriginMicros'] = timeOriginMicros;
-    }
-    if (timeExtentMicros != null) {
-      m['timeExtentMicros'] = timeExtentMicros;
-    }
-    return _call('getVMTimeline', m);
-  }
+  Future<Timeline> getVMTimeline(
+          {int timeOriginMicros, int timeExtentMicros}) =>
+      _call('getVMTimeline', {
+        if (timeOriginMicros != null) 'timeOriginMicros': timeOriginMicros,
+        if (timeExtentMicros != null) 'timeExtentMicros': timeExtentMicros,
+      });
 
   @override
   Future<TimelineFlags> getVMTimelineFlags() => _call('getVMTimelineFlags');
@@ -1619,19 +1870,16 @@ class VmService implements VmServiceInterface {
   Future<Timestamp> getVMTimelineMicros() => _call('getVMTimelineMicros');
 
   @override
-  Future<Success> pause(String isolateId) {
-    return _call('pause', {'isolateId': isolateId});
-  }
+  Future<Success> pause(String isolateId) =>
+      _call('pause', {'isolateId': isolateId});
 
   @override
-  Future<Success> kill(String isolateId) {
-    return _call('kill', {'isolateId': isolateId});
-  }
+  Future<Success> kill(String isolateId) =>
+      _call('kill', {'isolateId': isolateId});
 
   @override
-  Future<Success> registerService(String service, String alias) {
-    return _call('registerService', {'service': service, 'alias': alias});
-  }
+  Future<Success> registerService(String service, String alias) =>
+      _call('registerService', {'service': service, 'alias': alias});
 
   @override
   Future<ReloadReport> reloadSources(
@@ -1640,93 +1888,82 @@ class VmService implements VmServiceInterface {
     bool pause,
     String rootLibUri,
     String packagesUri,
-  }) {
-    Map m = {'isolateId': isolateId};
-    if (force != null) {
-      m['force'] = force;
-    }
-    if (pause != null) {
-      m['pause'] = pause;
-    }
-    if (rootLibUri != null) {
-      m['rootLibUri'] = rootLibUri;
-    }
-    if (packagesUri != null) {
-      m['packagesUri'] = packagesUri;
-    }
-    return _call('reloadSources', m);
-  }
+  }) =>
+      _call('reloadSources', {
+        'isolateId': isolateId,
+        if (force != null) 'force': force,
+        if (pause != null) 'pause': pause,
+        if (rootLibUri != null) 'rootLibUri': rootLibUri,
+        if (packagesUri != null) 'packagesUri': packagesUri,
+      });
 
   @override
-  Future<Success> removeBreakpoint(String isolateId, String breakpointId) {
-    return _call('removeBreakpoint',
-        {'isolateId': isolateId, 'breakpointId': breakpointId});
-  }
+  Future<Success> removeBreakpoint(String isolateId, String breakpointId) =>
+      _call('removeBreakpoint',
+          {'isolateId': isolateId, 'breakpointId': breakpointId});
 
   @override
-  Future<Success> requestHeapSnapshot(String isolateId) {
-    return _call('requestHeapSnapshot', {'isolateId': isolateId});
-  }
+  Future<Success> requestHeapSnapshot(String isolateId) =>
+      _call('requestHeapSnapshot', {'isolateId': isolateId});
+
+  @override
+  Future<Success> requirePermissionToResume(
+          {bool onPauseStart, bool onPauseReload, bool onPauseExit}) =>
+      _call('requirePermissionToResume', {
+        if (onPauseStart != null) 'onPauseStart': onPauseStart,
+        if (onPauseReload != null) 'onPauseReload': onPauseReload,
+        if (onPauseExit != null) 'onPauseExit': onPauseExit,
+      });
 
   @override
   Future<Success> resume(String isolateId,
-      {/*StepOption*/ String step, int frameIndex}) {
-    Map m = {'isolateId': isolateId};
-    if (step != null) {
-      m['step'] = step;
-    }
-    if (frameIndex != null) {
-      m['frameIndex'] = frameIndex;
-    }
-    return _call('resume', m);
-  }
+          {/*StepOption*/ String step, int frameIndex}) =>
+      _call('resume', {
+        'isolateId': isolateId,
+        if (step != null) 'step': step,
+        if (frameIndex != null) 'frameIndex': frameIndex,
+      });
+
+  @override
+  Future<Success> setClientName(String name) =>
+      _call('setClientName', {'name': name});
 
   @override
   Future<Success> setExceptionPauseMode(
-      String isolateId, /*ExceptionPauseMode*/ String mode) {
-    return _call(
-        'setExceptionPauseMode', {'isolateId': isolateId, 'mode': mode});
-  }
+          String isolateId, /*ExceptionPauseMode*/ String mode) =>
+      _call('setExceptionPauseMode', {'isolateId': isolateId, 'mode': mode});
 
   @override
-  Future<dynamic> setFlag(String name, String value) {
-    return _call('setFlag', {'name': name, 'value': value});
-  }
+  Future<Response> setFlag(String name, String value) =>
+      _call('setFlag', {'name': name, 'value': value});
 
   @override
   Future<Success> setLibraryDebuggable(
-      String isolateId, String libraryId, bool isDebuggable) {
-    return _call('setLibraryDebuggable', {
-      'isolateId': isolateId,
-      'libraryId': libraryId,
-      'isDebuggable': isDebuggable
-    });
-  }
+          String isolateId, String libraryId, bool isDebuggable) =>
+      _call('setLibraryDebuggable', {
+        'isolateId': isolateId,
+        'libraryId': libraryId,
+        'isDebuggable': isDebuggable
+      });
 
   @override
-  Future<Success> setName(String isolateId, String name) {
-    return _call('setName', {'isolateId': isolateId, 'name': name});
-  }
+  Future<Success> setName(String isolateId, String name) =>
+      _call('setName', {'isolateId': isolateId, 'name': name});
 
   @override
-  Future<Success> setVMName(String name) {
-    return _call('setVMName', {'name': name});
-  }
+  Future<Success> setVMName(String name) => _call('setVMName', {'name': name});
 
   @override
-  Future<Success> setVMTimelineFlags(List<String> recordedStreams) {
-    return _call('setVMTimelineFlags', {'recordedStreams': recordedStreams});
-  }
+  Future<Success> setVMTimelineFlags(List<String> recordedStreams) =>
+      _call('setVMTimelineFlags', {'recordedStreams': recordedStreams});
 
   @override
-  Future<Success> streamCancel(String streamId) {
-    return _call('streamCancel', {'streamId': streamId});
-  }
+  Future<Success> streamCancel(String streamId) =>
+      _call('streamCancel', {'streamId': streamId});
 
   @override
-  Future<Success> streamListen(String streamId) {
-    return _call('streamListen', {'streamId': streamId});
-  }
+  Future<Success> streamListen(String streamId) =>
+      _call('streamListen', {'streamId': streamId});
 
   /// Call an arbitrary service protocol method. This allows clients to call
   /// methods not explicitly exposed by this library.
@@ -1761,8 +1998,8 @@ class VmService implements VmServiceInterface {
     _streamSub.cancel();
     _completers.forEach((id, c) {
       final method = _methodCalls[id];
-      return c.completeError(
-          RPCError(method, -32000, 'Service connection disposed'));
+      return c.completeError(RPCError(
+          method, RPCError.kServerError, 'Service connection disposed'));
     });
     _completers.clear();
     if (_disposeHandler != null) {
@@ -1775,13 +2012,17 @@ class VmService implements VmServiceInterface {
 
   Future get onDone => _onDoneCompleter.future;
 
-  Future<T> _call<T>(String method, [Map args]) {
+  Future<T> _call<T>(String method, [Map args = const {}]) {
     String id = '${++_id}';
     Completer<T> completer = Completer<T>();
     _completers[id] = completer;
     _methodCalls[id] = method;
-    Map m = {'id': id, 'method': method};
-    if (args != null) m['params'] = args;
+    Map m = {
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': method,
+      'params': args,
+    };
     String message = jsonEncode(m);
     _onSend.add(message);
     _writeMessage(message);
@@ -1866,7 +2107,9 @@ class VmService implements VmServiceInterface {
     } else {
       Map<String, dynamic> result = json['result'] as Map<String, dynamic>;
       String type = result['type'];
-      if (_typeFactories[type] == null) {
+      if (type == 'Sentinel') {
+        completer.completeError(SentinelException.parse(methodName, result));
+      } else if (_typeFactories[type] == null) {
         completer.complete(Response.parse(result));
       } else {
         completer.complete(createServiceObject(result, returnTypes));
@@ -1875,7 +2118,8 @@ class VmService implements VmServiceInterface {
   }
 
   Future _processRequest(Map<String, dynamic> json) async {
-    final Map m = await _routeRequest(json['method'], json['params']);
+    final Map m = await _routeRequest(
+        json['method'], json['params'] ?? <String, dynamic>{});
     m['id'] = json['id'];
     m['jsonrpc'] = '2.0';
     String message = jsonEncode(m);
@@ -1885,7 +2129,7 @@ class VmService implements VmServiceInterface {
 
   Future _processNotification(Map<String, dynamic> json) async {
     final String method = json['method'];
-    final Map params = json['params'];
+    final Map params = json['params'] ?? <String, dynamic>{};
     if (method == 'streamNotify') {
       String streamId = params['streamId'];
       _getEventController(streamId)
@@ -1895,31 +2139,45 @@ class VmService implements VmServiceInterface {
     }
   }
 
-  Future<Map> _routeRequest(String method, Map params) async {
+  Future<Map> _routeRequest(String method, Map<String, dynamic> params) async {
+    if (!_services.containsKey(method)) {
+      RPCError error = RPCError(
+          method, RPCError.kMethodNotFound, 'method not found \'$method\'');
+      return {'error': error.toMap()};
+    }
+
     try {
-      if (_services.containsKey(method)) {
-        return await _services[method](params);
-      }
-      return {
-        'error': {
-          'code': -32601, // Method not found
-          'message': 'Method not found \'$method\''
-        }
-      };
+      return await _services[method](params);
     } catch (e, st) {
-      return {
-        'error': {
-          'code': -32000, // SERVER ERROR
-          'message': 'Unexpected Server Error $e\n$st'
-        }
-      };
+      RPCError error = RPCError.withDetails(
+        method,
+        RPCError.kServerError,
+        '$e',
+        details: '$st',
+      );
+      return {'error': error.toMap()};
     }
   }
 }
 
 typedef DisposeHandler = Future Function();
 
-class RPCError {
+class RPCError implements Exception {
+  /// Application specific error codes.
+  static const int kServerError = -32000;
+
+  /// The JSON sent is not a valid Request object.
+  static const int kInvalidRequest = -32600;
+
+  /// The method does not exist or is not available.
+  static const int kMethodNotFound = -32601;
+
+  /// Invalid method parameter(s), such as a mismatched type.
+  static const int kInvalidParams = -32602;
+
+  /// Internal JSON-RPC error.
+  static const int kInternalError = -32603;
+
   static RPCError parse(String callingMethod, dynamic json) {
     return RPCError(callingMethod, json['code'], json['message'], json['data']);
   }
@@ -1931,15 +2189,47 @@ class RPCError {
 
   RPCError(this.callingMethod, this.code, this.message, [this.data]);
 
+  RPCError.withDetails(this.callingMethod, this.code, this.message,
+      {Object details})
+      : data = details == null ? null : <String, dynamic>{} {
+    if (details != null) {
+      data['details'] = details;
+    }
+  }
+
   String get details => data == null ? null : data['details'];
+
+  /// Return a map representation of this error suitable for converstion to
+  /// json.
+  Map<String, dynamic> toMap() {
+    Map<String, dynamic> map = {
+      'code': code,
+      'message': message,
+    };
+    if (data != null) {
+      map['data'] = data;
+    }
+    return map;
+  }
 
   String toString() {
     if (details == null) {
-      return '${message} (${code}) from ${callingMethod}()';
+      return '$callingMethod: ($code) $message';
     } else {
-      return '${message} (${code}) from ${callingMethod}():\n${details}';
+      return '$callingMethod: ($code) $message\n$details';
     }
   }
+}
+
+/// Thrown when an RPC response is a [Sentinel].
+class SentinelException implements Exception {
+  final String callingMethod;
+  final Sentinel sentinel;
+
+  SentinelException.parse(this.callingMethod, Map<String, dynamic> data)
+      : sentinel = Sentinel.parse(data);
+
+  String toString() => '$sentinel from ${callingMethod}()';
 }
 
 /// An `ExtensionData` is an arbitrary map that can have any contents.
@@ -2095,6 +2385,18 @@ class EventKind {
 
   /// Event from dart:developer.log.
   static const String kLogging = 'Logging';
+
+  /// A block of timeline events has been completed.
+  ///
+  /// This service event is not sent for individual timeline events. It is
+  /// subject to buffering, so the most recent timeline events may never be
+  /// included in any TimelineEvents event if no timeline events occur later to
+  /// complete the block.
+  static const String kTimelineEvents = 'TimelineEvents';
+
+  /// The set of active timeline streams was changed via `setVMTimelineFlags`.
+  static const String kTimelineStreamSubscriptionsUpdate =
+      'TimelineStreamSubscriptionsUpdate';
 
   /// Notification that a Service has been registered into the Service Protocol
   /// from another client.
@@ -2286,6 +2588,7 @@ class AllocationProfile extends Response {
     this.dateLastAccumulatorReset,
     this.dateLastServiceGC,
   });
+
   AllocationProfile._fromJson(Map<String, dynamic> json)
       : super._fromJson(json) {
     members = List<ClassHeapStats>.from(
@@ -2338,6 +2641,7 @@ class BoundField {
     @required this.decl,
     @required this.value,
   });
+
   BoundField._fromJson(Map<String, dynamic> json) {
     decl = createServiceObject(json['decl'], const ['FieldRef']);
     value =
@@ -2392,6 +2696,7 @@ class BoundVariable extends Response {
     @required this.scopeStartTokenPos,
     @required this.scopeEndTokenPos,
   });
+
   BoundVariable._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     value = createServiceObject(
@@ -2451,8 +2756,10 @@ class Breakpoint extends Obj {
     @required this.breakpointNumber,
     @required this.resolved,
     @required this.location,
+    @required String id,
     this.isSyntheticAsyncContinuation,
-  });
+  }) : super(id: id);
+
   Breakpoint._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     breakpointNumber = json['breakpointNumber'];
     resolved = json['resolved'];
@@ -2494,7 +2801,9 @@ class ClassRef extends ObjRef {
 
   ClassRef({
     @required this.name,
-  });
+    @required String id,
+  }) : super(id: id);
+
   ClassRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
   }
@@ -2517,7 +2826,7 @@ class ClassRef extends ObjRef {
 }
 
 /// A `Class` provides information about a Dart language class.
-class Class extends Obj {
+class Class extends Obj implements ClassRef {
   static Class parse(Map<String, dynamic> json) =>
       json == null ? null : Class._fromJson(json);
 
@@ -2581,12 +2890,14 @@ class Class extends Obj {
     @required this.fields,
     @required this.functions,
     @required this.subclasses,
+    @required String id,
     this.error,
     this.location,
     this.superClass,
     this.superType,
     this.mixin,
-  });
+  }) : super(id: id);
+
   Class._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     error = createServiceObject(json['error'], const ['ErrorRef']);
@@ -2664,6 +2975,7 @@ class ClassHeapStats extends Response {
     @required this.instancesAccumulated,
     @required this.instancesCurrent,
   });
+
   ClassHeapStats._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     classRef = createServiceObject(json['class'], const ['ClassRef']);
     accumulatedSize = json['accumulatedSize'];
@@ -2700,6 +3012,7 @@ class ClassList extends Response {
   ClassList({
     @required this.classes,
   });
+
   ClassList._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     classes = List<ClassRef>.from(
         createServiceObject(json['classes'], const ['ClassRef']) ?? []);
@@ -2718,6 +3031,35 @@ class ClassList extends Response {
   String toString() => '[ClassList type: ${type}, classes: ${classes}]';
 }
 
+/// See [getClientName] and [setClientName].
+class ClientName extends Response {
+  static ClientName parse(Map<String, dynamic> json) =>
+      json == null ? null : ClientName._fromJson(json);
+
+  /// The name of the currently connected VM service client.
+  String name;
+
+  ClientName({
+    @required this.name,
+  });
+
+  ClientName._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
+    name = json['name'];
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    var json = <String, dynamic>{};
+    json['type'] = 'ClientName';
+    json.addAll({
+      'name': name,
+    });
+    return json;
+  }
+
+  String toString() => '[ClientName type: ${type}, name: ${name}]';
+}
+
 /// `CodeRef` is a reference to a `Code` object.
 class CodeRef extends ObjRef {
   static CodeRef parse(Map<String, dynamic> json) =>
@@ -2732,7 +3074,9 @@ class CodeRef extends ObjRef {
   CodeRef({
     @required this.name,
     @required this.kind,
-  });
+    @required String id,
+  }) : super(id: id);
+
   CodeRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     kind = json['kind'];
@@ -2758,7 +3102,7 @@ class CodeRef extends ObjRef {
 }
 
 /// A `Code` object represents compiled code in the Dart VM.
-class Code extends ObjRef {
+class Code extends ObjRef implements CodeRef {
   static Code parse(Map<String, dynamic> json) =>
       json == null ? null : Code._fromJson(json);
 
@@ -2771,7 +3115,9 @@ class Code extends ObjRef {
   Code({
     @required this.name,
     @required this.kind,
-  });
+    @required String id,
+  }) : super(id: id);
+
   Code._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     kind = json['kind'];
@@ -2805,7 +3151,9 @@ class ContextRef extends ObjRef {
 
   ContextRef({
     @required this.length,
-  });
+    @required String id,
+  }) : super(id: id);
+
   ContextRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     length = json['length'];
   }
@@ -2830,7 +3178,7 @@ class ContextRef extends ObjRef {
 
 /// A `Context` is a data structure which holds the captured variables for some
 /// closure.
-class Context extends Obj {
+class Context extends Obj implements ContextRef {
   static Context parse(Map<String, dynamic> json) =>
       json == null ? null : Context._fromJson(json);
 
@@ -2847,8 +3195,10 @@ class Context extends Obj {
   Context({
     @required this.length,
     @required this.variables,
+    @required String id,
     this.parent,
-  });
+  }) : super(id: id);
+
   Context._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     length = json['length'];
     parent = createServiceObject(json['parent'], const ['Context']);
@@ -2886,6 +3236,7 @@ class ContextElement {
   ContextElement({
     @required this.value,
   });
+
   ContextElement._fromJson(Map<String, dynamic> json) {
     value =
         createServiceObject(json['value'], const ['InstanceRef', 'Sentinel']);
@@ -2949,6 +3300,7 @@ class CpuSamples extends Response {
     @required this.functions,
     @required this.samples,
   });
+
   CpuSamples._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     samplePeriod = json['samplePeriod'];
     maxStackDepth = json['maxStackDepth'];
@@ -3030,6 +3382,7 @@ class CpuSample {
     this.userTag,
     this.truncated,
   });
+
   CpuSample._fromJson(Map<String, dynamic> json) {
     tid = json['tid'];
     timestamp = json['timestamp'];
@@ -3070,7 +3423,9 @@ class ErrorRef extends ObjRef {
   ErrorRef({
     @required this.kind,
     @required this.message,
-  });
+    @required String id,
+  }) : super(id: id);
+
   ErrorRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     message = json['message'];
@@ -3096,8 +3451,8 @@ class ErrorRef extends ObjRef {
 }
 
 /// An `Error` represents a Dart language level error. This is distinct from an
-/// [rpc error].
-class Error extends Obj {
+/// [RPC error].
+class Error extends Obj implements ErrorRef {
   static Error parse(Map<String, dynamic> json) =>
       json == null ? null : Error._fromJson(json);
 
@@ -3120,9 +3475,11 @@ class Error extends Obj {
   Error({
     @required this.kind,
     @required this.message,
+    @required String id,
     this.exception,
     this.stacktrace,
-  });
+  }) : super(id: id);
+
   Error._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     message = json['message'];
@@ -3264,6 +3621,12 @@ class Event extends Response {
   @optional
   List<TimelineEvent> timelineEvents;
 
+  /// The new set of recorded timeline streams.
+  ///
+  /// This is provided for the TimelineStreamSubscriptionsUpdate event.
+  @optional
+  List<String> updatedStreams;
+
   /// Is the isolate paused at an await, yield, or yield* statement?
   ///
   /// This is provided for the event kinds:
@@ -3275,7 +3638,6 @@ class Event extends Response {
   /// The status (success or failure) related to the event. This is provided for
   /// the event kinds:
   ///  - IsolateReloaded
-  ///  - IsolateSpawn
   @optional
   String status;
 
@@ -3351,6 +3713,7 @@ class Event extends Response {
     this.extensionKind,
     this.extensionData,
     this.timelineEvents,
+    this.updatedStreams,
     this.atAsyncSuspension,
     this.status,
     this.logRecord,
@@ -3362,6 +3725,7 @@ class Event extends Response {
     this.last,
     this.data,
   });
+
   Event._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     isolate = createServiceObject(json['isolate'], const ['IsolateRef']);
@@ -3383,6 +3747,9 @@ class Event extends Response {
         ? null
         : List<TimelineEvent>.from(createServiceObject(
             json['timelineEvents'], const ['TimelineEvent']));
+    updatedStreams = json['updatedStreams'] == null
+        ? null
+        : List<String>.from(json['updatedStreams']);
     atAsyncSuspension = json['atAsyncSuspension'];
     status = json['status'];
     logRecord = createServiceObject(json['logRecord'], const ['LogRecord']);
@@ -3417,6 +3784,8 @@ class Event extends Response {
     _setIfNotNull(json, 'extensionData', extensionData?.data);
     _setIfNotNull(json, 'timelineEvents',
         timelineEvents?.map((f) => f?.toJson())?.toList());
+    _setIfNotNull(
+        json, 'updatedStreams', updatedStreams?.map((f) => f)?.toList());
     _setIfNotNull(json, 'atAsyncSuspension', atAsyncSuspension);
     _setIfNotNull(json, 'status', status);
     _setIfNotNull(json, 'logRecord', logRecord?.toJson());
@@ -3467,7 +3836,9 @@ class FieldRef extends ObjRef {
     @required this.isConst,
     @required this.isFinal,
     @required this.isStatic,
-  });
+    @required String id,
+  }) : super(id: id);
+
   FieldRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     owner = createServiceObject(json['owner'], const ['ObjRef']);
@@ -3501,7 +3872,7 @@ class FieldRef extends ObjRef {
 }
 
 /// A `Field` provides information about a Dart language field or variable.
-class Field extends Obj {
+class Field extends Obj implements FieldRef {
   static Field parse(Map<String, dynamic> json) =>
       json == null ? null : Field._fromJson(json);
 
@@ -3541,9 +3912,11 @@ class Field extends Obj {
     @required this.isConst,
     @required this.isFinal,
     @required this.isStatic,
+    @required String id,
     this.staticValue,
     this.location,
-  });
+  }) : super(id: id);
+
   Field._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     owner = createServiceObject(json['owner'], const ['ObjRef']);
@@ -3607,6 +3980,7 @@ class Flag {
     @required this.modified,
     this.valueAsString,
   });
+
   Flag._fromJson(Map<String, dynamic> json) {
     name = json['name'];
     comment = json['comment'];
@@ -3640,6 +4014,7 @@ class FlagList extends Response {
   FlagList({
     @required this.flags,
   });
+
   FlagList._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     flags = List<Flag>.from(
         createServiceObject(json['flags'], const ['Flag']) ?? []);
@@ -3688,6 +4063,7 @@ class Frame extends Response {
     this.vars,
     this.kind,
   });
+
   Frame._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     index = json['index'];
     function = createServiceObject(json['function'], const ['FuncRef']);
@@ -3742,7 +4118,9 @@ class FuncRef extends ObjRef {
     @required this.owner,
     @required this.isStatic,
     @required this.isConst,
-  });
+    @required String id,
+  }) : super(id: id);
+
   FuncRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     owner = createServiceObject(
@@ -3774,7 +4152,7 @@ class FuncRef extends ObjRef {
 }
 
 /// A `Func` represents a Dart language function.
-class Func extends Obj {
+class Func extends Obj implements FuncRef {
   static Func parse(Map<String, dynamic> json) =>
       json == null ? null : Func._fromJson(json);
 
@@ -3785,6 +4163,12 @@ class Func extends Obj {
   ///
   /// [owner] can be one of [LibraryRef], [ClassRef] or [FuncRef].
   dynamic owner;
+
+  /// Is this function static?
+  bool isStatic;
+
+  /// Is this function const?
+  bool isConst;
 
   /// The location of this function in the source code.
   @optional
@@ -3797,13 +4181,19 @@ class Func extends Obj {
   Func({
     @required this.name,
     @required this.owner,
+    @required this.isStatic,
+    @required this.isConst,
+    @required String id,
     this.location,
     this.code,
-  });
+  }) : super(id: id);
+
   Func._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     owner = createServiceObject(
         json['owner'], const ['LibraryRef', 'ClassRef', 'FuncRef']);
+    isStatic = json['static'];
+    isConst = json['const'];
     location = createServiceObject(json['location'], const ['SourceLocation']);
     code = createServiceObject(json['code'], const ['CodeRef']);
   }
@@ -3815,6 +4205,8 @@ class Func extends Obj {
     json.addAll({
       'name': name,
       'owner': owner.toJson(),
+      'static': isStatic,
+      'const': isConst,
     });
     _setIfNotNull(json, 'location', location?.toJson());
     _setIfNotNull(json, 'code', code?.toJson());
@@ -3825,8 +4217,9 @@ class Func extends Obj {
 
   operator ==(other) => other is Func && id == other.id;
 
-  String toString() =>
-      '[Func type: ${type}, id: ${id}, name: ${name}, owner: ${owner}]';
+  String toString() => '[Func ' //
+      'type: ${type}, id: ${id}, name: ${name}, owner: ${owner}, ' //
+      'isStatic: ${isStatic}, isConst: ${isConst}]';
 }
 
 /// `InstanceRef` is a reference to an `Instance`.
@@ -3933,6 +4326,7 @@ class InstanceRef extends ObjRef {
   InstanceRef({
     @required this.kind,
     @required this.classRef,
+    @required String id,
     this.valueAsString,
     this.valueAsStringIsTruncated,
     this.length,
@@ -3942,12 +4336,13 @@ class InstanceRef extends ObjRef {
     this.pattern,
     this.closureFunction,
     this.closureContext,
-  });
+  }) : super(id: id);
+
   InstanceRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     classRef = createServiceObject(json['class'], const ['ClassRef']);
     valueAsString = json['valueAsString'];
-    valueAsStringIsTruncated = json['valueAsStringIsTruncated'] ?? false;
+    valueAsStringIsTruncated = json['valueAsStringIsTruncated'];
     length = json['length'];
     name = json['name'];
     typeClass = createServiceObject(json['typeClass'], const ['ClassRef']);
@@ -3969,8 +4364,7 @@ class InstanceRef extends ObjRef {
       'class': classRef.toJson(),
     });
     _setIfNotNull(json, 'valueAsString', valueAsString);
-    _setIfNotNull(
-        json, 'valueAsStringIsTruncated', valueAsStringIsTruncated ?? false);
+    _setIfNotNull(json, 'valueAsStringIsTruncated', valueAsStringIsTruncated);
     _setIfNotNull(json, 'length', length);
     _setIfNotNull(json, 'name', name);
     _setIfNotNull(json, 'typeClass', typeClass?.toJson());
@@ -3990,7 +4384,7 @@ class InstanceRef extends ObjRef {
 }
 
 /// An `Instance` represents an instance of the Dart language class `Obj`.
-class Instance extends Obj {
+class Instance extends Obj implements InstanceRef {
   static Instance parse(Map<String, dynamic> json) =>
       json == null ? null : Instance._fromJson(json);
 
@@ -4163,7 +4557,21 @@ class Instance extends Obj {
   /// Provided for instance kinds:
   ///  - RegExp
   @optional
-  String pattern;
+  InstanceRef pattern;
+
+  /// The function associated with a Closure instance.
+  ///
+  /// Provided for instance kinds:
+  ///  - Closure
+  @optional
+  FuncRef closureFunction;
+
+  /// The context associated with a Closure instance.
+  ///
+  /// Provided for instance kinds:
+  ///  - Closure
+  @optional
+  ContextRef closureContext;
 
   /// Whether this regular expression is case sensitive.
   ///
@@ -4233,6 +4641,7 @@ class Instance extends Obj {
   Instance({
     @required this.kind,
     @required this.classRef,
+    @required String id,
     this.valueAsString,
     this.valueAsStringIsTruncated,
     this.length,
@@ -4247,6 +4656,8 @@ class Instance extends Obj {
     this.bytes,
     this.mirrorReferent,
     this.pattern,
+    this.closureFunction,
+    this.closureContext,
     this.isCaseSensitive,
     this.isMultiLine,
     this.propertyKey,
@@ -4255,12 +4666,13 @@ class Instance extends Obj {
     this.parameterIndex,
     this.targetType,
     this.bound,
-  });
+  }) : super(id: id);
+
   Instance._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     classRef = createServiceObject(json['class'], const ['ClassRef']);
     valueAsString = json['valueAsString'];
-    valueAsStringIsTruncated = json['valueAsStringIsTruncated'] ?? false;
+    valueAsStringIsTruncated = json['valueAsStringIsTruncated'];
     length = json['length'];
     offset = json['offset'];
     count = json['count'];
@@ -4283,7 +4695,11 @@ class Instance extends Obj {
     bytes = json['bytes'];
     mirrorReferent =
         createServiceObject(json['mirrorReferent'], const ['InstanceRef']);
-    pattern = json['pattern'];
+    pattern = createServiceObject(json['pattern'], const ['InstanceRef']);
+    closureFunction =
+        createServiceObject(json['closureFunction'], const ['FuncRef']);
+    closureContext =
+        createServiceObject(json['closureContext'], const ['ContextRef']);
     isCaseSensitive = json['isCaseSensitive'];
     isMultiLine = json['isMultiLine'];
     propertyKey =
@@ -4306,8 +4722,7 @@ class Instance extends Obj {
       'class': classRef.toJson(),
     });
     _setIfNotNull(json, 'valueAsString', valueAsString);
-    _setIfNotNull(
-        json, 'valueAsStringIsTruncated', valueAsStringIsTruncated ?? false);
+    _setIfNotNull(json, 'valueAsStringIsTruncated', valueAsStringIsTruncated);
     _setIfNotNull(json, 'length', length);
     _setIfNotNull(json, 'offset', offset);
     _setIfNotNull(json, 'count', count);
@@ -4321,7 +4736,9 @@ class Instance extends Obj {
         json, 'associations', associations?.map((f) => f?.toJson())?.toList());
     _setIfNotNull(json, 'bytes', bytes);
     _setIfNotNull(json, 'mirrorReferent', mirrorReferent?.toJson());
-    _setIfNotNull(json, 'pattern', pattern);
+    _setIfNotNull(json, 'pattern', pattern?.toJson());
+    _setIfNotNull(json, 'closureFunction', closureFunction?.toJson());
+    _setIfNotNull(json, 'closureContext', closureContext?.toJson());
     _setIfNotNull(json, 'isCaseSensitive', isCaseSensitive);
     _setIfNotNull(json, 'isMultiLine', isMultiLine);
     _setIfNotNull(json, 'propertyKey', propertyKey?.toJson());
@@ -4360,6 +4777,7 @@ class IsolateRef extends Response {
     @required this.number,
     @required this.name,
   });
+
   IsolateRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     number = json['number'];
@@ -4387,7 +4805,7 @@ class IsolateRef extends Response {
 }
 
 /// An `Isolate` object provides information about one isolate in the VM.
-class Isolate extends Response {
+class Isolate extends Response implements IsolateRef {
   static Isolate parse(Map<String, dynamic> json) =>
       json == null ? null : Isolate._fromJson(json);
 
@@ -4460,6 +4878,7 @@ class Isolate extends Response {
     this.error,
     this.extensionRPCs,
   });
+
   Isolate._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     number = json['number'];
@@ -4532,6 +4951,7 @@ class IsolateGroupRef extends Response {
     @required this.number,
     @required this.name,
   });
+
   IsolateGroupRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     number = json['number'];
@@ -4559,7 +4979,7 @@ class IsolateGroupRef extends Response {
 }
 
 /// An `Isolate` object provides information about one isolate in the VM.
-class IsolateGroup extends Response {
+class IsolateGroup extends Response implements IsolateGroupRef {
   static IsolateGroup parse(Map<String, dynamic> json) =>
       json == null ? null : IsolateGroup._fromJson(json);
 
@@ -4581,6 +5001,7 @@ class IsolateGroup extends Response {
     @required this.name,
     @required this.isolates,
   });
+
   IsolateGroup._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     number = json['number'];
@@ -4622,6 +5043,7 @@ class InboundReferences extends Response {
   InboundReferences({
     @required this.references,
   });
+
   InboundReferences._fromJson(Map<String, dynamic> json)
       : super._fromJson(json) {
     references = List<InboundReference>.from(
@@ -4666,6 +5088,7 @@ class InboundReference {
     this.parentListIndex,
     this.parentField,
   });
+
   InboundReference._fromJson(Map<String, dynamic> json) {
     source = createServiceObject(json['source'], const ['ObjRef']);
     parentListIndex = json['parentListIndex'];
@@ -4700,6 +5123,7 @@ class InstanceSet extends Response {
     @required this.totalCount,
     @required this.instances,
   });
+
   InstanceSet._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     totalCount = json['totalCount'];
     instances = List<ObjRef>.from(createServiceObject(
@@ -4735,7 +5159,9 @@ class LibraryRef extends ObjRef {
   LibraryRef({
     @required this.name,
     @required this.uri,
-  });
+    @required String id,
+  }) : super(id: id);
+
   LibraryRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     uri = json['uri'];
@@ -4763,7 +5189,7 @@ class LibraryRef extends ObjRef {
 /// A `Library` provides information about a Dart language library.
 ///
 /// See [setLibraryDebuggable].
-class Library extends Obj {
+class Library extends Obj implements LibraryRef {
   static Library parse(Map<String, dynamic> json) =>
       json == null ? null : Library._fromJson(json);
 
@@ -4800,7 +5226,9 @@ class Library extends Obj {
     @required this.variables,
     @required this.functions,
     @required this.classes,
-  });
+    @required String id,
+  }) : super(id: id);
+
   Library._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     uri = json['uri'];
@@ -4864,6 +5292,7 @@ class LibraryDependency {
     @required this.prefix,
     @required this.target,
   });
+
   LibraryDependency._fromJson(Map<String, dynamic> json) {
     isImport = json['isImport'];
     isDeferred = json['isDeferred'];
@@ -4928,6 +5357,7 @@ class LogRecord extends Response {
     @required this.error,
     @required this.stackTrace,
   });
+
   LogRecord._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     message = createServiceObject(json['message'], const ['InstanceRef']);
     time = json['time'];
@@ -4973,6 +5403,7 @@ class MapAssociation {
     @required this.key,
     @required this.value,
   });
+
   MapAssociation._fromJson(Map<String, dynamic> json) {
     key = createServiceObject(json['key'], const ['InstanceRef', 'Sentinel']);
     value =
@@ -5018,6 +5449,7 @@ class MemoryUsage extends Response {
     @required this.heapCapacity,
     @required this.heapUsage,
   });
+
   MemoryUsage._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     externalUsage = json['externalUsage'];
     heapCapacity = json['heapCapacity'];
@@ -5077,6 +5509,7 @@ class Message extends Response {
     this.handler,
     this.location,
   });
+
   Message._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     index = json['index'];
     name = json['name'];
@@ -5118,6 +5551,7 @@ class NativeFunction {
   NativeFunction({
     @required this.name,
   });
+
   NativeFunction._fromJson(Map<String, dynamic> json) {
     name = json['name'];
   }
@@ -5145,6 +5579,7 @@ class NullValRef extends InstanceRef {
   NullValRef({
     @required this.valueAsString,
   });
+
   NullValRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     valueAsString = json['valueAsString'];
   }
@@ -5169,7 +5604,7 @@ class NullValRef extends InstanceRef {
 }
 
 /// A `NullVal` object represents the Dart language value null.
-class NullVal extends Instance {
+class NullVal extends Instance implements NullValRef {
   static NullVal parse(Map<String, dynamic> json) =>
       json == null ? null : NullVal._fromJson(json);
 
@@ -5180,6 +5615,7 @@ class NullVal extends Instance {
   NullVal({
     @required this.valueAsString,
   });
+
   NullVal._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     valueAsString = json['valueAsString'];
   }
@@ -5222,6 +5658,7 @@ class ObjRef extends Response {
     @required this.id,
     this.fixedId,
   });
+
   ObjRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     fixedId = json['fixedId'];
@@ -5246,7 +5683,7 @@ class ObjRef extends Response {
 }
 
 /// An `Obj` is a persistent object that is owned by some isolate.
-class Obj extends Response {
+class Obj extends Response implements ObjRef {
   static Obj parse(Map<String, dynamic> json) =>
       json == null ? null : Obj._fromJson(json);
 
@@ -5289,6 +5726,7 @@ class Obj extends Response {
     this.classRef,
     this.size,
   });
+
   Obj._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     id = json['id'];
     fixedId = json['fixedId'];
@@ -5347,6 +5785,7 @@ class ProfileFunction {
     @required this.resolvedUrl,
     @required this.function,
   });
+
   ProfileFunction._fromJson(Map<String, dynamic> json) {
     kind = json['kind'];
     inclusiveTicks = json['inclusiveTicks'];
@@ -5372,6 +5811,79 @@ class ProfileFunction {
       'resolvedUrl: ${resolvedUrl}, function: ${function}]';
 }
 
+/// A `ProtocolList` contains a list of all protocols supported by the service
+/// instance.
+///
+/// See [Protocol] and [getSupportedProtocols].
+class ProtocolList extends Response {
+  static ProtocolList parse(Map<String, dynamic> json) =>
+      json == null ? null : ProtocolList._fromJson(json);
+
+  /// A list of supported protocols provided by this service.
+  List<Protocol> protocols;
+
+  ProtocolList({
+    @required this.protocols,
+  });
+
+  ProtocolList._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
+    protocols = List<Protocol>.from(
+        createServiceObject(json['protocols'], const ['Protocol']) ?? []);
+  }
+
+  @override
+  Map<String, dynamic> toJson() {
+    var json = <String, dynamic>{};
+    json['type'] = 'ProtocolList';
+    json.addAll({
+      'protocols': protocols.map((f) => f.toJson()).toList(),
+    });
+    return json;
+  }
+
+  String toString() => '[ProtocolList type: ${type}, protocols: ${protocols}]';
+}
+
+/// See [getSupportedProtocols].
+class Protocol {
+  static Protocol parse(Map<String, dynamic> json) =>
+      json == null ? null : Protocol._fromJson(json);
+
+  /// The name of the supported protocol.
+  String protocolName;
+
+  /// The major revision of the protocol.
+  int major;
+
+  /// The minor revision of the protocol.
+  int minor;
+
+  Protocol({
+    @required this.protocolName,
+    @required this.major,
+    @required this.minor,
+  });
+
+  Protocol._fromJson(Map<String, dynamic> json) {
+    protocolName = json['protocolName'];
+    major = json['major'];
+    minor = json['minor'];
+  }
+
+  Map<String, dynamic> toJson() {
+    var json = <String, dynamic>{};
+    json.addAll({
+      'protocolName': protocolName,
+      'major': major,
+      'minor': minor,
+    });
+    return json;
+  }
+
+  String toString() => '[Protocol ' //
+      'protocolName: ${protocolName}, major: ${major}, minor: ${minor}]';
+}
+
 class ReloadReport extends Response {
   static ReloadReport parse(Map<String, dynamic> json) =>
       json == null ? null : ReloadReport._fromJson(json);
@@ -5382,6 +5894,7 @@ class ReloadReport extends Response {
   ReloadReport({
     @required this.success,
   });
+
   ReloadReport._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     success = json['success'];
   }
@@ -5425,6 +5938,7 @@ class RetainingObject {
     this.parentMapKey,
     this.parentField,
   });
+
   RetainingObject._fromJson(Map<String, dynamic> json) {
     value = createServiceObject(json['value'], const ['ObjRef']);
     parentListIndex = json['parentListIndex'];
@@ -5467,6 +5981,7 @@ class RetainingPath extends Response {
     @required this.gcRootType,
     @required this.elements,
   });
+
   RetainingPath._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     length = json['length'];
     gcRootType = json['gcRootType'];
@@ -5507,6 +6022,7 @@ class Response {
   Response({
     @required this.type,
   });
+
   Response._fromJson(this.json) {
     type = json['type'];
   }
@@ -5538,6 +6054,7 @@ class Sentinel extends Response {
     @required this.kind,
     @required this.valueAsString,
   });
+
   Sentinel._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     kind = json['kind'];
     valueAsString = json['valueAsString'];
@@ -5568,7 +6085,9 @@ class ScriptRef extends ObjRef {
 
   ScriptRef({
     @required this.uri,
-  });
+    @required String id,
+  }) : super(id: id);
+
   ScriptRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     uri = json['uri'];
   }
@@ -5620,7 +6139,7 @@ class ScriptRef extends ObjRef {
 /// 100 | 1 | 5
 /// 101 | 1 | 8
 /// 102 | 2 | 7
-class Script extends Obj {
+class Script extends Obj implements ScriptRef {
   static Script parse(Map<String, dynamic> json) =>
       json == null ? null : Script._fromJson(json);
 
@@ -5652,11 +6171,13 @@ class Script extends Obj {
   Script({
     @required this.uri,
     @required this.library,
+    @required String id,
     this.lineOffset,
     this.columnOffset,
     this.source,
     this.tokenPosTable,
-  });
+  }) : super(id: id);
+
   Script._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     uri = json['uri'];
     library = createServiceObject(json['library'], const ['LibraryRef']);
@@ -5730,6 +6251,7 @@ class ScriptList extends Response {
   ScriptList({
     @required this.scripts,
   });
+
   ScriptList._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     scripts = List<ScriptRef>.from(
         createServiceObject(json['scripts'], const ['ScriptRef']) ?? []);
@@ -5769,6 +6291,7 @@ class SourceLocation extends Response {
     @required this.tokenPos,
     this.endTokenPos,
   });
+
   SourceLocation._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     script = createServiceObject(json['script'], const ['ScriptRef']);
     tokenPos = json['tokenPos'];
@@ -5814,6 +6337,7 @@ class SourceReport extends Response {
     @required this.ranges,
     @required this.scripts,
   });
+
   SourceReport._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     ranges = List<SourceReportRange>.from(
         _createSpecificObject(json['ranges'], SourceReportRange.parse));
@@ -5857,6 +6381,7 @@ class SourceReportCoverage {
     @required this.hits,
     @required this.misses,
   });
+
   SourceReportCoverage._fromJson(Map<String, dynamic> json) {
     hits = List<int>.from(json['hits']);
     misses = List<int>.from(json['misses']);
@@ -5924,6 +6449,7 @@ class SourceReportRange {
     this.coverage,
     this.possibleBreakpoints,
   });
+
   SourceReportRange._fromJson(Map<String, dynamic> json) {
     scriptIndex = json['scriptIndex'];
     startPos = json['startPos'];
@@ -5977,6 +6503,7 @@ class Stack extends Response {
     this.asyncCausalFrames,
     this.awaiterFrames,
   });
+
   Stack._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     frames = List<Frame>.from(
         createServiceObject(json['frames'], const ['Frame']) ?? []);
@@ -6018,6 +6545,7 @@ class Success extends Response {
       json == null ? null : Success._fromJson(json);
 
   Success();
+
   Success._fromJson(Map<String, dynamic> json) : super._fromJson(json);
 
   @override
@@ -6034,7 +6562,9 @@ class Timeline extends Response {
   static Timeline parse(Map<String, dynamic> json) =>
       json == null ? null : Timeline._fromJson(json);
 
-  /// A list of timeline events.
+  /// A list of timeline events. No order is guarenteed for these events; in
+  /// particular, these events may be unordered with respect to their
+  /// timestamps.
   List<TimelineEvent> traceEvents;
 
   /// The start of the period of time in which traceEvents were collected.
@@ -6048,6 +6578,7 @@ class Timeline extends Response {
     @required this.timeOriginMicros,
     @required this.timeExtentMicros,
   });
+
   Timeline._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     traceEvents = List<TimelineEvent>.from(
         createServiceObject(json['traceEvents'], const ['TimelineEvent']) ??
@@ -6082,6 +6613,7 @@ class TimelineEvent {
   Map<String, dynamic> json;
 
   TimelineEvent();
+
   TimelineEvent._fromJson(this.json);
 
   Map<String, dynamic> toJson() {
@@ -6098,8 +6630,8 @@ class TimelineFlags extends Response {
       json == null ? null : TimelineFlags._fromJson(json);
 
   /// The name of the recorder currently in use. Recorder types include, but are
-  /// not limited to: Callback, Endless, Fuchsia, Ring, Startup, and Systrace.
-  /// Set to "null" if no recorder is currently set.
+  /// not limited to: Callback, Endless, Fuchsia, Macos, Ring, Startup, and
+  /// Systrace. Set to "null" if no recorder is currently set.
   String recorderName;
 
   /// The list of all available timeline streams.
@@ -6113,6 +6645,7 @@ class TimelineFlags extends Response {
     @required this.availableStreams,
     @required this.recordedStreams,
   });
+
   TimelineFlags._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     recorderName = json['recorderName'];
     availableStreams = List<String>.from(json['availableStreams']);
@@ -6146,6 +6679,7 @@ class Timestamp extends Response {
   Timestamp({
     @required this.timestamp,
   });
+
   Timestamp._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     timestamp = json['timestamp'];
   }
@@ -6173,7 +6707,9 @@ class TypeArgumentsRef extends ObjRef {
 
   TypeArgumentsRef({
     @required this.name,
-  });
+    @required String id,
+  }) : super(id: id);
+
   TypeArgumentsRef._fromJson(Map<String, dynamic> json)
       : super._fromJson(json) {
     name = json['name'];
@@ -6199,7 +6735,7 @@ class TypeArgumentsRef extends ObjRef {
 
 /// A `TypeArguments` object represents the type argument vector for some
 /// instantiated generic type.
-class TypeArguments extends Obj {
+class TypeArguments extends Obj implements TypeArgumentsRef {
   static TypeArguments parse(Map<String, dynamic> json) =>
       json == null ? null : TypeArguments._fromJson(json);
 
@@ -6215,7 +6751,9 @@ class TypeArguments extends Obj {
   TypeArguments({
     @required this.name,
     @required this.types,
-  });
+    @required String id,
+  }) : super(id: id);
+
   TypeArguments._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     types = List<InstanceRef>.from(
@@ -6286,6 +6824,7 @@ class UnresolvedSourceLocation extends Response {
     this.line,
     this.column,
   });
+
   UnresolvedSourceLocation._fromJson(Map<String, dynamic> json)
       : super._fromJson(json) {
     script = createServiceObject(json['script'], const ['ScriptRef']);
@@ -6327,6 +6866,7 @@ class Version extends Response {
     @required this.major,
     @required this.minor,
   });
+
   Version._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     major = json['major'];
     minor = json['minor'];
@@ -6358,6 +6898,7 @@ class VMRef extends Response {
   VMRef({
     @required this.name,
   });
+
   VMRef._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
   }
@@ -6375,7 +6916,7 @@ class VMRef extends Response {
   String toString() => '[VMRef type: ${type}, name: ${name}]';
 }
 
-class VM extends Response {
+class VM extends Response implements VMRef {
   static VM parse(Map<String, dynamic> json) =>
       json == null ? null : VM._fromJson(json);
 
@@ -6423,6 +6964,7 @@ class VM extends Response {
     @required this.isolates,
     @required this.isolateGroups,
   });
+
   VM._fromJson(Map<String, dynamic> json) : super._fromJson(json) {
     name = json['name'];
     architectureBits = json['architectureBits'];

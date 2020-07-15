@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:collection';
+import 'package:front_end/src/api_unstable/ddc.dart';
 import 'package:kernel/core_types.dart';
 import 'package:kernel/kernel.dart';
 
@@ -66,7 +67,7 @@ String getTopLevelName(NamedNode n) {
 ///
 ///    (v) => v.type.name == 'Deprecated' && v.type.element.library.isDartCore
 ///
-Expression findAnnotation(TreeNode node, bool test(Expression value)) {
+Expression findAnnotation(TreeNode node, bool Function(Expression) test) {
   List<Expression> annotations;
   if (node is Class) {
     annotations = node.annotations;
@@ -239,7 +240,7 @@ bool isUnsupportedFactoryConstructor(Procedure node) {
 /// if the field [f] is storing that information, otherwise returns `null`.
 Iterable<Member> getRedirectingFactories(Field f) {
   // TODO(jmesserly): this relies on implementation details in Kernel
-  if (f.name.name == '_redirecting#') {
+  if (isRedirectingFactoryField(f)) {
     assert(f.isStatic);
     var list = f.initializer as ListLiteral;
     return list.expressions.map((e) => (e as StaticGet).target);
@@ -319,4 +320,23 @@ class LabelContinueFinder extends StatementVisitor<void> {
     visit(node.body);
     visit(node.finalizer);
   }
+}
+
+/// Ensures that all of the known DartType implementors are handled.
+///
+/// The goal of the function is to catch a new unhandled implementor of
+/// [DartType] in a chain of if-else statements analysing possibilities for an
+/// object of DartType. It doesn't introduce a run-time overhead in production
+/// code if used in an assert.
+bool isKnownDartTypeImplementor(DartType t) {
+  return t is BottomType ||
+      t is DynamicType ||
+      t is FunctionType ||
+      t is FutureOrType ||
+      t is InterfaceType ||
+      t is InvalidType ||
+      t is NeverType ||
+      t is TypeParameterType ||
+      t is TypedefType ||
+      t is VoidType;
 }

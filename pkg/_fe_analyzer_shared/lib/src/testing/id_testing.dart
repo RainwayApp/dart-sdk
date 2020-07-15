@@ -216,7 +216,9 @@ class MemberAnnotations<DataType> {
 // TODO(johnniwinther): Support an empty marker set.
 void computeExpectedMap(Uri sourceUri, String filename, AnnotatedCode code,
     Map<String, MemberAnnotations<IdValue>> maps,
-    {void onFailure(String message)}) {
+    {void onFailure(String message),
+    bool preserveWhitespaceInAnnotations: false,
+    bool preserveInfixWhitespaceInAnnotations: false}) {
   List<String> mapKeys = maps.keys.toList();
   Map<String, AnnotatedCode> split = splitByPrefixes(code, mapKeys);
 
@@ -226,7 +228,9 @@ void computeExpectedMap(Uri sourceUri, String filename, AnnotatedCode code,
     Map<Id, IdValue> expectedValues = fileAnnotations[sourceUri];
     for (Annotation annotation in code.annotations) {
       String text = annotation.text;
-      IdValue idValue = IdValue.decode(sourceUri, annotation, text);
+      IdValue idValue = IdValue.decode(sourceUri, annotation, text,
+          preserveWhitespaceInAnnotations: preserveWhitespaceInAnnotations,
+          preserveInfixWhitespace: preserveInfixWhitespaceInAnnotations);
       if (idValue.id.isGlobal) {
         if (fileAnnotations.globalData.containsKey(idValue.id)) {
           onFailure("Error in test '$filename': "
@@ -256,7 +260,9 @@ void computeExpectedMap(Uri sourceUri, String filename, AnnotatedCode code,
 TestData computeTestData(FileSystemEntity testFile,
     {Iterable<String> supportedMarkers,
     Uri createTestUri(Uri uri, String fileName),
-    void onFailure(String message)}) {
+    void onFailure(String message),
+    bool preserveWhitespaceInAnnotations: false,
+    bool preserveInfixWhitespaceInAnnotations: false}) {
   Uri entryPoint;
 
   String testName;
@@ -297,7 +303,10 @@ TestData computeTestData(FileSystemEntity testFile,
   }
   computeExpectedMap(entryPoint, testFile.uri.pathSegments.last,
       code[entryPoint], expectedMaps,
-      onFailure: onFailure);
+      onFailure: onFailure,
+      preserveWhitespaceInAnnotations: preserveWhitespaceInAnnotations,
+      preserveInfixWhitespaceInAnnotations:
+          preserveInfixWhitespaceInAnnotations);
   Map<String, String> memorySourceFiles = {
     entryPoint.path: code[entryPoint].sourceCode
   };
@@ -314,7 +323,10 @@ TestData computeTestData(FileSystemEntity testFile,
       code[libFileUri] = annotatedLibCode;
       computeExpectedMap(
           libFileUri, libFileName, annotatedLibCode, expectedMaps,
-          onFailure: onFailure);
+          onFailure: onFailure,
+          preserveWhitespaceInAnnotations: preserveWhitespaceInAnnotations,
+          preserveInfixWhitespaceInAnnotations:
+              preserveInfixWhitespaceInAnnotations);
     }
   }
 
@@ -434,7 +446,10 @@ abstract class DataInterpreter<T> {
   bool isEmpty(T actualData);
 
   /// Returns a textual representation of [actualData].
-  String getText(T actualData);
+  ///
+  /// If [indentation] is provided a multiline pretty printing can be returned
+  /// using [indentation] for additional lines.
+  String getText(T actualData, [String indentation]);
 }
 
 /// Default data interpreter for string data.
@@ -457,7 +472,7 @@ class StringDataInterpreter implements DataInterpreter<String> {
   }
 
   @override
-  String getText(String actualData) {
+  String getText(String actualData, [String indentation]) {
     return actualData;
   }
 }
@@ -501,8 +516,7 @@ Future<TestResult<T>> checkCode<T>(
   Set<Uri> neededDiffs = new Set<Uri>();
 
   void checkActualMap(
-      Map<Id, ActualData<T>> actualMap, Map<Id, IdValue> expectedMap,
-      [Uri uri]) {
+      Map<Id, ActualData<T>> actualMap, Map<Id, IdValue> expectedMap, Uri uri) {
     expectedMap ??= {};
     bool hasLocalFailure = false;
     actualMap?.forEach((Id id, ActualData<T> actualData) {
@@ -561,7 +575,8 @@ Future<TestResult<T>> checkCode<T>(
   compiledData.actualMaps.forEach((Uri uri, Map<Id, ActualData<T>> actualMap) {
     checkActualMap(actualMap, expectedMaps[uri], uri);
   });
-  checkActualMap(compiledData.globalData, expectedMaps.globalData);
+  checkActualMap(compiledData.globalData, expectedMaps.globalData,
+      Uri.parse("global:data"));
 
   Set<Id> missingIds = new Set<Id>();
   void checkMissing(
@@ -603,8 +618,8 @@ Future<TestResult<T>> checkCode<T>(
       for (Uri uri in neededDiffs) {
         print('--annotations diff [${uri.pathSegments.last}]-------------');
         AnnotatedCode annotatedCode = code[uri];
-        print(new AnnotatedCode(annotatedCode.annotatedCode,
-                annotatedCode.sourceCode, annotations[uri])
+        print(new AnnotatedCode(annotatedCode?.annotatedCode ?? "",
+                annotatedCode?.sourceCode ?? "", annotations[uri])
             .toText());
         print('----------------------------------------------------------');
       }
@@ -625,7 +640,91 @@ typedef Future<Map<String, TestResult<T>>> RunTestFunction<T>(TestData testData,
     bool verbose,
     bool succinct,
     bool printCode,
-    Map<String, List<String>> skipMap});
+    Map<String, List<String>> skipMap,
+    Uri nullUri});
+
+/// Compute the file: URI of the file located at `path`, where `path` is
+/// relative to the root of the SDK repository.
+///
+/// We find the root of the SDK repository by looking for the parent of the
+/// directory named `pkg`.
+Uri _fileUriFromSdkRoot(String path) {
+  Uri uri = Platform.script;
+  List<String> pathSegments = uri.pathSegments;
+  return uri.replace(pathSegments: [
+    ...pathSegments.sublist(0, pathSegments.lastIndexOf('pkg')),
+    ...path.split('/')
+  ]);
+}
+
+class MarkerOptions {
+  final Map<String, Uri> markers;
+
+  MarkerOptions.internal(this.markers);
+
+  factory MarkerOptions.fromDataDir(Directory dataDir,
+      {bool shouldFindScript: true}) {
+    File file = new File.fromUri(dataDir.uri.resolve('marker.options'));
+    File script = new File.fromUri(Platform.script);
+    if (!file.existsSync()) {
+      throw new ArgumentError("Marker option file '$file' doesn't exist.");
+    }
+
+    Map<String, Uri> markers = {};
+    String text = file.readAsStringSync();
+    bool isScriptFound = false;
+    for (String line in text.split('\n')) {
+      line = line.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+      int eqPos = line.indexOf('=');
+      if (eqPos == -1) {
+        throw new ArgumentError(
+            "Unsupported marker option '$line' in ${file.uri}");
+      }
+      String marker = line.substring(0, eqPos);
+      String tester = line.substring(eqPos + 1);
+      File testerFile = new File.fromUri(_fileUriFromSdkRoot(tester));
+      if (!testerFile.existsSync()) {
+        throw new ArgumentError(
+            "Tester '$tester' does not exist for marker '$marker' in "
+            "${file.uri}");
+      }
+      if (markers.containsKey(marker)) {
+        throw new ArgumentError("Duplicate marker '$marker' in ${file.uri}");
+      }
+      markers[marker] = testerFile.uri;
+      if (testerFile.absolute.uri == script.absolute.uri) {
+        isScriptFound = true;
+      }
+    }
+    if (shouldFindScript && !isScriptFound) {
+      throw new ArgumentError(
+          "Script '${script.uri}' not found in ${file.uri}");
+    }
+    return new MarkerOptions.internal(markers);
+  }
+
+  Iterable<String> get supportedMarkers => markers.keys;
+
+  Future<void> runAll(List<String> args) async {
+    Set<Uri> testers = markers.values.toSet();
+    bool allOk = true;
+    for (Uri tester in testers) {
+      print('================================================================');
+      print('Running tester: $tester ${args.join(' ')}');
+      print('================================================================');
+      Process process = await Process.start(
+          Platform.resolvedExecutable, [tester.toString(), ...args],
+          mode: ProcessStartMode.inheritStdio);
+      if (await process.exitCode != 0) {
+        allOk = false;
+      }
+    }
+    if (!allOk) {
+      throw "Error(s) occurred.";
+    }
+  }
+}
 
 /// Check code for all tests in [dataDir] using [runTest].
 Future<void> runTests<T>(Directory dataDir,
@@ -633,14 +732,22 @@ Future<void> runTests<T>(Directory dataDir,
     int shards: 1,
     int shardIndex: 0,
     void onTest(Uri uri),
-    Iterable<String> supportedMarkers,
     Uri createUriForFileName(String fileName),
     void onFailure(String message),
     RunTestFunction<T> runTest,
     List<String> skipList,
-    Map<String, List<String>> skipMap}) async {
+    Map<String, List<String>> skipMap,
+    bool preserveWhitespaceInAnnotations: false,
+    bool preserveInfixWhitespaceInAnnotations: false}) async {
+  MarkerOptions markerOptions =
+      new MarkerOptions.fromDataDir(dataDir, shouldFindScript: shards == 1);
   // TODO(johnniwinther): Support --show to show actual data for an input.
   args = args.toList();
+  bool runAll = args.remove('--run-all');
+  if (runAll) {
+    await markerOptions.runAll(args);
+    return;
+  }
   bool verbose = args.remove('-v');
   bool succinct = args.remove('-s');
   bool shouldContinue = args.remove('-c');
@@ -649,11 +756,15 @@ Future<void> runTests<T>(Directory dataDir,
   bool continued = false;
   bool hasFailures = false;
   bool generateAnnotations = args.remove('-g');
+  bool forceUpdate = args.remove('-f');
 
   String relativeDir = dataDir.uri.path.replaceAll(Uri.base.path, '');
   print('Data dir: ${relativeDir}');
-  List<FileSystemEntity> entities =
-      dataDir.listSync().where((entity) => !entity.path.endsWith('~')).toList();
+  List<FileSystemEntity> entities = dataDir
+      .listSync()
+      .where((entity) =>
+          !entity.path.endsWith('~') && !entity.path.endsWith('marker.options'))
+      .toList();
   if (shards > 1) {
     int start = entities.length * shardIndex ~/ shards;
     int end = entities.length * (shardIndex + 1) ~/ shards;
@@ -679,13 +790,20 @@ Future<void> runTests<T>(Directory dataDir,
     print('----------------------------------------------------------------');
 
     Map<Uri, Uri> testToFileUri = {};
-    TestData testData =
-        computeTestData(entity, supportedMarkers: supportedMarkers,
-            createTestUri: (Uri fileUri, String fileName) {
+
+    Uri createTestUri(Uri fileUri, String fileName) {
       Uri testUri = createUriForFileName(fileName);
       testToFileUri[testUri] = fileUri;
       return testUri;
-    }, onFailure: onFailure);
+    }
+
+    TestData testData = computeTestData(entity,
+        supportedMarkers: markerOptions.supportedMarkers,
+        createTestUri: createTestUri,
+        onFailure: onFailure,
+        preserveWhitespaceInAnnotations: preserveWhitespaceInAnnotations,
+        preserveInfixWhitespaceInAnnotations:
+            preserveInfixWhitespaceInAnnotations);
     print('Test: ${testData.testFileUri}');
 
     Map<String, TestResult<T>> results = await runTest(testData,
@@ -693,7 +811,8 @@ Future<void> runTests<T>(Directory dataDir,
         verbose: verbose,
         succinct: succinct,
         printCode: printCode,
-        skipMap: skipMap);
+        skipMap: skipMap,
+        nullUri: createTestUri(entity.uri.resolve("null"), "null"));
 
     bool hasMismatches = false;
     bool hasErrors = false;
@@ -707,7 +826,7 @@ Future<void> runTests<T>(Directory dataDir,
     if (hasErrors) {
       // Cannot generate annotations for erroneous tests.
       hasFailures = true;
-    } else if (hasMismatches) {
+    } else if (hasMismatches || (forceUpdate && generateAnnotations)) {
       if (generateAnnotations) {
         DataInterpreter dataInterpreter;
         Map<String, Map<Uri, Map<Id, ActualData<T>>>> actualData = {};
@@ -739,14 +858,15 @@ Future<void> runTests<T>(Directory dataDir,
             testData.expectedMaps,
             testData.entryPoint,
             actualData,
-            dataInterpreter);
+            dataInterpreter,
+            forceUpdate: forceUpdate);
         annotations.forEach((Uri uri, List<Annotation> annotations) {
           assert(uri != null, "Annotations without uri: $annotations");
           AnnotatedCode code = testData.code[uri];
           assert(code != null,
               "No annotated code for $uri with annotations: $annotations");
           AnnotatedCode generated = new AnnotatedCode(
-              code.annotatedCode, code.sourceCode, annotations);
+              code?.annotatedCode ?? "", code?.sourceCode ?? "", annotations);
           Uri fileUri = testToFileUri[uri];
           new File.fromUri(fileUri).writeAsStringSync(generated.toText());
           print('Generated annotations for ${fileUri}');
@@ -781,4 +901,23 @@ bool skipForConfig(
     }
   }
   return false;
+}
+
+/// Updates all id tests in [relativeTestPaths].
+///
+/// This assumes that the current working directory is the repository root.
+Future<void> updateAllTests(List<String> relativeTestPaths) async {
+  for (String testPath in relativeTestPaths) {
+    List<String> arguments = [
+      '--packages=${Platform.packageConfig}',
+      testPath,
+      '-g',
+      '--run-all'
+    ];
+    print('Running: ${Platform.resolvedExecutable} ${arguments.join(' ')}');
+    Process process = await Process.start(
+        Platform.resolvedExecutable, arguments,
+        mode: ProcessStartMode.inheritStdio);
+    await process.exitCode;
+  }
 }

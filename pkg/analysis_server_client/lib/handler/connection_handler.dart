@@ -21,7 +21,7 @@ import 'package:pub_semver/pub_semver.dart';
 ///
 /// Clients may mix-in this class, but may not extend or implement it.
 mixin ConnectionHandler implements NotificationHandler {
-  Completer<bool> _connected = Completer();
+  final Completer<bool> _connected = Completer();
 
   /// Clients should implement this method to return the server being managed.
   /// This mixin will stop the server process if a connection cannot be
@@ -41,7 +41,7 @@ mixin ConnectionHandler implements NotificationHandler {
 
   @override
   void onServerConnected(ServerConnectedParams params) {
-    Version version = Version.parse(params.version);
+    var version = Version.parse(params.version);
     if (checkServerProtocolVersion(version)) {
       _connected.complete(true);
     } else {
@@ -59,7 +59,7 @@ mixin ConnectionHandler implements NotificationHandler {
   /// Return a future that completes with a `bool` indicating whether
   /// a connection was successfully established with the server.
   Future<bool> serverConnected({Duration timeLimit}) {
-    Future<bool> future = _connected.future;
+    var future = _connected.future;
     if (timeLimit != null) {
       future = future.timeout(timeLimit, onTimeout: () {
         onFailedToConnect();

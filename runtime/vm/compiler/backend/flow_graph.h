@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_FLOW_GRAPH_H_
 #define RUNTIME_VM_COMPILER_BACKEND_FLOW_GRAPH_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/bit_vector.h"
 #include "vm/compiler/backend/il.h"
 #include "vm/growable_array.h"
@@ -112,6 +116,9 @@ class FlowGraph : public ZoneAllocated {
   // the arguments descriptor.
   intptr_t num_direct_parameters() const { return num_direct_parameters_; }
 
+  // The number of words on the stack used by the direct parameters.
+  intptr_t direct_parameters_size() const { return direct_parameters_size_; }
+
   // The number of variables (or boxes) which code can load from / store to.
   // The SSA renaming will insert phi's for them (and only them - i.e. there
   // will be no phi insertion for [LocalVariable]s pointing to the expression
@@ -127,6 +134,19 @@ class FlowGraph : public ZoneAllocated {
     return variable_count() + graph_entry()->osr_entry()->stack_depth();
   }
 
+  // This function returns the offset (in words) of the [index]th
+  // parameter, relative to the first parameter.
+  // If [last_slot] is true it gives the offset of the last slot of that
+  // location, otherwise it returns the first one.
+  static intptr_t ParameterOffsetAt(const Function& function,
+                                    intptr_t index,
+                                    bool last_slot = true);
+
+  static Representation ParameterRepresentationAt(const Function& function,
+                                                  intptr_t index);
+
+  static Representation ReturnRepresentationOf(const Function& function);
+
   // The number of variables (or boxes) inside the functions frame - meaning
   // below the frame pointer.  This does not include the expression stack.
   intptr_t num_stack_locals() const {
@@ -140,11 +160,10 @@ class FlowGraph : public ZoneAllocated {
   }
 
   intptr_t CurrentContextEnvIndex() const {
-#if !defined(DART_PRECOMPILED_RUNTIME)
     if (function().HasBytecode()) {
       return -1;
     }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+
     return EnvIndex(parsed_function().current_context_var());
   }
 
@@ -159,6 +178,11 @@ class FlowGraph : public ZoneAllocated {
   intptr_t EnvIndex(const LocalVariable* variable) const {
     ASSERT(!variable->is_captured());
     return num_direct_parameters_ - variable->index().value();
+  }
+
+  static bool NeedsPairLocation(Representation representation) {
+    return representation == kUnboxedInt64 &&
+           compiler::target::kIntSpillFactor == 2;
   }
 
   // Flow graph orders.
@@ -212,7 +236,7 @@ class FlowGraph : public ZoneAllocated {
   // Return value indicates that the call needs no check at all,
   // just a null check, or a full class check.
   ToCheck CheckForInstanceCall(InstanceCallInstr* call,
-                               RawFunction::Kind kind) const;
+                               FunctionLayout::Kind kind) const;
 
   Thread* thread() const { return thread_; }
   Zone* zone() const { return thread()->zone(); }
@@ -251,6 +275,20 @@ class FlowGraph : public ZoneAllocated {
   void AddToGraphInitialDefinitions(Definition* defn);
   void AddToInitialDefinitions(BlockEntryWithInitialDefs* entry,
                                Definition* defn);
+
+  // Tries to create a constant definition with the given value which can be
+  // used to replace the given operation. Ensures that the representation of
+  // the replacement matches the representation of the original definition.
+  // If the given value can't be represented using matching representation
+  // then returns op itself.
+  Definition* TryCreateConstantReplacementFor(Definition* op,
+                                              const Object& value);
+
+  // Returns true if the given constant value can be represented in the given
+  // representation.
+  static bool IsConstantRepresentable(const Object& value,
+                                      Representation target_rep,
+                                      bool tagged_value_must_be_smi);
 
   enum UseKind { kEffect, kValue };
 
@@ -516,6 +554,7 @@ class FlowGraph : public ZoneAllocated {
   // Flow graph fields.
   const ParsedFunction& parsed_function_;
   intptr_t num_direct_parameters_;
+  intptr_t direct_parameters_size_;
   GraphEntryInstr* graph_entry_;
   GrowableArray<BlockEntryInstr*> preorder_;
   GrowableArray<BlockEntryInstr*> postorder_;

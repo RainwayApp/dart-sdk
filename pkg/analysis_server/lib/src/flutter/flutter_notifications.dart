@@ -13,7 +13,7 @@ void sendFlutterNotificationOutline(
     AnalysisServer server, ResolvedUnitResult resolvedUnit) {
   _sendNotification(server, () {
     var computer = FlutterOutlineComputer(resolvedUnit);
-    protocol.FlutterOutline outline = computer.compute();
+    var outline = computer.compute();
     // send notification
     var params = protocol.FlutterOutlineParams(
       resolvedUnit.path,
@@ -23,10 +23,8 @@ void sendFlutterNotificationOutline(
   });
 }
 
-/**
- * Runs the given notification producing function [f], catching exceptions.
- */
-void _sendNotification(AnalysisServer server, f()) {
+/// Runs the given notification producing function [f], catching exceptions.
+void _sendNotification(AnalysisServer server, Function() f) {
   ServerPerformanceStatistics.notices.makeCurrentWhile(() {
     try {
       f();

@@ -43,6 +43,24 @@
       ]
     },
     {
+      "name": "textual_outline",
+      "kind": "Chain",
+      "source": "test/fasta/textual_outline_suite.dart",
+      "path": "testcases/",
+      "status": "testcases/textual_outline.status",
+      "pattern": [
+        "\\.dart$",
+        "\\.crash_dart$"
+      ],
+      "exclude": [
+        "/testcases/.*_part[0-9]*\\.dart$",
+        "/testcases/.*_lib[0-9]*\\.dart$",
+        "/testcases/dartino/",
+        "/testcases/shaker/",
+        "/testcases/expression/"
+      ]
+    },
+    {
       "name": "outline",
       "kind": "Chain",
       "source": "test/fasta/outline_suite.dart",
@@ -57,7 +75,10 @@
         "/testcases/.*_lib[0-9]*\\.dart$",
         "/testcases/dartino/",
         "/testcases/shaker/",
-        "/testcases/expression/"
+        "/testcases/expression/",
+        "/testcases/general_nnbd_opt_out/",
+        "/testcases/nnbd_mixed/",
+        "/testcases/nonfunction_type_aliases/"
       ]
     },
     {
@@ -75,7 +96,10 @@
         "/testcases/.*_lib[0-9]*\\.dart$",
         "/testcases/dartino/",
         "/testcases/shaker/",
-        "/testcases/expression/"
+        "/testcases/expression/",
+        "/testcases/general_nnbd_opt_out/",
+        "/testcases/nnbd_mixed/",
+        "/testcases/nonfunction_type_aliases/"
       ]
     },
     {
@@ -93,7 +117,10 @@
         "/testcases/.*_lib[0-9]*\\.dart$",
         "/testcases/dartino/",
         "/testcases/shaker/",
-        "/testcases/expression/"
+        "/testcases/expression/",
+        "/testcases/general_nnbd_opt_out/",
+        "/testcases/nnbd_mixed/",
+        "/testcases/nonfunction_type_aliases/"
       ]
     },
     {
@@ -111,7 +138,10 @@
         "/testcases/.*_lib[0-9]*\\.dart$",
         "/testcases/dartino/",
         "/testcases/shaker/",
-        "/testcases/expression/"
+        "/testcases/expression/",
+        "/testcases/general_nnbd_opt_out/",
+        "/testcases/nnbd_mixed/",
+        "/testcases/nonfunction_type_aliases/"
       ]
     },
     {
@@ -130,6 +160,7 @@
         "/testcases/expression/",
         "/testcases/extensions/",
         "/testcases/general/",
+        "/testcases/implicit_getter_calls",
         "/testcases/inference",
         "/testcases/inference_new",
         "/testcases/instantiate_to_bound/",
@@ -243,13 +274,15 @@
       "name": "lint",
       "kind": "Chain",
       "source": "test/lint_suite.dart",
-      "path": "lib/",
+      "path": "../",
       "status": "test/lint_test.status",
       "pattern": [
-        ".*\\.dart$"
+        "_fe_analyzer_shared/lib/.*\\.dart$",
+        "front_end/lib/.*\\.dart$"
       ],
       "exclude": [
-        "src/fasta/fasta_codes_generated\\.dart$"
+        "_fe_analyzer_shared/lib/src/messages/codes_generated\\.dart$",
+        "front_end/lib/src/fasta/fasta_codes_cfe_generated\\.dart$"
       ]
     },
     {
@@ -284,8 +317,6 @@
         "test/fasta/super_mixins_test\\.dart$",
         "test/fasta/types/subtypes_benchmark\\.dart$",
         "test/fasta/unlinked_scope_test\\.dart$",
-        "test/incremental_load_from_dill_suite\\.dart$",
-        "test/incremental_load_from_invalid_dill_test\\.dart$",
         "test/memory_file_system_test\\.dart$",
         "test/scanner_fasta_test\\.dart$",
         "test/scanner_test\\.dart$",
@@ -306,6 +337,17 @@
         "testcases/general/micro\\.dart$",
         "testcases/general/redirecting_factory\\.dart$",
         "testcases/general/spread_collection_inference\\.dart$",
+        "testcases/general_nnbd_opt_out/DeltaBlue\\.dart$",
+        "testcases/general_nnbd_opt_out/annotation_variable_declaration\\.dart$",
+        "testcases/general_nnbd_opt_out/arithmetic\\.dart$",
+        "testcases/general_nnbd_opt_out/bad_type_variable_uses_in_supertypes\\.dart$",
+        "testcases/general_nnbd_opt_out/clone_function_type\\.dart$",
+        "testcases/general_nnbd_opt_out/co19_language_metadata_syntax_t04\\.dart$",
+        "testcases/general_nnbd_opt_out/complex_class_hierarchy\\.dart$",
+        "testcases/general_nnbd_opt_out/issue34899\\.dart$",
+        "testcases/general_nnbd_opt_out/micro\\.dart$",
+        "testcases/general_nnbd_opt_out/redirecting_factory\\.dart$",
+        "testcases/general_nnbd_opt_out/spread_collection_inference\\.dart$",
         "testcases/inference/downwards_inference_initializing_formal_default_formal\\.dart$",
         "testcases/inference/downwards_inference_on_generic_function_expressions\\.dart$",
         "testcases/inference/for_in_loop_promotion\\.dart$",
@@ -367,7 +409,7 @@
       "command-lines": [
         "--checked dart2js",
         "-cdart2js -rd8 --exclude-suite=observatory_ui",
-        "-cdart2js -rd8 dart2js_extra dart2js_native"
+        "-cdart2js -rd8 dart2js_2"
       ]
     },
     {
@@ -394,7 +436,7 @@
         "-t240 --checked pkg/(kernel|front_end|fasta) dart2js",
         "-cdartk -rvm",
         "-cdart2js -rd8 --exclude-suite=observatory_ui",
-        "-cdart2js -rd8 dart2js_extra dart2js_native"
+        "-cdart2js -rd8 dart2js_2"
       ]
     },
     {
@@ -405,7 +447,7 @@
       "mode": "release",
       "common": "--dart2js-batch --time -pcolor --report -ax64 -mrelease --write-result-log",
       "command-lines": [
-        "-cdart2js -rd8 --use-sdk --minified language language_2 dart2js_extra dart2js_native corelib corelib_2"
+        "-cdart2js -rd8 --use-sdk --minified language language_2 dart2js_2 corelib corelib_2"
       ]
     }
   ],
@@ -416,7 +458,8 @@
       "tool/",
       "test/",
       "../kernel/lib/",
-      "../testing/"
+      "../testing/",
+      "../_fe_analyzer_shared/lib/"
     ],
     "git grep": {
       "pathspecs": [
@@ -434,12 +477,10 @@
       "test/extensions/data/",
       "test/id_testing/data/",
       "test/language_versioning/data/",
-      "test/flow_analysis/assigned_variables/data/",
-      "test/flow_analysis/definite_assignment/data/",
-      "test/flow_analysis/nullability/data/",
-      "test/flow_analysis/reachability/data/",
-      "test/flow_analysis/type_promotion/data/",
-      "test/patching/data"
+      "test/patching/data",
+      "test/predicates/data",
+      "test/static_types/data/",
+      "test/text_representation/data/"
     ]
   }
 }

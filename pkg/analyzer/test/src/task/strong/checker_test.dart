@@ -20,7 +20,7 @@ class CheckerTest extends AbstractStrongTest with PackageMixin {
 import 'dart:async';
 
 abstract class MyStream<T> extends Stream<T> {
-  factory MyStream() => null;
+  factory MyStream() => throw 0;
 }
 
 main() async {
@@ -564,13 +564,13 @@ class B extends A {
   covariant num foo;
 }
 class C extends A {
-  covariant @virtual num foo;
+  covariant num foo;
 }
 class D extends C {
-  @virtual int foo;
+  int foo;
 }
 class E extends D {
-  @virtual num foo;
+  num foo;
 }
     ''');
   }
@@ -583,17 +583,17 @@ abstract class Right implements Top {}
 abstract class Bottom implements Left, Right {}
 
 abstract class TakesLeft {
-  m(Left x);
+  void m(Left x);
 }
 abstract class TakesRight {
-  m(Right x);
+  void m(Right x);
 }
 abstract class TakesTop implements TakesLeft, TakesRight {
-  m(Top x); // works today
+  void m(Top x); // works today
 }
 abstract class TakesBottom implements TakesLeft, TakesRight {
   // LUB(Left, Right) == Top, so this is an implicit cast from Top to Bottom.
-  m(covariant Bottom x);
+  void m(covariant Bottom x);
 }
     ''');
   }
@@ -781,36 +781,6 @@ class H implements F {
  ''');
   }
 
-  test_fieldOverride_virtual() async {
-    _addMetaLibrary();
-    await checkFile(r'''
-import 'meta.dart';
-class C {
-  @virtual int x;
-}
-class OverrideGetter extends C {
-  int get x => 42;
-}
-class OverrideSetter extends C {
-  set x(int v) {}
-}
-class OverrideBoth extends C {
-  int get x => 42;
-  set x(int v) {}
-}
-class OverrideWithField extends C {
-  int x;
-
-  // expose the hidden storage slot
-  int get superX => super.x;
-  set superX(int v) { super.x = v; }
-}
-class VirtualNotInherited extends OverrideWithField {
-  int x;
-}
-    ''');
-  }
-
   test_fieldSetterOverride() async {
     await checkFile('''
 class A {}
@@ -952,48 +922,6 @@ Future<bool> get issue_ddc_264 async {
 Future<String> issue_sdk_26404() async {
   return ((1 > 0) ? new Future<String>.value('hello') : "world");
 }
-''');
-  }
-
-  test_functionModifiers_asyncStar() async {
-    await checkFile('''
-import 'dart:async';
-
-dynamic x;
-
-Stream<int> intStream;
-
-abstract class MyStream<T> extends Stream<T> {
-  factory MyStream() => null;
-}
-
-bar1() async* { yield x; }
-Stream bar2() async* { yield x; }
-Stream<int> bar3() async* { yield x; }
-Stream<int> bar4() async* { yield /*error:YIELD_OF_INVALID_TYPE*/intStream; }
-
-baz1() async* { yield* x; }
-Stream baz2() async* { yield* x; }
-Stream<int> baz3() async* { yield* x; }
-Stream<int> baz4() async* { yield* intStream; }
-Stream<int> baz5() async* { yield* new MyStream(); }
-''');
-  }
-
-  test_functionModifiers_syncStar() async {
-    await checkFile('''
-dynamic x;
-
-bar1() sync* { yield x; }
-Iterable bar2() sync* { yield x; }
-Iterable<int> bar3() sync* { yield x; }
-Iterable<int> bar4() sync* { yield /*error:YIELD_OF_INVALID_TYPE*/bar3(); }
-
-baz1() sync* { yield* x; }
-Iterable baz2() sync* { yield* x; }
-Iterable<int> baz3() sync* { yield* x; }
-Iterable<int> baz4() sync* { yield* bar3(); }
-Iterable<int> baz5() sync* { yield* new List(); }
 ''');
   }
 
@@ -2168,6 +2096,46 @@ main() {
     await check(implicitCasts: false);
   }
 
+  test_implicitCasts_forEach() async {
+    addFile(r'''
+main(dynamic a) {
+  for (int v in a) {
+    v;
+  }
+}
+''');
+    await check();
+
+    addFile(r'''
+main(dynamic a) {
+  for (int v in /*error:FOR_IN_OF_INVALID_ELEMENT_TYPE*/a) {
+    v;
+  }
+}
+''');
+    await check(implicitCasts: false);
+  }
+
+  test_implicitCasts_forEach_async() async {
+    addFile(r'''
+main(dynamic a) async {
+  await for (int v in a) {
+    v;
+  }
+}
+''');
+    await check();
+
+    addFile(r'''
+main(dynamic a) async {
+  await for (int v in /*error:FOR_IN_OF_INVALID_ELEMENT_TYPE*/a) {
+    v;
+  }
+}
+''');
+    await check(implicitCasts: false);
+  }
+
   test_implicitCasts_functionCall() async {
     addFile('''num n;
                f(int i) => i;
@@ -2242,11 +2210,11 @@ Future<List<String>> foo() async {
   test_implicitDynamic_field() async {
     addFile(r'''
 class C {
-  var x0;
-  var x1 = (<dynamic>[])[0];
-  var x2,
+  var /*error:IMPLICIT_DYNAMIC_FIELD*/x0;
+  var /*error:IMPLICIT_DYNAMIC_FIELD*/x1 = (<dynamic>[])[0];
+  var /*error:IMPLICIT_DYNAMIC_FIELD*/x2,
       x3 = 42,
-      x4;
+      /*error:IMPLICIT_DYNAMIC_FIELD*/x4;
   dynamic y0;
   dynamic y1 = (<dynamic>[])[0];
 }
@@ -2262,22 +2230,22 @@ T b<T>() => null;
 void main<S>() {
   dynamic d;
   int i;
-  a(d);
+  /*error:IMPLICIT_DYNAMIC_FUNCTION*/a(d);
   a(42);
-  b();
-  d = b();
+  /*error:IMPLICIT_DYNAMIC_FUNCTION*/b();
+  d = /*error:IMPLICIT_DYNAMIC_FUNCTION*/b();
   i = b();
 
   void f<T>(T t) {};
   T g<T>() => null;
 
-  f(d);
+  /*error:IMPLICIT_DYNAMIC_FUNCTION*/f(d);
   f(42);
-  g();
-  d = g();
+  /*error:IMPLICIT_DYNAMIC_FUNCTION*/g();
+  d = /*error:IMPLICIT_DYNAMIC_FUNCTION*/g();
   i = g();
 
-  (<T>(T t) => t)(d);
+  /*error:IMPLICIT_DYNAMIC_INVOKE*/(<T>(T t) => t)(d);
   (<T>(T t) => t)(42);
   (<T>() => /*info:UNNECESSARY_CAST*/null as T)<int>();
 }
@@ -2288,11 +2256,11 @@ void main<S>() {
   test_implicitDynamic_listLiteral() async {
     addFile(r'''
 
-var l0 = [];
-List l1 = [];
-List<dynamic> l2 = [];
+var l0 = /*error:IMPLICIT_DYNAMIC_LIST_LITERAL*/[];
+List l1 = /*error:IMPLICIT_DYNAMIC_LIST_LITERAL*/[];
+List<dynamic> l2 = /*error:IMPLICIT_DYNAMIC_LIST_LITERAL*/[];
 dynamic d = 42;
-var l3 = [d, d];
+var l3 = /*error:IMPLICIT_DYNAMIC_LIST_LITERAL*/[d, d];
 
 var l4 = <dynamic>[];
 var l5 = <int>[];
@@ -2304,13 +2272,13 @@ var l7 = [42];
 
   test_implicitDynamic_mapLiteral() async {
     addFile(r'''
-var m0 = {};
-Map m1 = {};
-Map<dynamic, dynamic> m2 = {};
+var m0 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{};
+Map m1 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{};
+Map<dynamic, dynamic> m2 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{};
 dynamic d = 42;
-var m3 = {d: d};
-var m4 = {'x': d, 'y': d};
-var m5 = {d: 'x'};
+var m3 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{d: d};
+var m4 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{'x': d, 'y': d};
+var m5 = /*error:IMPLICIT_DYNAMIC_MAP_LITERAL*/{d: 'x'};
 
 var m6 = <dynamic, dynamic>{};
 var m7 = <String, String>{};
@@ -2333,16 +2301,16 @@ class D<E> {
 void f() {
   dynamic d;
   int i;
-  new C().m(d);
+  new C()./*error:IMPLICIT_DYNAMIC_METHOD*/m(d);
   new C().m(42);
-  new C().n();
-  d = new C().n();
+  new C()./*error:IMPLICIT_DYNAMIC_METHOD*/n();
+  d = new C()./*error:IMPLICIT_DYNAMIC_METHOD*/n();
   i = new C().n();
 
-  new D<int>().m(d);
+  new D<int>()./*error:IMPLICIT_DYNAMIC_METHOD*/m(d);
   new D<int>().m(42);
-  new D<int>().n();
-  d = new D<int>().n();
+  new D<int>()./*error:IMPLICIT_DYNAMIC_METHOD*/n();
+  d = new D<int>()./*error:IMPLICIT_DYNAMIC_METHOD*/n();
   i = new D<int>().n();
 }
     ''');
@@ -2354,31 +2322,31 @@ void f() {
 const dynamic DYNAMIC_VALUE = 42;
 
 // simple formal
-void f0(x) {}
+void f0(/*error:IMPLICIT_DYNAMIC_PARAMETER*/x) {}
 void f1(dynamic x) {}
 
 // default formal
-void df0([x = DYNAMIC_VALUE]) {}
+void df0([/*error:IMPLICIT_DYNAMIC_PARAMETER*/x = DYNAMIC_VALUE]) {}
 void df1([dynamic x = DYNAMIC_VALUE]) {}
 
 // https://github.com/dart-lang/sdk/issues/25794
-void df2([x = 42]) {}
+void df2([/*error:IMPLICIT_DYNAMIC_PARAMETER*/x = 42]) {}
 
 // default formal (named)
-void nf0({x: DYNAMIC_VALUE}) {}
+void nf0({/*error:IMPLICIT_DYNAMIC_PARAMETER*/x: DYNAMIC_VALUE}) {}
 void nf1({dynamic x: DYNAMIC_VALUE}) {}
 
 // https://github.com/dart-lang/sdk/issues/25794
-void nf2({x: 42}) {}
+void nf2({/*error:IMPLICIT_DYNAMIC_PARAMETER*/x: 42}) {}
 
 // field formal
 class C {
-  var x;
+  var /*error:IMPLICIT_DYNAMIC_FIELD*/x;
   C(this.x);
 }
 
 // function typed formal
-void ftf0(void x(y)) {}
+void ftf0(void x(/*error:IMPLICIT_DYNAMIC_PARAMETER*/y)) {}
 void ftf1(void x(int y)) {}
     ''');
     await check(implicitDynamic: false);
@@ -2387,12 +2355,12 @@ void ftf1(void x(int y)) {}
   test_implicitDynamic_return() async {
     addFile(r'''
 // function
-f0() {return f0();}
+/*error:IMPLICIT_DYNAMIC_RETURN*/f0() {return f0();}
 dynamic f1() { return 42; }
 
 // nested function
 void main() {
-  g0() {return g0();}
+  /*error:IMPLICIT_DYNAMIC_RETURN*/g0() {return g0();}
   dynamic g1() { return 42; }
 }
 
@@ -2401,18 +2369,18 @@ class B {
   int m1() => 42;
 }
 class C extends B {
-  m0() => 123;
+  /*error:IMPLICIT_DYNAMIC_RETURN*/m0() => 123;
   m1() => 123;
   dynamic m2() => 'hi';
 }
 
 // accessors
 set x(int value) {}
-get y0 => 42;
+get /*error:IMPLICIT_DYNAMIC_RETURN*/y0 => 42;
 dynamic get y1 => 42;
 
 // function typed formals
-void ftf0(f(int x)) {}
+void ftf0(/*error:IMPLICIT_DYNAMIC_RETURN*/f(int x)) {}
 void ftf1(dynamic f(int x)) {}
 
 // function expressions
@@ -2440,21 +2408,21 @@ void main() {
   test_implicitDynamic_type() async {
     addFile(r'''
 class C<T> {}
-class M1<T extends List> {}
+class M1<T extends /*error:IMPLICIT_DYNAMIC_TYPE*/List> {}
 class M2<T> {}
 class I<T> {}
-class D<T, S> extends C
-    with M1, M2
-    implements I {}
-class D2<T, S> = C
-    with M1, M2
-    implements I;
+class D<T, S> extends /*error:IMPLICIT_DYNAMIC_TYPE*/C
+    with M1, /*error:IMPLICIT_DYNAMIC_TYPE*/M2
+    implements /*error:IMPLICIT_DYNAMIC_TYPE*/I {}
+class D2<T, S> = /*error:IMPLICIT_DYNAMIC_TYPE*/C
+    with M1, /*error:IMPLICIT_DYNAMIC_TYPE*/M2
+    implements /*error:IMPLICIT_DYNAMIC_TYPE*/I;
 
 C f(D d) {
-  D x = new D();
-  D<int, dynamic> y = new D();
-  D<dynamic, int> z = new D();
-  return new C();
+  D x = new /*error:IMPLICIT_DYNAMIC_TYPE*/D();
+  D<int, dynamic> y = new /*error:IMPLICIT_DYNAMIC_TYPE*/D();
+  D<dynamic, int> z = new /*error:IMPLICIT_DYNAMIC_TYPE*/D();
+  return new /*error:IMPLICIT_DYNAMIC_TYPE*/C();
 }
 
 class A<T extends num> {}
@@ -2472,11 +2440,11 @@ A g(B b) {
 
   test_implicitDynamic_variable() async {
     addFile(r'''
-var x0;
-var x1 = (<dynamic>[])[0];
-var x2,
+var /*error:IMPLICIT_DYNAMIC_VARIABLE*/x0;
+var /*error:IMPLICIT_DYNAMIC_VARIABLE*/x1 = (<dynamic>[])[0];
+var /*error:IMPLICIT_DYNAMIC_VARIABLE*/x2,
     x3 = 42,
-    x4;
+    /*error:IMPLICIT_DYNAMIC_VARIABLE*/x4;
 dynamic y0;
 dynamic y1 = (<dynamic>[])[0];
     ''');
@@ -2586,17 +2554,17 @@ class Base {
 }
 
 class T1 extends Base {
-  B get /*error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f => null;
+  B get /*error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f => null;
 }
 
 class T2 extends Base {
-  set /*error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f(
+  set /*error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f(
       B b) => null;
 }
 
 class T3 extends Base {
   final B
-      /*error:FINAL_NOT_INITIALIZED, error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f;
+      /*error:FINAL_NOT_INITIALIZED, error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f;
 }
 class T4 extends Base {
   // two: one for the getter one for the setter.
@@ -2604,15 +2572,15 @@ class T4 extends Base {
 }
 
 class /*error:NON_ABSTRACT_CLASS_INHERITS_ABSTRACT_MEMBER*/T5 implements Base {
-  /**/B get /*error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f => null;
+  /**/B get /*error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f => null;
 }
 
 class /*error:NON_ABSTRACT_CLASS_INHERITS_ABSTRACT_MEMBER*/T6 implements Base {
-  set /*error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f(B b) => null;
+  set /*error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f(B b) => null;
 }
 
 class /*error:NON_ABSTRACT_CLASS_INHERITS_ABSTRACT_MEMBER*/T7 implements Base {
-  final B /*error:INVALID_OVERRIDE, error:MISMATCHED_GETTER_AND_SETTER_TYPES*/f = null;
+  final B /*error:INVALID_OVERRIDE, error:GETTER_NOT_ASSIGNABLE_SETTER_TYPES*/f = null;
 }
 class T8 implements Base {
   // two: one for the getter one for the setter.
@@ -2651,7 +2619,6 @@ class T1 implements I {
 ''');
   }
 
-  @failingTest
   test_invalidOverrides_doubleOverride() async {
     await checkFile('''
 class A {}
@@ -2671,7 +2638,6 @@ class Test extends Parent {
 ''');
   }
 
-  @failingTest
   test_invalidOverrides_doubleOverride2() async {
     await checkFile('''
 class A {}
@@ -2749,20 +2715,13 @@ class M2 {
     int x;
 }
 
-class /*error:INCONSISTENT_INHERITANCE*/T1 extends Base
-    with /*error:INVALID_OVERRIDE*/M1 {}
-class /*error:INCONSISTENT_INHERITANCE*/T2 extends Base
-    with /*error:INVALID_OVERRIDE*/M1, M2 {}
-class /*error:INCONSISTENT_INHERITANCE*/T3 extends Base
-    with M2, /*error:INVALID_OVERRIDE*/M1 {}
+class T1 extends Base with /*error:INVALID_OVERRIDE*/M1 {}
+class T2 extends Base with /*error:INVALID_OVERRIDE*/M1, M2 {}
+class T3 extends Base with M2, /*error:INVALID_OVERRIDE*/M1 {}
 
-
-class /*error:INCONSISTENT_INHERITANCE*/U1 = Base
-    with /*error:INVALID_OVERRIDE*/M1;
-class /*error:INCONSISTENT_INHERITANCE*/U2 = Base
-    with /*error:INVALID_OVERRIDE*/M1, M2;
-class /*error:INCONSISTENT_INHERITANCE*/U3 = Base
-    with M2, /*error:INVALID_OVERRIDE*/M1;
+class U1 = Base with /*error:INVALID_OVERRIDE*/M1;
+class U2 = Base with /*error:INVALID_OVERRIDE*/M1, M2;
+class U3 = Base with M2, /*error:INVALID_OVERRIDE*/M1;
 ''');
   }
 
@@ -2784,13 +2743,9 @@ class M2 {
     int x;
 }
 
-class /*error:INCONSISTENT_INHERITANCE*/T1 extends Base
-    with M1,
-    /*error:INVALID_OVERRIDE*/M2 {}
+class T1 extends Base with M1, /*error:INVALID_OVERRIDE*/M2 {}
 
-class /*error:INCONSISTENT_INHERITANCE*/U1 = Base
-    with M1,
-    /*error:INVALID_OVERRIDE*/M2;
+class U1 = Base with M1, /*error:INVALID_OVERRIDE*/M2;
 ''');
   }
 
@@ -2835,11 +2790,11 @@ class A {}
 class B {}
 
 class Base {
-    m(A a) {}
+  void m(A a) {}
 }
 
 class I1 {
-    m(B a) {}
+  void m(B a) {}
 }
 
 class /*error:INCONSISTENT_INHERITANCE*/T1
@@ -2847,7 +2802,7 @@ class /*error:INCONSISTENT_INHERITANCE*/T1
     implements I1 {}
 
 class T2 extends Base implements I1 {
-    m(a) {}
+  void m(dynamic a) {}
 }
 
 class /*error:INCONSISTENT_INHERITANCE*/T3
@@ -2859,7 +2814,7 @@ class /*error:INCONSISTENT_INHERITANCE*/U3
     implements I1;
 
 class T4 extends Object with Base implements I1 {
-    m(a) {}
+  void m(dynamic a) {}
 }
 ''');
   }
@@ -3412,11 +3367,9 @@ class M {
     m(B a) {}
 }
 
-class /*error:INCONSISTENT_INHERITANCE*/T1 extends Base
-    with /*error:INVALID_OVERRIDE*/M {}
+class T1 extends Base with /*error:INVALID_OVERRIDE*/M {}
 
-class /*error:INCONSISTENT_INHERITANCE*/U1 = Base
-    with /*error:INVALID_OVERRIDE*/M;
+class U1 = Base with /*error:INVALID_OVERRIDE*/M;
 ''');
   }
 
@@ -3436,11 +3389,9 @@ class M {
     m(B a) {}
 }
 
-class /*error:INCONSISTENT_INHERITANCE*/T1 extends Base
-    with /*error:INVALID_OVERRIDE*/M {}
+class T1 extends Base with /*error:INVALID_OVERRIDE*/M {}
 
-class /*error:INCONSISTENT_INHERITANCE*/U1 = Base
-    with /*error:INVALID_OVERRIDE*/M;
+class U1 = Base with /*error:INVALID_OVERRIDE*/M;
 ''');
   }
 
@@ -3605,15 +3556,15 @@ class A {}
 class B {}
 
 abstract class I1 {
-    m(A a);
+  void m(A a);
 }
 
 class Base {
-    m(B a) {}
+  void m(B a) {}
 }
 
 class T1 extends Base implements I1 {
-  /*error:INVALID_OVERRIDE*/m(B a) {}
+  void /*error:INVALID_OVERRIDE*/m(B a) {}
 }
 
 class /*error:INCONSISTENT_INHERITANCE*/T2
@@ -3628,15 +3579,15 @@ class A {}
 class B {}
 
 abstract class I1 {
-    m(A a);
+  void m(A a);
 }
 
 class M {
-    m(B a) {}
+  void m(B a) {}
 }
 
 class T1 extends Object with M implements I1 {
-  /*error:INVALID_OVERRIDE*/m(B a) {}
+  void /*error:INVALID_OVERRIDE*/m(B a) {}
 }
 
 class /*error:INCONSISTENT_INHERITANCE*/T2
@@ -3649,7 +3600,6 @@ class /*error:INCONSISTENT_INHERITANCE*/U2
 ''');
   }
 
-  @failingTest
   test_noDuplicateReports_typeOverridesSomeMethodInMultipleInterfaces() async {
     await checkFile('''
 class A {}
@@ -4332,12 +4282,7 @@ abstract class Base implements I1 {
 }
 
 class T1 extends Base {
-    // we consider the base class incomplete because it is
-    // abstract, so we report the error here too.
-    // TODO(sigmund): consider tracking overrides in a fine-grain
-    // manner, then this and the double-overrides would not be
-    // reported.
-    /*error:INVALID_OVERRIDE*/m(B a) {}
+    m(B a) {}
 }
 ''');
   }
@@ -4356,7 +4301,7 @@ class Base implements I1 {
 }
 
 class T1 extends Base {
-    /*error:INVALID_OVERRIDE*/m(B a) {}
+    m(B a) {}
 }
 ''');
   }
@@ -4645,7 +4590,7 @@ void f<T extends num>(T x, T y) {
     // This captures the type `T extends int`.
     var g = () => x;
     g = f;
-    g().isEven;
+    g()./*error:UNDEFINED_GETTER*/isEven;
     q = g();
     int r = x;
   }
@@ -4896,16 +4841,5 @@ void main () {
   Foo x = /*error:USE_OF_VOID_RESULT*/foo();
 }
 ''');
-  }
-
-  void _addMetaLibrary() {
-    addFile(r'''
-library meta;
-class _Checked { const _Checked(); }
-const Object checked = const _Checked();
-
-class _Virtual { const _Virtual(); }
-const Object virtual = const _Virtual();
-    ''', name: '/meta.dart');
   }
 }

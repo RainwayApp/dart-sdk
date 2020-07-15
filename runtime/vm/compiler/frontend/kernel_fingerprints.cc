@@ -5,8 +5,6 @@
 #include "vm/compiler/frontend/kernel_fingerprints.h"
 #include "vm/compiler/frontend/kernel_translation_helper.h"
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 #define H (translation_helper_)
 #define I Isolate::Current()
 
@@ -229,8 +227,10 @@ void KernelFingerprintHelper::CalculateDartTypeFingerprint() {
     case kDynamicType:
     case kVoidType:
     case kBottomType:
-    case kNeverType:
       // those contain nothing.
+      break;
+    case kNeverType:
+      BuildHash(static_cast<uint32_t>(ReadNullability()));
       break;
     case kInterfaceType:
       CalculateInterfaceTypeFingerprint(false);
@@ -464,6 +464,9 @@ void KernelFingerprintHelper::CalculateExpressionFingerprint() {
       return;
     case kIsExpression:
       ReadPosition();                    // read position.
+      if (translation_helper_.info().kernel_binary_version() >= 38) {
+        BuildHash(ReadFlags());  // read flags.
+      }
       CalculateExpressionFingerprint();  // read operand.
       CalculateDartTypeFingerprint();    // read type.
       return;
@@ -877,5 +880,3 @@ uint32_t KernelSourceFingerprintHelper::CalculateFunctionFingerprint(
 
 }  // namespace kernel
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

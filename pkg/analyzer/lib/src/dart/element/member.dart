@@ -10,7 +10,6 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/display_string_builder.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/nullability_eliminator.dart';
-import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
 import 'package:analyzer/src/generated/engine.dart' show AnalysisContext;
 import 'package:analyzer/src/generated/java_engine.dart';
@@ -18,20 +17,17 @@ import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:meta/meta.dart';
 
-/**
- * A constructor element defined in a parameterized type where the values of the
- * type parameters are known.
- */
+/// A constructor element defined in a parameterized type where the values of
+/// the type parameters are known.
 class ConstructorMember extends ExecutableMember implements ConstructorElement {
-  /**
-   * Initialize a newly created element to represent a constructor, based on
-   * the [declaration], and applied [substitution].
-   */
+  /// Initialize a newly created element to represent a constructor, based on
+  /// the [declaration], and applied [substitution].
   ConstructorMember(
     ConstructorElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
-  ) : super(declaration, substitution, isLegacy);
+  ) : super(declaration, substitution, isLegacy,
+            const <TypeParameterElement>[]);
 
   @deprecated
   @override
@@ -88,6 +84,9 @@ class ConstructorMember extends ExecutableMember implements ConstructorElement {
   }
 
   @override
+  InterfaceType get returnType => type.returnType as InterfaceType;
+
+  @override
   T accept<T>(ElementVisitor<T> visitor) =>
       visitor.visitConstructorElement(this);
 
@@ -96,47 +95,57 @@ class ConstructorMember extends ExecutableMember implements ConstructorElement {
     builder.writeConstructorElement(this);
   }
 
-  /**
-   * If the given [constructor]'s type is different when any type parameters
-   * from the defining type's declaration are replaced with the actual type
-   * arguments from the [definingType], create a constructor member representing
-   * the given constructor. Return the member that was created, or the original
-   * constructor if no member was created.
-   */
+  /// If the given [constructor]'s type is different when any type parameters
+  /// from the defining type's declaration are replaced with the actual type
+  /// arguments from the [definingType], create a constructor member
+  /// representing the given constructor. Return the member that was created, or
+  /// the original constructor if no member was created.
   static ConstructorElement from(
       ConstructorElement constructor, InterfaceType definingType) {
     if (constructor == null || definingType.typeArguments.isEmpty) {
       return constructor;
     }
+
     FunctionType baseType = constructor.type;
     if (baseType == null) {
       // TODO(brianwilkerson) We need to understand when this can happen.
       return constructor;
     }
+
+    var isLegacy = false;
+    if (constructor is ConstructorMember) {
+      isLegacy = (constructor as ConstructorMember).isLegacy;
+      constructor = constructor.declaration;
+    }
+
     return ConstructorMember(
       constructor,
       Substitution.fromInterfaceType(definingType),
-      false,
+      isLegacy,
     );
   }
 }
 
-/**
- * An executable element defined in a parameterized type where the values of the
- * type parameters are known.
- */
+/// An executable element defined in a parameterized type where the values of
+/// the type parameters are known.
 abstract class ExecutableMember extends Member implements ExecutableElement {
+  @override
+  final List<TypeParameterElement> typeParameters;
+
   FunctionType _type;
 
-  /**
-   * Initialize a newly created element to represent a callable element (like a
-   * method or function or property), based on the [declaration], and applied
-   * [substitution].
-   */
+  /// Initialize a newly created element to represent a callable element (like a
+  /// method or function or property), based on the [declaration], and applied
+  /// [substitution].
+  ///
+  /// The [typeParameters] are fresh, and [substitution] is already applied to
+  /// their bounds.  The [substitution] includes replacing [declaration] type
+  /// parameters with the provided fresh [typeParameters].
   ExecutableMember(
     ExecutableElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
+    this.typeParameters,
   ) : super(declaration, substitution, isLegacy);
 
   @deprecated
@@ -175,7 +184,7 @@ abstract class ExecutableMember extends Member implements ExecutableElement {
 
   @override
   List<ParameterElement> get parameters {
-    return declaration.parameters.map((p) {
+    return declaration.parameters.map<ParameterElement>((p) {
       if (p is FieldFormalParameterElement) {
         return FieldFormalParameterMember(p, _substitution, isLegacy);
       }
@@ -193,14 +202,6 @@ abstract class ExecutableMember extends Member implements ExecutableElement {
     _type = _substitution.substituteType(declaration.type);
     _type = _toLegacyType(_type);
     return _type;
-  }
-
-  @override
-  List<TypeParameterElement> get typeParameters {
-    return TypeParameterMember.from(
-      declaration.typeParameters,
-      _substitution,
-    );
   }
 
   @override
@@ -224,47 +225,65 @@ abstract class ExecutableMember extends Member implements ExecutableElement {
       return null;
     }
 
+    var isLegacy = false;
     var combined = substitution;
     if (element is ExecutableMember) {
       ExecutableMember member = element;
       element = member.declaration;
+
+      isLegacy = member.isLegacy;
+
       var map = <TypeParameterElement, DartType>{};
-      map.addAll(member._substitution.map);
+      for (var entry in member._substitution.map.entries) {
+        map[entry.key] = substitution.substituteType(entry.value);
+      }
       map.addAll(substitution.map);
       combined = Substitution.fromMap(map);
     }
 
-    if (combined.map.isEmpty) {
+    if (!isLegacy && combined.map.isEmpty) {
       return element;
     }
 
     if (element is ConstructorElement) {
-      return ConstructorMember(element, combined, false);
+      return ConstructorMember(element, combined, isLegacy);
     } else if (element is MethodElement) {
-      return MethodMember(element, combined, false);
+      return MethodMember(element, combined, isLegacy);
     } else if (element is PropertyAccessorElement) {
-      return PropertyAccessorMember(element, combined, false);
+      return PropertyAccessorMember(element, combined, isLegacy);
     } else {
       throw UnimplementedError('(${element.runtimeType}) $element');
     }
   }
 }
 
-/**
- * A parameter element defined in a parameterized type where the values of the
- * type parameters are known.
- */
+/// A parameter element defined in a parameterized type where the values of the
+/// type parameters are known.
 class FieldFormalParameterMember extends ParameterMember
     implements FieldFormalParameterElement {
-  /**
-   * Initialize a newly created element to represent a field formal parameter,
-   * based on the [declaration], with applied [substitution].
-   */
-  FieldFormalParameterMember(
+  factory FieldFormalParameterMember(
     FieldFormalParameterElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
-  ) : super(declaration, substitution, isLegacy);
+  ) {
+    var freshTypeParameters = _SubstitutedTypeParameters(
+      declaration.typeParameters,
+      substitution,
+    );
+    return FieldFormalParameterMember._(
+      declaration,
+      freshTypeParameters.substitution,
+      isLegacy,
+      freshTypeParameters.elements,
+    );
+  }
+
+  FieldFormalParameterMember._(
+    FieldFormalParameterElement declaration,
+    MapSubstitution substitution,
+    bool isLegacy,
+    List<TypeParameterElement> typeParameters,
+  ) : super._(declaration, substitution, isLegacy, typeParameters);
 
   @override
   FieldElement get field {
@@ -284,15 +303,11 @@ class FieldFormalParameterMember extends ParameterMember
       visitor.visitFieldFormalParameterElement(this);
 }
 
-/**
- * A field element defined in a parameterized type where the values of the type
- * parameters are known.
- */
+/// A field element defined in a parameterized type where the values of the type
+/// parameters are known.
 class FieldMember extends VariableMember implements FieldElement {
-  /**
-   * Initialize a newly created element to represent a field, based on the
-   * [declaration], with applied [substitution].
-   */
+  /// Initialize a newly created element to represent a field, based on the
+  /// [declaration], with applied [substitution].
   FieldMember(
     FieldElement declaration,
     MapSubstitution substitution,
@@ -336,13 +351,11 @@ class FieldMember extends VariableMember implements FieldElement {
   @override
   T accept<T>(ElementVisitor<T> visitor) => visitor.visitFieldElement(this);
 
-  /**
-   * If the given [field]'s type is different when any type parameters from the
-   * defining type's declaration are replaced with the actual type arguments
-   * from the [definingType], create a field member representing the given
-   * field. Return the member that was created, or the base field if no member
-   * was created.
-   */
+  /// If the given [field]'s type is different when any type parameters from the
+  /// defining type's declaration are replaced with the actual type arguments
+  /// from the [definingType], create a field member representing the given
+  /// field. Return the member that was created, or the base field if no member
+  /// was created.
   static FieldElement from(FieldElement field, InterfaceType definingType) {
     if (field == null || definingType.typeArguments.isEmpty) {
       return field;
@@ -366,11 +379,13 @@ class FieldMember extends VariableMember implements FieldElement {
 }
 
 class FunctionMember extends ExecutableMember implements FunctionElement {
-  FunctionMember(
-    ExecutableElement declaration,
-    MapSubstitution substitution,
-    bool isLegacy,
-  ) : super(declaration, substitution, isLegacy);
+  FunctionMember(FunctionElement declaration, bool isLegacy)
+      : super(
+          declaration,
+          Substitution.empty,
+          isLegacy,
+          declaration.typeParameters,
+        );
 
   @override
   FunctionElement get declaration => super.declaration;
@@ -384,39 +399,27 @@ class FunctionMember extends ExecutableMember implements FunctionElement {
   }
 }
 
-/**
- * An element defined in a parameterized type where the values of the type
- * parameters are known.
- */
+/// An element defined in a parameterized type where the values of the type
+/// parameters are known.
 abstract class Member implements Element {
-  /**
-   * The element on which the parameterized element was created.
-   */
+  /// The element on which the parameterized element was created.
   final Element _declaration;
 
-  /**
-   * The substitution for type parameters referenced in the base element.
-   */
+  /// The substitution for type parameters referenced in the base element.
   final MapSubstitution _substitution;
 
-  /**
-   * If `true`, then this is a legacy view on a NNBD element.
-   */
+  /// If `true`, then this is a legacy view on a NNBD element.
   final bool isLegacy;
 
-  /**
-   * Initialize a newly created element to represent a member, based on the
-   * [declaration], and applied [_substitution].
-   */
+  /// Initialize a newly created element to represent a member, based on the
+  /// [declaration], and applied [_substitution].
   Member(this._declaration, this._substitution, this.isLegacy) {
     if (_declaration is Member) {
       throw StateError('Members must be created from a declarations.');
     }
   }
 
-  /**
-   * Return the element on which the parameterized element was created.
-   */
+  /// Return the element on which the parameterized element was created.
   @Deprecated('Use Element.declaration instead')
   Element get baseElement => _declaration;
 
@@ -525,9 +528,7 @@ abstract class Member implements Element {
   @override
   Source get source => _declaration.source;
 
-  /**
-   * The substitution for type parameters referenced in the base element.
-   */
+  /// The substitution for type parameters referenced in the base element.
   MapSubstitution get substitution => _substitution;
 
   /// Append a textual representation of this element to the given [builder].
@@ -556,9 +557,7 @@ abstract class Member implements Element {
   bool isAccessibleIn(LibraryElement library) =>
       _declaration.isAccessibleIn(library);
 
-  /**
-   * Use the given [visitor] to visit all of the [children].
-   */
+  /// Use the given [visitor] to visit all of the [children].
   void safelyVisitChildren(List<Element> children, ElementVisitor visitor) {
     // TODO(brianwilkerson) Make this private
     if (children != null) {
@@ -618,15 +617,8 @@ abstract class Member implements Element {
     } else if (element is FunctionElement) {
       if (!element.library.isNonNullableByDefault) {
         return element;
-      } else if (element is Member) {
-        var member = element as Member;
-        return FunctionMember(
-          member._declaration,
-          member._substitution,
-          true,
-        );
       } else {
-        return FunctionMember(element, Substitution.empty, true);
+        return FunctionMember(element.declaration, true);
       }
     } else if (element is MethodElement) {
       if (!element.library.isNonNullableByDefault) {
@@ -660,20 +652,32 @@ abstract class Member implements Element {
   }
 }
 
-/**
- * A method element defined in a parameterized type where the values of the type
- * parameters are known.
- */
+/// A method element defined in a parameterized type where the values of the
+/// type parameters are known.
 class MethodMember extends ExecutableMember implements MethodElement {
-  /**
-   * Initialize a newly created element to represent a method, based on the
-   * [declaration], with applied [substitution].
-   */
-  MethodMember(
+  factory MethodMember(
     MethodElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
-  ) : super(declaration, substitution, isLegacy);
+  ) {
+    var freshTypeParameters = _SubstitutedTypeParameters(
+      declaration.typeParameters,
+      substitution,
+    );
+    return MethodMember._(
+      declaration,
+      freshTypeParameters.substitution,
+      isLegacy,
+      freshTypeParameters.elements,
+    );
+  }
+
+  MethodMember._(
+    MethodElement declaration,
+    MapSubstitution substitution,
+    bool isLegacy,
+    List<TypeParameterElement> typeParameters,
+  ) : super(declaration, substitution, isLegacy, typeParameters);
 
   @deprecated
   @override
@@ -688,13 +692,11 @@ class MethodMember extends ExecutableMember implements MethodElement {
   @override
   T accept<T>(ElementVisitor<T> visitor) => visitor.visitMethodElement(this);
 
-  /**
-   * If the given [method]'s type is different when any type parameters from the
-   * defining type's declaration are replaced with the actual type arguments
-   * from the [definingType], create a method member representing the given
-   * method. Return the member that was created, or the base method if no member
-   * was created.
-   */
+  /// If the given [method]'s type is different when any type parameters from
+  /// the defining type's declaration are replaced with the actual type
+  /// arguments from the [definingType], create a method member representing the
+  /// given method. Return the member that was created, or the base method if no
+  /// member was created.
   static MethodElement from(MethodElement method, InterfaceType definingType) {
     if (method == null || definingType.typeArguments.isEmpty) {
       return method;
@@ -718,21 +720,38 @@ class MethodMember extends ExecutableMember implements MethodElement {
   }
 }
 
-/**
- * A parameter element defined in a parameterized type where the values of the
- * type parameters are known.
- */
+/// A parameter element defined in a parameterized type where the values of the
+/// type parameters are known.
 class ParameterMember extends VariableMember
     with ParameterElementMixin
     implements ParameterElement {
-  /**
-   * Initialize a newly created element to represent a parameter, based on the
-   * [declaration], with applied [substitution].
-   */
-  ParameterMember(
+  @override
+  final List<TypeParameterElement> typeParameters;
+
+  factory ParameterMember(
     ParameterElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
+  ) {
+    var freshTypeParameters = _SubstitutedTypeParameters(
+      declaration.typeParameters,
+      substitution,
+    );
+    return ParameterMember._(
+      declaration,
+      freshTypeParameters.substitution,
+      isLegacy,
+      freshTypeParameters.elements,
+    );
+  }
+
+  /// Initialize a newly created element to represent a parameter, based on the
+  /// [declaration], with applied [substitution].
+  ParameterMember._(
+    ParameterElement declaration,
+    MapSubstitution substitution,
+    bool isLegacy,
+    this.typeParameters,
   ) : super(declaration, substitution, isLegacy);
 
   @deprecated
@@ -757,6 +776,14 @@ class ParameterMember extends VariableMember
   @override
   bool get isInitializingFormal => declaration.isInitializingFormal;
 
+  @override
+  bool get isRequiredNamed {
+    if (isLegacy) {
+      return false;
+    }
+    return super.isRequiredNamed;
+  }
+
   @deprecated
   @override
   ParameterKind get parameterKind => declaration.parameterKind;
@@ -768,14 +795,6 @@ class ParameterMember extends VariableMember
       return type.parameters;
     }
     return const <ParameterElement>[];
-  }
-
-  @override
-  List<TypeParameterElement> get typeParameters {
-    return TypeParameterMember.from(
-      declaration.typeParameters,
-      _substitution,
-    );
   }
 
   @override
@@ -803,21 +822,33 @@ class ParameterMember extends VariableMember
   }
 }
 
-/**
- * A property accessor element defined in a parameterized type where the values
- * of the type parameters are known.
- */
+/// A property accessor element defined in a parameterized type where the values
+/// of the type parameters are known.
 class PropertyAccessorMember extends ExecutableMember
     implements PropertyAccessorElement {
-  /**
-   * Initialize a newly created element to represent a property, based on the
-   * [declaration], with applied [substitution].
-   */
-  PropertyAccessorMember(
+  factory PropertyAccessorMember(
     PropertyAccessorElement declaration,
     MapSubstitution substitution,
     bool isLegacy,
-  ) : super(declaration, substitution, isLegacy);
+  ) {
+    var freshTypeParameters = _SubstitutedTypeParameters(
+      declaration.typeParameters,
+      substitution,
+    );
+    return PropertyAccessorMember._(
+      declaration,
+      freshTypeParameters.substitution,
+      isLegacy,
+      freshTypeParameters.elements,
+    );
+  }
+
+  PropertyAccessorMember._(
+    PropertyAccessorElement declaration,
+    MapSubstitution substitution,
+    bool isLegacy,
+    List<TypeParameterElement> typeParameters,
+  ) : super(declaration, substitution, isLegacy, typeParameters);
 
   @deprecated
   @override
@@ -825,20 +856,20 @@ class PropertyAccessorMember extends ExecutableMember
 
   @override
   PropertyAccessorElement get correspondingGetter {
-    return PropertyAccessorMember(
-      declaration.correspondingGetter,
-      _substitution,
-      isLegacy,
-    );
+    var baseGetter = declaration.correspondingGetter;
+    if (baseGetter == null) {
+      return null;
+    }
+    return PropertyAccessorMember(baseGetter, _substitution, isLegacy);
   }
 
   @override
   PropertyAccessorElement get correspondingSetter {
-    return PropertyAccessorMember(
-      declaration.correspondingSetter,
-      _substitution,
-      isLegacy,
-    );
+    var baseSetter = declaration.correspondingSetter;
+    if (baseSetter == null) {
+      return null;
+    }
+    return PropertyAccessorMember(baseSetter, _substitution, isLegacy);
   }
 
   @override
@@ -878,13 +909,11 @@ class PropertyAccessorMember extends ExecutableMember
     );
   }
 
-  /**
-   * If the given [accessor]'s type is different when any type parameters from
-   * the defining type's declaration are replaced with the actual type
-   * arguments from the [definingType], create an accessor member representing
-   * the given accessor. Return the member that was created, or the base
-   * accessor if no member was created.
-   */
+  /// If the given [accessor]'s type is different when any type parameters from
+  /// the defining type's declaration are replaced with the actual type
+  /// arguments from the [definingType], create an accessor member representing
+  /// the given accessor. Return the member that was created, or the base
+  /// accessor if no member was created.
   static PropertyAccessorElement from(
       PropertyAccessorElement accessor, InterfaceType definingType) {
     if (accessor == null || definingType.typeArguments.isEmpty) {
@@ -934,122 +963,13 @@ class TopLevelVariableMember extends VariableMember
   }
 }
 
-/**
- * A type parameter defined inside of another parameterized type, where the
- * values of the enclosing type parameters are known.
- *
- * For example:
- *
- *     class C<T> {
- *       S m<S extends T>(S s);
- *     }
- *
- * If we have `C<num>.m` and we ask for the type parameter "S", we should get
- * `<S extends num>` instead of `<S extends T>`. This is how the parameter
- * and return types work, see: [FunctionType.parameters],
- * [FunctionType.returnType], and [ParameterMember].
- */
-class TypeParameterMember extends Member implements TypeParameterElement {
-  DartType _bound;
-  DartType _type;
-
-  TypeParameterMember(TypeParameterElement declaration,
-      MapSubstitution substitution, this._bound)
-      : super(declaration, substitution, false) {
-    _type = TypeParameterTypeImpl(this);
-  }
-
-  @deprecated
-  @override
-  TypeParameterElement get baseElement => declaration;
-
-  @override
-  DartType get bound => _bound;
-
-  @override
-  TypeParameterElement get declaration =>
-      super.declaration as TypeParameterElement;
-
-  @override
-  Element get enclosingElement => declaration.enclosingElement;
-
-  @override
-  int get hashCode => declaration.hashCode;
-
-  @override
-  TypeParameterType get type => _type;
-
-  @override
-  bool operator ==(Object other) {
-    if (other is TypeParameterMember) {
-      return declaration == other.declaration;
-    }
-    return declaration == other;
-  }
-
-  @override
-  T accept<T>(ElementVisitor<T> visitor) =>
-      visitor.visitTypeParameterElement(this);
-
-  @override
-  void appendTo(ElementDisplayStringBuilder builder) {
-    builder.writeTypeParameter(this);
-  }
-
-  @override
-  TypeParameterType instantiate({
-    @required NullabilitySuffix nullabilitySuffix,
-  }) {
-    return TypeParameterTypeImpl(this, nullabilitySuffix: nullabilitySuffix);
-  }
-
-  static List<TypeParameterElement> from(
-    List<TypeParameterElement> elements,
-    MapSubstitution substitution,
-  ) {
-    if (substitution.map.isEmpty) {
-      return elements;
-    }
-
-    // Create type formals with specialized bounds.
-    // For example `<U extends T>` where T comes from an outer scope.
-    var newElements = List<TypeParameterElement>(elements.length);
-    var newTypes = List<TypeParameterType>(elements.length);
-    for (int i = 0; i < newElements.length; i++) {
-      var element = elements[i];
-      var bound = element.bound;
-      if (bound != null) {
-        bound = substitution.substituteType(bound);
-        element = TypeParameterMember(element, substitution, bound);
-      }
-      newElements[i] = element;
-      newTypes[i] = newElements[i].instantiate(
-        nullabilitySuffix: NullabilitySuffix.none,
-      );
-    }
-
-    // Update bounds to reference new TypeParameterMember(s).
-    var substitution2 = Substitution.fromPairs(elements, newTypes);
-    for (var newElement in newElements) {
-      if (newElement is TypeParameterMember) {
-        newElement._bound = substitution2.substituteType(newElement.bound);
-      }
-    }
-    return newElements;
-  }
-}
-
-/**
- * A variable element defined in a parameterized type where the values of the
- * type parameters are known.
- */
+/// A variable element defined in a parameterized type where the values of the
+/// type parameters are known.
 abstract class VariableMember extends Member implements VariableElement {
   DartType _type;
 
-  /**
-   * Initialize a newly created element to represent a variable, based on the
-   * [declaration], with applied [substitution].
-   */
+  /// Initialize a newly created element to represent a variable, based on the
+  /// [declaration], with applied [substitution].
   VariableMember(
     VariableElement declaration,
     MapSubstitution substitution,
@@ -1060,6 +980,7 @@ abstract class VariableMember extends Member implements VariableElement {
   @override
   VariableElement get baseElement => declaration;
 
+  @Deprecated('Use computeConstantValue() instead')
   @override
   DartObject get constantValue => declaration.constantValue;
 
@@ -1118,4 +1039,58 @@ abstract class VariableMember extends Member implements VariableElement {
     super.visitChildren(visitor);
     declaration.initializer?.accept(visitor);
   }
+}
+
+class _SubstitutedTypeParameters {
+  final List<TypeParameterElement> elements;
+  final Substitution substitution;
+
+  factory _SubstitutedTypeParameters(
+    List<TypeParameterElement> elements,
+    MapSubstitution substitution,
+  ) {
+    if (elements.isEmpty) {
+      return _SubstitutedTypeParameters._(elements, substitution);
+    }
+
+    // Create type formals with specialized bounds.
+    // For example `<U extends T>` where T comes from an outer scope.
+    var newElements = List<TypeParameterElement>(elements.length);
+    var newTypes = List<TypeParameterType>(elements.length);
+    for (int i = 0; i < newElements.length; i++) {
+      var element = elements[i];
+      var newElement = TypeParameterElementImpl.synthetic(element.name);
+      newElements[i] = newElement;
+      newTypes[i] = newElement.instantiate(
+        nullabilitySuffix: NullabilitySuffix.none,
+      );
+    }
+
+    // Update bounds to reference new TypeParameterElement(s).
+    var substitution2 = Substitution.fromPairs(elements, newTypes);
+    for (int i = 0; i < newElements.length; i++) {
+      var element = elements[i];
+      var newElement = newElements[i] as TypeParameterElementImpl;
+      var bound = element.bound;
+      if (bound != null) {
+        var newBound = substitution.substituteType(bound);
+        newBound = substitution2.substituteType(newBound);
+        newElement.bound = newBound;
+      }
+    }
+
+    if (substitution.map.isEmpty) {
+      return _SubstitutedTypeParameters._(newElements, substitution2);
+    }
+
+    return _SubstitutedTypeParameters._(
+      newElements,
+      Substitution.fromMap({
+        ...substitution.map,
+        ...substitution2.map,
+      }),
+    );
+  }
+
+  _SubstitutedTypeParameters._(this.elements, this.substitution);
 }

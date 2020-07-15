@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_CALL_SPECIALIZER_H_
 #define RUNTIME_VM_COMPILER_CALL_SPECIALIZER_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/compiler/backend/flow_graph.h"
 #include "vm/compiler/backend/il.h"
 
@@ -41,11 +45,18 @@ class CallSpecializer : public FlowGraphVisitor {
 
   FlowGraph* flow_graph() const { return flow_graph_; }
 
+  void set_flow_graph(FlowGraph* flow_graph) {
+    flow_graph_ = flow_graph;
+    set_block_order(flow_graph->reverse_postorder());
+  }
+
   // Use ICData to optimize, replace or eliminate instructions.
   void ApplyICData();
 
   // Use propagated class ids to optimize, replace or eliminate instructions.
   void ApplyClassIds();
+
+  virtual void ReplaceInstanceCallsWithDispatchTableCalls();
 
   void InsertBefore(Instruction* next,
                     Instruction* instr,
@@ -127,7 +138,7 @@ class CallSpecializer : public FlowGraphVisitor {
   const bool should_clone_fields_;
 
  private:
-  bool TypeCheckAsClassEquality(NNBDMode mode, const AbstractType& type);
+  bool TypeCheckAsClassEquality(const AbstractType& type);
 
   // Insert a Smi check if needed.
   void AddCheckSmi(Definition* to_check,
@@ -148,13 +159,11 @@ class CallSpecializer : public FlowGraphVisitor {
 
   bool TryInlineImplicitInstanceGetter(InstanceCallInstr* call);
 
-  RawBool* InstanceOfAsBool(NNBDMode mode,
-                            const ICData& ic_data,
-                            const AbstractType& type,
-                            ZoneGrowableArray<intptr_t>* results) const;
+  BoolPtr InstanceOfAsBool(const ICData& ic_data,
+                           const AbstractType& type,
+                           ZoneGrowableArray<intptr_t>* results) const;
 
-  bool TryOptimizeInstanceOfUsingStaticTypes(NNBDMode mode,
-                                             InstanceCallInstr* call,
+  bool TryOptimizeInstanceOfUsingStaticTypes(InstanceCallInstr* call,
                                              const AbstractType& type);
 
   void ReplaceWithMathCFunction(InstanceCallInstr* call,
@@ -168,7 +177,6 @@ class CallSpecializer : public FlowGraphVisitor {
   // necessary for common number-related type tests.  Unconditionally adds an
   // entry for the Smi type to the start of the array.
   static bool SpecializeTestCidsForNumericTypes(
-      NNBDMode mode,
       ZoneGrowableArray<intptr_t>* results,
       const AbstractType& type);
 

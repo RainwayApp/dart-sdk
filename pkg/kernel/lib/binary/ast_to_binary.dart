@@ -4,7 +4,7 @@
 library kernel.ast_to_binary;
 
 import 'dart:core' hide MapEntry;
-import 'dart:convert' show utf8;
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io' show BytesBuilder;
 import 'dart:typed_data';
@@ -37,8 +37,9 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   final BytesSink _constantsBytesSink;
   BufferedSink _constantsSink;
   BufferedSink _sink;
-  bool includeSources;
-  bool includeOffsets;
+  final bool includeSources;
+  final bool includeOffsets;
+  final LibraryFilter libraryFilter;
 
   List<int> libraryOffsets;
   List<int> classOffsets;
@@ -52,7 +53,6 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
 
   List<CanonicalName> _canonicalNameList;
   Set<CanonicalName> _knownCanonicalNameNonRootTops = new Set<CanonicalName>();
-  Set<CanonicalName> _reindexedCanonicalNames = new Set<CanonicalName>();
 
   Library _currentLibrary;
 
@@ -61,7 +61,8 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   /// The BinaryPrinter will use its own buffer, so the [sink] does not need
   /// one.
   BinaryPrinter(Sink<List<int>> sink,
-      {StringIndexer stringIndexer,
+      {this.libraryFilter,
+      StringIndexer stringIndexer,
       this.includeSources = true,
       this.includeOffsets = true})
       : _mainSink = new BufferedSink(sink),
@@ -104,9 +105,9 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
         (value >> 8) & 0xFF, value & 0xFF);
   }
 
-  void writeByteList(List<int> utf8Bytes) {
-    writeUInt30(utf8Bytes.length);
-    writeBytes(utf8Bytes);
+  void writeByteList(List<int> bytes) {
+    writeUInt30(bytes.length);
+    writeBytes(bytes);
   }
 
   int getBufferOffset() {
@@ -116,7 +117,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   void writeStringTable(StringIndexer indexer) {
     _binaryOffsetForStringTable = getBufferOffset();
 
-    // Containers for the utf8 encoded strings.
+    // Containers for the WTF-8 encoded strings.
     final List<Uint8List> data = new List<Uint8List>();
     int totalLength = 0;
     const int minLength = 1 << 16;
@@ -140,24 +141,13 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
             index = 0;
             buffer = new Uint8List(newLength);
           }
-          newIndex = NotQuiteString.writeUtf8(buffer, index, key);
+          newIndex = _writeWtf8(buffer, index, key);
           if (newIndex != -1) break;
           requiredMinLength = allocateMinLength;
         }
-        if (newIndex < 0) {
-          // Utf8 encoding failed.
-          if (buffer != null && index > 0) {
-            data.add(new Uint8List.view(buffer.buffer, 0, index));
-            buffer = null;
-            index = 0;
-          }
-          List<int> converted = utf8.encoder.convert(key);
-          data.add(converted);
-          totalLength += converted.length;
-        } else {
-          totalLength += newIndex - index;
-          index = newIndex;
-        }
+        assert(newIndex >= 0);
+        totalLength += newIndex - index;
+        index = newIndex;
       }
       writeUInt30(totalLength);
     }
@@ -165,7 +155,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
       data.add(Uint8List.view(buffer.buffer, 0, index));
     }
 
-    // Write the UTF-8 encoded strings.
+    // Write the WTF-8 encoded strings.
     for (int i = 0; i < data.length; ++i) {
       writeBytes(data[i]);
     }
@@ -504,9 +494,10 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     _canonicalNameList = <CanonicalName>[];
     for (int i = 0; i < component.libraries.length; ++i) {
       Library library = component.libraries[i];
-      if (!shouldWriteLibraryCanonicalNames(library)) continue;
-      _indexLinkTableInternal(library.canonicalName);
-      _knownCanonicalNameNonRootTops.add(library.canonicalName);
+      if (libraryFilter == null || libraryFilter(library)) {
+        _indexLinkTableInternal(library.canonicalName);
+        _knownCanonicalNameNonRootTops.add(library.canonicalName);
+      }
     }
   }
 
@@ -523,14 +514,13 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
 
   /// Compute canonical names for the whole component or parts of it.
   void computeCanonicalNames(Component component) {
-    component.computeCanonicalNames();
+    for (int i = 0; i < component.libraries.length; ++i) {
+      Library library = component.libraries[i];
+      if (libraryFilter == null || libraryFilter(library)) {
+        component.computeCanonicalNamesForLibrary(library);
+      }
+    }
   }
-
-  /// Return `true` if all canonical names of the [library] should be written
-  /// into the link table.  If some libraries of the component are skipped,
-  /// then all the additional names referenced by the libraries that are written
-  /// by [writeLibraries] are automatically added.
-  bool shouldWriteLibraryCanonicalNames(Library library) => true;
 
   void writeCanonicalNameEntry(CanonicalName node) {
     CanonicalName parent = node.parent;
@@ -548,6 +538,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
       final componentOffset = getBufferOffset();
       writeUInt32(Tag.ComponentFile);
       writeUInt32(Tag.BinaryFormatVersion);
+      writeBytes(ascii.encode(expectedSdkHash));
       writeListOfStrings(component.problemsAsJson);
       indexLinkTable(component);
       _collectMetadata(component);
@@ -565,7 +556,16 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
       _writeMetadataSection(component);
       writeStringTable(stringIndexer);
       writeConstantTable(_constantIndexer);
-      writeComponentIndex(component, component.libraries);
+      List<Library> libraries = component.libraries;
+      if (libraryFilter != null) {
+        List<Library> librariesNew = new List<Library>();
+        for (int i = 0; i < libraries.length; i++) {
+          Library library = libraries[i];
+          if (libraryFilter(library)) librariesNew.add(library);
+        }
+        libraries = librariesNew;
+      }
+      writeComponentIndex(component, libraries);
 
       _flush();
     });
@@ -576,23 +576,23 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     if (strings != null) {
       for (int i = 0; i < strings.length; i++) {
         String s = strings[i];
-        // This is slow, but we expect there to in general be no problems. If this
-        // turns out to be wrong we can optimize it as we do URLs for instance.
-        writeByteList(utf8.encoder.convert(s));
+        outputStringViaBuffer(s, new Uint8List(s.length * 3));
       }
     }
   }
 
-  /// Collect non-empty metadata repositories associated with the component.
+  /// Collect metadata repositories associated with the component.
   void _collectMetadata(Component component) {
-    component.metadata.forEach((tag, repository) {
-      if (repository.mapping.isEmpty) {
-        return;
-      }
-
-      _metadataSubsections ??= <_MetadataSubsection>[];
-      _metadataSubsections.add(new _MetadataSubsection(repository));
-    });
+    if (component.metadata.isNotEmpty) {
+      // Component might be loaded lazily - meaning that we can't
+      // just skip empty repositories here, they might be populated by
+      // the serialization process. Instead we will filter empty repositories
+      // later before writing the section out.
+      _metadataSubsections = component.metadata.values
+          .map((MetadataRepository repository) =>
+              new _MetadataSubsection(repository))
+          .toList();
+    }
   }
 
   /// Writes metadata associated with the given [Node].
@@ -672,8 +672,10 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     }
 
     _binaryOffsetForMetadataPayloads = getBufferOffset();
+    _metadataSubsections
+        ?.removeWhere((_MetadataSubsection s) => s.metadataMapping.isEmpty);
 
-    if (_metadataSubsections == null) {
+    if (_metadataSubsections == null || _metadataSubsections.isEmpty) {
       _binaryOffsetForMetadataMappings = getBufferOffset();
       writeUInt32(0); // Empty section.
       return;
@@ -703,7 +705,10 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   /// Write all of some of the libraries of the [component].
   void writeLibraries(Component component) {
     for (int i = 0; i < component.libraries.length; ++i) {
-      writeLibraryNode(component.libraries[i]);
+      Library library = component.libraries[i];
+      if (libraryFilter == null || libraryFilter(library)) {
+        writeLibraryNode(library);
+      }
     }
   }
 
@@ -717,7 +722,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     const int kernelFileAlignment = 8;
 
     // Keep this in sync with number of writeUInt32 below.
-    int numComponentIndexEntries = 7 + libraryOffsets.length + 3;
+    int numComponentIndexEntries = 8 + libraryOffsets.length + 3;
 
     int unalignedSize = getBufferOffset() + numComponentIndexEntries * 4;
     int padding =
@@ -747,6 +752,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     } else {
       writeUInt32(main.index + 1);
     }
+    writeUInt32(component.mode.index);
 
     assert(libraryOffsets.length == libraries.length);
     for (int offset in libraryOffsets) {
@@ -806,21 +812,16 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     }
   }
 
-  void outputStringViaBuffer(String uriAsString, Uint8List buffer) {
-    if (uriAsString.length * 3 < buffer.length) {
-      int length = NotQuiteString.writeUtf8(buffer, 0, uriAsString);
-      if (length < 0) {
-        // Utf8 encoding failed.
-        writeByteList(utf8.encoder.convert(uriAsString));
-      } else {
-        writeUInt30(length);
-        for (int j = 0; j < length; j++) {
-          writeByte(buffer[j]);
-        }
+  void outputStringViaBuffer(String s, Uint8List buffer) {
+    int length = _writeWtf8(buffer, 0, s);
+    if (length >= 0) {
+      writeUInt30(length);
+      for (int j = 0; j < length; j++) {
+        writeByte(buffer[j]);
       }
     } else {
       // Uncommon case with very long url.
-      writeByteList(utf8.encoder.convert(uriAsString));
+      outputStringViaBuffer(s, new Uint8List(s.length * 3));
     }
   }
 
@@ -862,12 +863,16 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   void checkCanonicalName(CanonicalName node) {
     if (_knownCanonicalNameNonRootTops.contains(node.nonRootTop)) return;
     if (node == null || node.isRoot) return;
-    if (_reindexedCanonicalNames.contains(node)) return;
-
+    if (node.index >= 0 && node.index < _canonicalNameList.length) {
+      CanonicalName claim = _canonicalNameList[node.index];
+      if (node == claim) {
+        // Already has the claimed index.
+        return;
+      }
+    }
     checkCanonicalName(node.parent);
     node.index = _canonicalNameList.length;
     _canonicalNameList.add(node);
-    _reindexedCanonicalNames.add(node);
   }
 
   void writeNullAllowedCanonicalNameReference(CanonicalName name) {
@@ -937,8 +942,8 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
     libraryOffsets.add(getBufferOffset());
     writeByte(node.flags);
 
-    writeUInt30(node.languageVersionMajor);
-    writeUInt30(node.languageVersionMinor);
+    writeUInt30(node.languageVersion.major);
+    writeUInt30(node.languageVersion.minor);
 
     writeNonNullCanonicalNameReference(getCanonicalNameOfLibrary(node));
     writeStringReference(node.name ?? '');
@@ -1597,6 +1602,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   void visitIsExpression(IsExpression node) {
     writeByte(Tag.IsExpression);
     writeOffset(node.fileOffset);
+    writeByte(node.flags);
     writeNode(node.operand);
     writeNode(node.type);
   }
@@ -2065,6 +2071,26 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   }
 
   @override
+  void visitFutureOrType(FutureOrType node) {
+    // TODO(dmitryas): Remove special treatment of FutureOr when the VM supports
+    // the new encoding: just write the tag.
+    assert(_knownCanonicalNameNonRootTops != null &&
+        _knownCanonicalNameNonRootTops.isNotEmpty);
+    CanonicalName root = _knownCanonicalNameNonRootTops.first;
+    while (!root.isRoot) {
+      root = root.parent;
+    }
+    CanonicalName canonicalNameOfFutureOr =
+        root.getChild("dart:async").getChild("FutureOr");
+    writeByte(Tag.InterfaceType);
+    writeByte(node.declaredNullability.index);
+    checkCanonicalName(canonicalNameOfFutureOr);
+    writeUInt30(canonicalNameOfFutureOr.index + 1);
+    writeUInt30(1); // Type argument count.
+    writeNode(node.typeArgument);
+  }
+
+  @override
   void visitSupertype(Supertype node) {
     // Writing nullability below is only necessary because
     // BinaryBuilder.readSupertype reads the supertype as an InterfaceType and
@@ -2119,7 +2145,7 @@ class BinaryPrinter implements Visitor<void>, BinarySink {
   @override
   void visitTypeParameterType(TypeParameterType node) {
     writeByte(Tag.TypeParameterType);
-    writeByte(node.typeParameterTypeNullability.index);
+    writeByte(node.declaredNullability.index);
     writeUInt30(_typeParameterIndexer[node.parameter]);
     writeOptionalNode(node.promotedBound);
   }
@@ -2739,63 +2765,58 @@ class BytesSink implements Sink<List<int>> {
   }
 }
 
-class NotQuiteString {
-  /**
-   * Write [source] string into [target] starting at index [index].
-   *
-   * Optionally only write part of the input [source] starting at [start] and
-   * ending at [end].
-   *
-   * The output space needed is at most [source.length] * 3.
-   *
-   * Returns
-   *  * Non-negative on success (the new index in [target]).
-   *  * -1 when [target] doesn't have enough space. Note that [target] can be
-   *    polluted starting at [index].
-   *  * -2 on input error, i.e. an unpaired lead or tail surrogate.
-   */
-  static int writeUtf8(List<int> target, int index, String source,
-      [int start = 0, int end]) {
-    RangeError.checkValidIndex(index, target, null, target.length);
-    end = RangeError.checkValidRange(start, end, source.length);
-    if (start == end) return index;
-    int i = start;
-    int length = target.length;
-    do {
-      int codeUnit = source.codeUnitAt(i++);
-      while (codeUnit < 128) {
-        if (index >= length) return -1;
-        target[index++] = codeUnit;
-        if (i >= end) return index;
-        codeUnit = source.codeUnitAt(i++);
-      }
-      if (codeUnit < 0x800) {
-        index += 2;
-        if (index > length) return -1;
-        target[index - 2] = 0xC0 | (codeUnit >> 6);
-        target[index - 1] = 0x80 | (codeUnit & 0x3f);
-      } else if (codeUnit & 0xF800 != 0xD800) {
-        // Not a surrogate.
-        index += 3;
-        if (index > length) return -1;
-        target[index - 3] = 0xE0 | (codeUnit >> 12);
-        target[index - 2] = 0x80 | ((codeUnit >> 6) & 0x3f);
-        target[index - 1] = 0x80 | (codeUnit & 0x3f);
-      } else {
-        if (codeUnit >= 0xDC00) return -2; // Unpaired tail surrogate.
-        if (i >= end) return -2; // Unpaired lead surrogate.
-        int nextChar = source.codeUnitAt(i++);
-        if (nextChar & 0xFC00 != 0xDC00) return -2; // Unpaired lead surrogate.
-        index += 4;
-        if (index > length) return -1;
-        codeUnit = (codeUnit & 0x3FF) + 0x40;
-        target[index - 4] = 0xF0 | (codeUnit >> 8);
-        target[index - 3] = 0x80 | ((codeUnit >> 2) & 0x3F);
-        target[index - 2] =
-            0x80 | (((codeUnit & 3) << 4) | ((nextChar & 0x3FF) >> 6));
-        target[index - 1] = 0x80 | (nextChar & 0x3f);
-      }
-    } while (i < end);
-    return index;
-  }
+/**
+ * Write [source] string into [target] starting at index [index].
+ *
+ * The output space needed is at most [source.length] * 3.
+ *
+ * Returns
+ *  * Non-negative on success (the new index in [target]).
+ *  * -1 when [target] doesn't have enough space. Note that [target] can be
+ *    polluted starting at [index].
+ */
+int _writeWtf8(Uint8List target, int index, String source) {
+  int end = source.length;
+  if (end == 0) return index;
+  int length = target.length;
+  assert(index <= length);
+  int i = 0;
+  do {
+    int codeUnit = source.codeUnitAt(i++);
+    while (codeUnit < 128) {
+      // ASCII.
+      if (index >= length) return -1;
+      target[index++] = codeUnit;
+      if (i >= end) return index;
+      codeUnit = source.codeUnitAt(i++);
+    }
+    if (codeUnit < 0x800) {
+      // Two-byte sequence (11-bit unicode value).
+      index += 2;
+      if (index > length) return -1;
+      target[index - 2] = 0xC0 | (codeUnit >> 6);
+      target[index - 1] = 0x80 | (codeUnit & 0x3f);
+    } else if ((codeUnit & 0xFC00) == 0xD800 &&
+        i < end &&
+        (source.codeUnitAt(i) & 0xFC00) == 0xDC00) {
+      // Surrogate pair -> four-byte sequence (non-BMP unicode value).
+      index += 4;
+      if (index > length) return -1;
+      int codeUnit2 = source.codeUnitAt(i++);
+      int unicode = 0x10000 + ((codeUnit & 0x3FF) << 10) + (codeUnit2 & 0x3FF);
+      target[index - 4] = 0xF0 | (unicode >> 18);
+      target[index - 3] = 0x80 | ((unicode >> 12) & 0x3F);
+      target[index - 2] = 0x80 | ((unicode >> 6) & 0x3F);
+      target[index - 1] = 0x80 | (unicode & 0x3F);
+    } else {
+      // Three-byte sequence (16-bit unicode value), including lone
+      // surrogates.
+      index += 3;
+      if (index > length) return -1;
+      target[index - 3] = 0xE0 | (codeUnit >> 12);
+      target[index - 2] = 0x80 | ((codeUnit >> 6) & 0x3f);
+      target[index - 1] = 0x80 | (codeUnit & 0x3f);
+    }
+  } while (i < end);
+  return index;
 }

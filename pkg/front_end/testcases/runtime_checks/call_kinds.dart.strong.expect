@@ -15,18 +15,28 @@ class C extends core::Object {
   method test() → void {
     this.{self::C::f}();
     this.{self::C::f}();
-    this.{self::C::g}();
-    this.{self::C::g}();
-    this.{self::C::h}();
-    this.{self::C::h}();
+    this.{self::C::g}.call();
+    this.{self::C::g}.call();
+    this.{self::C::h}.call();
+    this.{self::C::h}.call();
   }
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 static method test(self::C* c, () →* void f, dynamic d) → void {
   c.{self::C::f}();
   f.call();
   d.call();
   d.f();
-  c.{self::C::g}();
-  c.{self::C::h}();
+  c.{self::C::g}.call();
+  c.{self::C::h}.call();
 }
 static method main() → dynamic {}

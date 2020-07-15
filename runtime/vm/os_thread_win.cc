@@ -15,7 +15,14 @@
 #include "platform/assert.h"
 #include "platform/safe_stack.h"
 
+#include "vm/flags.h"
+
 namespace dart {
+
+DEFINE_FLAG(int,
+            worker_thread_priority,
+            kMinInt,
+            "The thread priority the VM should use for new worker threads.");
 
 // This flag is flipped by platform_win.cc when the process is exiting.
 // TODO(zra): Remove once VM shuts down cleanly.
@@ -44,6 +51,14 @@ class ThreadStartData {
 // is used to ensure that the thread is properly destroyed if the thread just
 // exits.
 static unsigned int __stdcall ThreadEntry(void* data_ptr) {
+  if (FLAG_worker_thread_priority != kMinInt) {
+    if (SetThreadPriority(GetCurrentThread(), FLAG_worker_thread_priority) ==
+        0) {
+      FATAL2("Setting thread priority to %d failed: GetLastError() = %d\n",
+             FLAG_worker_thread_priority, GetLastError());
+    }
+  }
+
   ThreadStartData* data = reinterpret_cast<ThreadStartData*>(data_ptr);
 
   const char* name = data->name();
@@ -366,7 +381,7 @@ void ThreadLocalData::AddThreadLocal(ThreadLocalKey key,
     // We only care about thread locals with destructors.
     return;
   }
-  MutexLocker ml(mutex_, false);
+  MutexLocker ml(mutex_);
 #if defined(DEBUG)
   // Verify that we aren't added twice.
   for (intptr_t i = 0; i < thread_locals_->length(); i++) {
@@ -380,7 +395,7 @@ void ThreadLocalData::AddThreadLocal(ThreadLocalKey key,
 
 void ThreadLocalData::RemoveThreadLocal(ThreadLocalKey key) {
   ASSERT(thread_locals_ != NULL);
-  MutexLocker ml(mutex_, false);
+  MutexLocker ml(mutex_);
   intptr_t i = 0;
   for (; i < thread_locals_->length(); i++) {
     const ThreadLocalEntry& entry = thread_locals_->At(i);
@@ -405,7 +420,7 @@ void ThreadLocalData::RunDestructors() {
     return;
   }
   ASSERT(mutex_ != NULL);
-  MutexLocker ml(mutex_, false);
+  MutexLocker ml(mutex_);
   for (intptr_t i = 0; i < thread_locals_->length(); i++) {
     const ThreadLocalEntry& entry = thread_locals_->At(i);
     // We access the exiting thread's TLS variable here.

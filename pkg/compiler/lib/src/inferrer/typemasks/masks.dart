@@ -43,6 +43,7 @@ class CommonMasks implements AbstractValueDomain {
   CommonMasks(this._closedWorld);
 
   CommonElements get commonElements => _closedWorld.commonElements;
+  DartTypes get dartTypes => _closedWorld.dartTypes;
 
   TypeMask _dynamicType;
   TypeMask _nonNullType;
@@ -267,6 +268,46 @@ class CommonMasks implements AbstractValueDomain {
   AbstractValueWithPrecision createFromStaticType(DartType type,
       {ClassRelation classRelation = ClassRelation.subtype, bool nullable}) {
     assert(nullable != null);
+
+    if ((classRelation == ClassRelation.subtype ||
+            classRelation == ClassRelation.thisExpression) &&
+        dartTypes.isTopType(type)) {
+      // A cone of a top type includes all values.
+      return AbstractValueWithPrecision(dynamicType, true);
+    }
+
+    if (type is NullableType) {
+      assert(dartTypes.useNullSafety);
+      return _createFromStaticType(type.baseType, classRelation, true);
+    }
+
+    if (type is LegacyType) {
+      assert(dartTypes.useNullSafety);
+      DartType baseType = type.baseType;
+      if (baseType is NeverType) {
+        // Never* is same as Null, for both 'is' and 'as'.
+        return AbstractValueWithPrecision(nullType, true);
+      }
+
+      // Object* is a top type for both 'is' and 'as'. This is handled in the
+      // 'cone of top type' case above.
+
+      return _createFromStaticType(baseType, classRelation, nullable);
+    }
+
+    if (dartTypes.useLegacySubtyping) {
+      // In legacy and weak mode, `String` is nullable depending on context.
+      return _createFromStaticType(type, classRelation, nullable);
+    } else {
+      // In strong mode nullability comes from explicit NullableType.
+      return _createFromStaticType(type, classRelation, false);
+    }
+  }
+
+  AbstractValueWithPrecision _createFromStaticType(
+      DartType type, ClassRelation classRelation, bool nullable) {
+    assert(nullable != null);
+
     AbstractValueWithPrecision finish(TypeMask value, bool isPrecise) {
       return AbstractValueWithPrecision(
           nullable ? value : value.nonNullable(), isPrecise);
@@ -279,37 +320,71 @@ class CommonMasks implements AbstractValueDomain {
           .getTypeVariableBound(typeVariable.element);
       classRelation = ClassRelation.subtype;
       isPrecise = false;
+      if (type is NullableType) {
+        // <A extends B?, B extends num>  ...  null is A --> can be `true`.
+        // <A extends B, B extends num?>  ...  null is A --> can be `true`.
+        nullable = true;
+        type = type.withoutNullability;
+      }
+    }
+
+    if ((classRelation == ClassRelation.thisExpression ||
+            classRelation == ClassRelation.subtype) &&
+        dartTypes.isTopType(type)) {
+      // A cone of a top type includes all values. Since we already tested this
+      // in [createFromStaticType], we get here only for type parameter bounds.
+      return AbstractValueWithPrecision(dynamicType, isPrecise);
     }
 
     if (type is InterfaceType) {
-      if (isPrecise) {
-        // TODO(sra): Could be precise if instantiated-to-bounds.
-        for (DartType argument in type.typeArguments) {
-          if (argument is DynamicType) continue;
+      ClassEntity cls = type.element;
+      List<DartType> arguments = type.typeArguments;
+      if (isPrecise && arguments.isNotEmpty) {
+        // Can we ignore the type arguments?
+        //
+        // For legacy covariance, if the interface type is a generic interface
+        // type and is maximal (i.e. instantiated to bounds), the typemask,
+        // which is based on the class element, is still precise. We check
+        // against Top for the parameter arguments since we don't have a
+        // convenient check for instantation to bounds.
+        //
+        // TODO(sra): Check arguments against bounds.
+        // TODO(sra): Handle other variances.
+        List<Variance> variances = dartTypes.getTypeVariableVariances(cls);
+        for (int i = 0; i < arguments.length; i++) {
+          Variance variance = variances[i];
+          DartType argument = arguments[i];
+          if (variance == Variance.legacyCovariant &&
+              dartTypes.isTopType(argument)) {
+            continue;
+          }
           isPrecise = false;
         }
       }
       switch (classRelation) {
         case ClassRelation.exact:
-          return finish(TypeMask.exact(type.element, _closedWorld), isPrecise);
+          return finish(TypeMask.exact(cls, _closedWorld), isPrecise);
         case ClassRelation.thisExpression:
-          if (!_closedWorld.isUsedAsMixin(type.element)) {
-            return finish(
-                TypeMask.subclass(type.element, _closedWorld), isPrecise);
+          if (!_closedWorld.isUsedAsMixin(cls)) {
+            return finish(TypeMask.subclass(cls, _closedWorld), isPrecise);
           }
           break;
         case ClassRelation.subtype:
           break;
       }
-      return finish(TypeMask.subtype(type.element, _closedWorld), isPrecise);
-    } else if (type is FunctionType) {
+      return finish(TypeMask.subtype(cls, _closedWorld), isPrecise);
+    }
+
+    if (type is FunctionType) {
       return finish(
           TypeMask.subtype(commonElements.functionClass, _closedWorld), false);
-    } else if (type is DynamicType) {
-      return AbstractValueWithPrecision(dynamicType, true);
-    } else {
-      return finish(dynamicType, false);
     }
+
+    if (type is NeverType) {
+      return finish(nullType, isPrecise);
+    }
+
+    return AbstractValueWithPrecision(dynamicType, false);
   }
 
   @override
@@ -320,7 +395,7 @@ class CommonMasks implements AbstractValueDomain {
 
   @override
   AbstractBool containsType(TypeMask typeMask, ClassEntity cls) {
-    return AbstractBool.trueOrMaybe(_containsType(typeMask, cls));
+    return AbstractBool.trueOrFalse(_containsType(typeMask, cls));
   }
 
   bool _containsType(TypeMask typeMask, ClassEntity cls) {
@@ -704,13 +779,6 @@ class CommonMasks implements AbstractValueDomain {
   }
 
   @override
-  AbstractBool contains(
-      covariant TypeMask superset, covariant TypeMask subset) {
-    return AbstractBool.maybeOrFalse(
-        superset.containsMask(subset, _closedWorld));
-  }
-
-  @override
   AbstractBool isIn(covariant TypeMask subset, covariant TypeMask superset) {
     return AbstractBool.trueOrMaybe(subset.isInMask(superset, _closedWorld));
   }
@@ -890,7 +958,7 @@ class CommonMasks implements AbstractValueDomain {
 
   @override
   String getCompactText(AbstractValue value) {
-    return formatType(value);
+    return formatType(dartTypes, value);
   }
 
   @override
@@ -910,7 +978,7 @@ class CommonMasks implements AbstractValueDomain {
 ///
 /// The default format is too verbose for the graph format since long strings
 /// create oblong nodes that obstruct the graph layout.
-String formatType(TypeMask type) {
+String formatType(DartTypes dartTypes, TypeMask type) {
   if (type is FlatTypeMask) {
     // TODO(asgerf): Disambiguate classes whose name is not unique. Using the
     //     library name for all classes is not a good idea, since library names
@@ -923,22 +991,22 @@ String formatType(TypeMask type) {
     return '${type.base.name}$nullFlag$subFlag';
   }
   if (type is UnionTypeMask) {
-    return type.disjointMasks.map(formatType).join(' | ');
+    return type.disjointMasks.map((m) => formatType(dartTypes, m)).join(' | ');
   }
   if (type is ContainerTypeMask) {
-    String container = formatType(type.forwardTo);
-    String member = formatType(type.elementType);
+    String container = formatType(dartTypes, type.forwardTo);
+    String member = formatType(dartTypes, type.elementType);
     return '$container<$member>';
   }
   if (type is MapTypeMask) {
-    String container = formatType(type.forwardTo);
-    String key = formatType(type.keyType);
-    String value = formatType(type.valueType);
+    String container = formatType(dartTypes, type.forwardTo);
+    String key = formatType(dartTypes, type.keyType);
+    String value = formatType(dartTypes, type.valueType);
     return '$container<$key,$value>';
   }
   if (type is ValueTypeMask) {
-    String baseType = formatType(type.forwardTo);
-    String value = type.value.toStructuredText();
+    String baseType = formatType(dartTypes, type.forwardTo);
+    String value = type.value.toStructuredText(dartTypes);
     return '$baseType=$value';
   }
   return '$type'; // Fall back on toString if not supported here.

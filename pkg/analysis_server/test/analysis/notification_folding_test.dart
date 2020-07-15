@@ -13,7 +13,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../analysis_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AnalysisNotificationFoldingTest);
   });
@@ -48,7 +48,7 @@ main async() {}
       }
     } else if (notification.event == SERVER_NOTIFICATION_ERROR) {
       var params = ServerErrorParams.fromNotification(notification);
-      throw "${params.message}\n${params.stackTrace}";
+      throw '${params.message}\n${params.stackTrace}';
     }
   }
 
@@ -62,7 +62,7 @@ main async() {}
     addAnalysisSubscription(AnalysisService.FOLDING, testFile);
   }
 
-  test_afterAnalysis() async {
+  Future<void> test_afterAnalysis() async {
     addTestFile(sampleCode);
     await waitForTasksFinished();
     expect(lastRegions, isNull);
@@ -72,7 +72,7 @@ main async() {}
     expect(lastRegions, expectedResults);
   }
 
-  test_afterUpdate() async {
+  Future<void> test_afterUpdate() async {
     addTestFile('');
     // Currently required to get notifications on updates
     setPriorityFiles([testFile]);
@@ -91,7 +91,7 @@ main async() {}
     expect(lastRegions, expectedResults);
   }
 
-  Future waitForFolding(action()) {
+  Future waitForFolding(void Function() action) {
     _regionsReceived = Completer();
     action();
     return _regionsReceived.future;

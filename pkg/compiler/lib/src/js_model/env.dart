@@ -617,8 +617,10 @@ abstract class FunctionDataTypeVariablesMixin implements FunctionData {
         } else {
           _typeVariables = functionNode.typeParameters
               .map<TypeVariableType>((ir.TypeParameter typeParameter) {
-            return elementMap.getDartType(
-                new ir.TypeParameterType(typeParameter, ir.Nullability.legacy));
+            return elementMap
+                .getDartType(new ir.TypeParameterType(
+                    typeParameter, ir.Nullability.nonNullable))
+                .withoutNullability;
           }).toList();
         }
       }
@@ -645,12 +647,18 @@ abstract class FunctionDataForEachParameterMixin implements FunctionData {
       DartType type = elementMap.getDartType(parameter.type);
       String name = parameter.name;
       ConstantValue defaultValue;
-      if (isOptional) {
+      if (parameter.isRequired) {
+        if (elementMap.types.useLegacySubtyping) {
+          defaultValue = NullConstantValue();
+        } else {
+          defaultValue = elementMap.getRequiredSentinelConstantValue();
+        }
+      } else if (isOptional) {
         if (parameter.initializer != null) {
           defaultValue =
               elementMap.getConstantValue(memberContext, parameter.initializer);
         } else {
-          defaultValue = new NullConstantValue();
+          defaultValue = NullConstantValue();
         }
       }
       f(type, name, defaultValue);
@@ -776,8 +784,10 @@ class SignatureFunctionData implements FunctionData {
   List<TypeVariableType> getFunctionTypeVariables(IrToElementMap elementMap) {
     return typeParameters
         .map<TypeVariableType>((ir.TypeParameter typeParameter) {
-      return elementMap.getDartType(
-          new ir.TypeParameterType(typeParameter, ir.Nullability.legacy));
+      return elementMap
+          .getDartType(new ir.TypeParameterType(
+              typeParameter, ir.Nullability.nonNullable))
+          .withoutNullability;
     }).toList();
   }
 
@@ -1011,32 +1021,6 @@ class JFieldDataImpl extends JMemberDataImpl implements JFieldData {
   ClassTypeVariableAccess get classTypeVariableAccess {
     if (node.isInstanceMember) return ClassTypeVariableAccess.instanceField;
     return ClassTypeVariableAccess.none;
-  }
-}
-
-class JTypedefData {
-  /// Tag used for identifying serialized [JTypedefData] objects in
-  /// a debugging data stream.
-  static const String tag = 'typedef-data';
-
-  final ir.Typedef node;
-  final TypedefType rawType;
-
-  JTypedefData(this.node, this.rawType);
-
-  factory JTypedefData.readFromDataSource(DataSource source) {
-    source.begin(tag);
-    ir.Typedef node = source.readTypedefNode();
-    TypedefType rawType = source.readDartType();
-    source.end(tag);
-    return new JTypedefData(node, rawType);
-  }
-
-  void writeToDataSink(DataSink sink) {
-    sink.begin(tag);
-    sink.writeTypedefNode(node);
-    sink.writeDartType(rawType);
-    sink.end(tag);
   }
 }
 

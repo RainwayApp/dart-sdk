@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -91,6 +92,27 @@ main() {
     ]);
   }
 
+  test_nestedIn_instanceCreation() async {
+    await assertErrorsInCode(r'''
+class A {
+  const A();
+
+  bool operator ==(other) => false;
+}
+
+class B {
+  const B(_);
+}
+
+main() {
+  const B({A()});
+}
+''', [
+      error(CompileTimeErrorCode.CONST_SET_ELEMENT_TYPE_IMPLEMENTS_EQUALS, 110,
+          3),
+    ]);
+  }
+
   test_spread_list() async {
     await assertErrorsInCode(
         r'''
@@ -170,5 +192,7 @@ class ConstSetElementTypeImplementsEqualsWithUIAsCodeAndConstantsTest
     extends ConstSetElementTypeImplementsEqualsTest {
   @override
   AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..enabledExperiments = [EnableString.constant_update_2018];
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.constant_update_2018],
+    );
 }

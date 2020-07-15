@@ -11,12 +11,17 @@ abstract class ClassWithCall {
 }
 
 class Class {
-  ClassWithCall classWithCall;
+  ClassWithCall get classWithCall =>
+      /*cfe.<bottom>*/ /*cfe:nnbd.Never*/
+      throw /*cfe.int*/ /*cfe:nnbd.int!*/ 42;
 
   int method() =>
-      /*cfe.invoke: ClassWithCall*/
-      /*cfe:nnbd.invoke: ClassWithCall!*/
-      classWithCall()
+      /*cfe.ClassWithCall*/
+      /*cfe:nnbd.ClassWithCall!*/
+      classWithCall
+              /*cfe.invoke: ClassWithCall*/
+              /*cfe:nnbd.invoke: ClassWithCall!*/
+              ()
           . /*cfe.invoke: int*/
           /*cfe:nnbd.invoke: int!*/
           method();
@@ -28,10 +33,14 @@ abstract class GenericClassWithCall<T> {
 }
 
 class GenericClass<S, T extends GenericClassWithCall<S>> {
-  GenericClassWithCall<T> classWithCall;
+  GenericClassWithCall<T> get classWithCall =>
+      /*cfe.<bottom>*/ /*cfe:nnbd.Never*/
+      throw /*cfe.int*/ /*cfe:nnbd.int!*/ 42;
 
   S method() =>
-      /*cfe.invoke: T*/ /*cfe:nnbd.invoke: T!*/ classWithCall()
+      /*cfe.GenericClassWithCall<T>*/
+      /*cfe:nnbd.GenericClassWithCall<T!>!*/
+      classWithCall /*cfe.invoke: T*/ /*cfe:nnbd.invoke: T!*/ ()
           . /*cfe.invoke: S*/ /*cfe:nnbd.invoke: S%*/ method();
 }
 
@@ -41,8 +50,11 @@ main() {
       GenericClass<String, GenericClassWithCall<String>>
           /*cfe.<String,GenericClassWithCall<String>>*/
           /*cfe:nnbd.<String!,GenericClassWithCall<String!>!>*/ ()
-      . /*cfe.invoke: GenericClassWithCall<String>*/
+      . /*cfe.GenericClassWithCall<GenericClassWithCall<String>>*/
+      /*cfe:nnbd.GenericClassWithCall<GenericClassWithCall<String!>!>!*/
+      classWithCall
+      /*cfe.invoke: GenericClassWithCall<String>*/
       /*cfe:nnbd.invoke: GenericClassWithCall<String!>!*/
-      classWithCall()
+      ()
       . /*cfe.invoke: String*/ /*cfe:nnbd.invoke: String!*/ method();
 }

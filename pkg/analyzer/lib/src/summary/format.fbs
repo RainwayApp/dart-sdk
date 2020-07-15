@@ -437,9 +437,7 @@ enum TopLevelInferenceErrorKind : byte {
 
   overrideConflictFieldType,
 
-  overrideConflictReturnType,
-
-  overrideConflictParameterType
+  overrideNoCombinedSuperSignature
 }
 
 /// Enum of token types, corresponding to AST token types.
@@ -936,36 +934,38 @@ table AvailableDeclaration {
 
   isFinal:bool (id: 11);
 
+  isStatic:bool (id: 12);
+
   /// The kind of the declaration.
-  kind:AvailableDeclarationKind (id: 12);
+  kind:AvailableDeclarationKind (id: 13);
 
-  locationOffset:uint (id: 13);
+  locationOffset:uint (id: 14);
 
-  locationStartColumn:uint (id: 14);
+  locationStartColumn:uint (id: 15);
 
-  locationStartLine:uint (id: 15);
+  locationStartLine:uint (id: 16);
 
   /// The first part of the declaration name, usually the only one, for example
   /// the name of a class like `MyClass`, or a function like `myFunction`.
-  name:string (id: 16);
+  name:string (id: 17);
 
-  parameterNames:[string] (id: 17);
+  parameterNames:[string] (id: 18);
 
-  parameters:string (id: 18);
+  parameters:string (id: 19);
 
-  parameterTypes:[string] (id: 19);
+  parameterTypes:[string] (id: 20);
 
   /// The partial list of relevance tags.  Not every declaration has one (for
   /// example, function do not currently), and not every declaration has to
   /// store one (for classes it can be computed when we know the library that
   /// includes this file).
-  relevanceTags:[string] (id: 20);
+  relevanceTags:[string] (id: 21);
 
-  requiredParameterCount:uint (id: 21);
+  requiredParameterCount:uint (id: 22);
 
-  returnType:string (id: 22);
+  returnType:string (id: 23);
 
-  typeParameters:string (id: 23);
+  typeParameters:string (id: 24);
 }
 
 /// Information about an available, even if not yet imported file.
@@ -1010,6 +1010,35 @@ table AvailableFileExportCombinator {
   shows:[string] (id: 0);
 }
 
+/// Information about linked libraries, a group of libraries that form
+/// a library cycle.
+table CiderLinkedLibraryCycle {
+  bundle:LinkedNodeBundle (id: 1);
+
+  /// The hash signature for this linked cycle. It depends of API signatures
+  /// of all files in the cycle, and on the signatures of the transitive
+  /// closure of the cycle dependencies.
+  signature:[uint] (id: 0);
+}
+
+/// Errors for a single unit.
+table CiderUnitErrors {
+  errors:[AnalysisDriverUnitError] (id: 1);
+
+  /// The hash signature of this data.
+  signature:[uint] (id: 0);
+}
+
+/// Information about a compilation unit, contains the content hash
+/// and unlinked summary.
+table CiderUnlinkedUnit {
+  /// The hash signature of the contents of the file.
+  contentDigest:[uint] (id: 0);
+
+  /// Unlinked summary of the compilation unit.
+  unlinkedUnit:UnlinkedUnit2 (id: 1);
+}
+
 table DiagnosticMessage {
   /// The absolute and normalized path of the file associated with this message.
   filePath:string (id: 0);
@@ -1032,6 +1061,18 @@ table DirectiveInfo {
 
   /// The values of the defined templates.
   templateValues:[string] (id: 1);
+}
+
+table LinkedLanguageVersion {
+  major:uint (id: 0);
+
+  minor:uint (id: 1);
+}
+
+table LinkedLibraryLanguageVersion {
+  override2:LinkedLanguageVersion (id: 1);
+
+  package:LinkedLanguageVersion (id: 0);
 }
 
 /// Information about a linked AST node.
@@ -1072,6 +1113,9 @@ table LinkedNode {
   variantField_29:LinkedNodeCommentType (id: 29);
 
   variantField_3:[LinkedNode] (id: 3);
+
+  /// The language version information.
+  variantField_40:LinkedLibraryLanguageVersion (id: 40);
 
   variantField_10:LinkedNode (id: 10);
 
@@ -1187,6 +1231,8 @@ table LinkedNodeTypeFormalParameter {
 
 /// Information about a type substitution.
 table LinkedNodeTypeSubstitution {
+  isLegacy:bool (id: 2);
+
   typeArguments:[LinkedNodeType] (id: 1);
 
   typeParameters:[uint] (id: 0);
@@ -1219,20 +1265,24 @@ table LinkedNodeUnit {
 table PackageBundle {
   /// The version 2 of the summary.
   bundle2:LinkedNodeBundle (id: 0);
+
+  /// The SDK specific data, if this bundle is for SDK.
+  sdk:PackageBundleSdk (id: 1);
+}
+
+/// Summary information about a package.
+table PackageBundleSdk {
+  /// The content of the `allowed_experiments.json` from SDK.
+  allowedExperimentsJson:string (id: 0);
 }
 
 /// Summary information about a top-level type inference error.
 table TopLevelInferenceError {
   /// The [kind] specific arguments.
-  arguments:[string] (id: 2);
+  arguments:[string] (id: 1);
 
   /// The kind of the error.
-  kind:TopLevelInferenceErrorKind (id: 1);
-
-  /// The slot id (which is unique within the compilation unit) identifying the
-  /// target of type inference with which this [TopLevelInferenceError] is
-  /// associated.
-  slot:uint (id: 0);
+  kind:TopLevelInferenceErrorKind (id: 0);
 }
 
 table UnlinkedInformativeData {
@@ -1308,6 +1358,9 @@ table UnlinkedUnit2 {
 
   /// Offsets of the first character of each line in the source code.
   lineStarts:[uint] (id: 5);
+
+  /// URI of the `part of` directive.
+  partOfUri:string (id: 8);
 
   /// URIs of `part` directives.
   parts:[string] (id: 4);

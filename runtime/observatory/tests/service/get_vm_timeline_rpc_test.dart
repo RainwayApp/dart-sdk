@@ -1,11 +1,12 @@
 // Copyright (c) 2015, the Dart project authors.  Please see the AUTHORS file
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
-// VMOptions=--complete_timeline
 
 import 'dart:developer';
+import 'dart:io';
+
 import 'package:observatory/service_io.dart';
-import 'package:unittest/unittest.dart';
+import 'package:test/test.dart';
 
 import 'test_helper.dart';
 
@@ -14,7 +15,7 @@ primeTimeline() {
   Timeline.instantSync('ISYNC', arguments: {'fruit': 'banana'});
   Timeline.finishSync();
   TimelineTask parentTask = TimelineTask.withTaskId(42);
-  TimelineTask task = TimelineTask(parent: parentTask);
+  TimelineTask task = TimelineTask(parent: parentTask, filterKey: 'testFilter');
   task.start('TASK1', arguments: {'task1-start-key': 'task1-start-value'});
   task.instant('ITASK',
       arguments: {'task1-instant-key': 'task1-instant-value'});
@@ -109,7 +110,10 @@ void allEventsHaveIsolateNumber(List events) {
     }
     Map arguments = event['args'];
     expect(arguments, new isInstanceOf<Map>());
-    expect(arguments['isolateId'], new isInstanceOf<String>());
+    expect(arguments['isolateGroupId'], new isInstanceOf<String>());
+    if (event['cat'] != 'GC') {
+      expect(arguments['isolateId'], new isInstanceOf<String>());
+    }
   }
 }
 
@@ -129,17 +133,22 @@ var tests = <VMTest>[
     expect(eventsContains(dartEvents, 'E', 'apple'), isTrue);
     expect(
         eventsContains(dartEvents, 'b', 'TASK1', {
+          'filterKey': 'testFilter',
           'task1-start-key': 'task1-start-value',
           'parentId': 42.toRadixString(16)
         }),
         isTrue);
     expect(
-        eventsContains(dartEvents, 'e', 'TASK1',
-            {'task1-finish-key': 'task1-finish-value'}),
+        eventsContains(dartEvents, 'e', 'TASK1', {
+          'filterKey': 'testFilter',
+          'task1-finish-key': 'task1-finish-value',
+        }),
         isTrue);
     expect(
-        eventsContains(dartEvents, 'n', 'ITASK',
-            {'task1-instant-key': 'task1-instant-value'}),
+        eventsContains(dartEvents, 'n', 'ITASK', {
+          'filterKey': 'testFilter',
+          'task1-instant-key': 'task1-instant-value',
+        }),
         isTrue);
     expect(eventsContains(dartEvents, 'q', 'ITASK'), isFalse);
     expect(eventsContains(dartEvents, 'B', 'peach'), isTrue);
@@ -165,4 +174,20 @@ var tests = <VMTest>[
   },
 ];
 
-main(args) async => runVMTests(args, tests, testeeBefore: primeTimeline);
+main(List<String> args) async {
+  // Running the subprocesses of this particular test in opt counter mode
+  // will cause it to be slow and cause many compilations.
+  //
+  // Together with "--complete-timeline" this will create a huge number of
+  // timeline events which can, on ia32, cause the process to hit OOM.
+  //
+  // So we filter out that particular argument.
+  final executableArgs = Platform.executableArguments
+      .where((String arg) => !arg.contains('optimization-counter-threshold'))
+      .toList();
+
+  await runVMTests(args, tests,
+      testeeBefore: primeTimeline,
+      extraArgs: ['--complete-timeline'],
+      executableArgs: executableArgs);
+}

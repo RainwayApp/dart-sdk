@@ -12,21 +12,30 @@ import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
+import 'package:analyzer/src/dart/element/type_schema.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart' show AnalysisOptionsImpl;
 import 'package:analyzer/src/generated/resolver.dart';
 
 class TypeArgumentsVerifier {
   final AnalysisOptionsImpl _options;
-  final TypeSystemImpl _typeSystem;
+  final LibraryElement _libraryElement;
   final ErrorReporter _errorReporter;
 
-  TypeArgumentsVerifier(this._options, this._typeSystem, this._errorReporter);
+  TypeArgumentsVerifier(
+    this._options,
+    this._libraryElement,
+    this._errorReporter,
+  );
 
-  TypeProvider get _typeProvider => _typeSystem.typeProvider;
+  TypeProvider get _typeProvider => _libraryElement.typeProvider;
+
+  TypeSystemImpl get _typeSystem => _libraryElement.typeSystem;
 
   void checkFunctionExpressionInvocation(FunctionExpressionInvocation node) {
     _checkTypeArguments(node);
+    _checkForImplicitDynamicInvoke(node);
   }
 
   void checkListLiteral(ListLiteral node) {
@@ -41,6 +50,7 @@ class TypeArgumentsVerifier {
       _checkTypeArgumentCount(typeArguments, 1,
           StaticTypeWarningCode.EXPECTED_ONE_LIST_TYPE_ARGUMENTS);
     }
+    _checkForImplicitDynamicTypedLiteral(node);
   }
 
   void checkMapLiteral(SetOrMapLiteral node) {
@@ -55,10 +65,12 @@ class TypeArgumentsVerifier {
       _checkTypeArgumentCount(typeArguments, 2,
           StaticTypeWarningCode.EXPECTED_TWO_MAP_TYPE_ARGUMENTS);
     }
+    _checkForImplicitDynamicTypedLiteral(node);
   }
 
   void checkMethodInvocation(MethodInvocation node) {
     _checkTypeArguments(node);
+    _checkForImplicitDynamicInvoke(node);
   }
 
   void checkSetLiteral(SetOrMapLiteral node) {
@@ -73,6 +85,7 @@ class TypeArgumentsVerifier {
       _checkTypeArgumentCount(typeArguments, 1,
           StaticTypeWarningCode.EXPECTED_ONE_SET_TYPE_ARGUMENTS);
     }
+    _checkForImplicitDynamicTypedLiteral(node);
   }
 
   void checkTypeName(TypeName node) {
@@ -80,6 +93,65 @@ class TypeArgumentsVerifier {
     if (node.parent is! ConstructorName ||
         node.parent.parent is! InstanceCreationExpression) {
       _checkForRawTypeName(node);
+    }
+  }
+
+  void _checkForImplicitDynamicInvoke(InvocationExpression node) {
+    if (_options.implicitDynamic ||
+        node == null ||
+        node.typeArguments != null) {
+      return;
+    }
+    DartType invokeType = node.staticInvokeType;
+    DartType declaredType = node.function.staticType;
+    if (invokeType is FunctionType &&
+        declaredType is FunctionType &&
+        declaredType.typeFormals.isNotEmpty) {
+      List<DartType> typeArgs = node.typeArgumentTypes;
+      if (typeArgs.any((t) => t.isDynamic)) {
+        // Issue an error depending on what we're trying to call.
+        Expression function = node.function;
+        if (function is Identifier) {
+          Element element = function.staticElement;
+          if (element is MethodElement) {
+            _errorReporter.reportErrorForNode(
+                StrongModeCode.IMPLICIT_DYNAMIC_METHOD,
+                node.function,
+                [element.displayName, element.typeParameters.join(', ')]);
+            return;
+          }
+
+          if (element is FunctionElement) {
+            _errorReporter.reportErrorForNode(
+                StrongModeCode.IMPLICIT_DYNAMIC_FUNCTION,
+                node.function,
+                [element.displayName, element.typeParameters.join(', ')]);
+            return;
+          }
+        }
+
+        // The catch all case if neither of those matched.
+        // For example, invoking a function expression.
+        _errorReporter.reportErrorForNode(
+            StrongModeCode.IMPLICIT_DYNAMIC_INVOKE,
+            node.function,
+            [declaredType]);
+      }
+    }
+  }
+
+  void _checkForImplicitDynamicTypedLiteral(TypedLiteral node) {
+    if (_options.implicitDynamic || node.typeArguments != null) {
+      return;
+    }
+    DartType type = node.staticType;
+    // It's an error if either the key or value was inferred as dynamic.
+    if (type is InterfaceType && type.typeArguments.any((t) => t.isDynamic)) {
+      // TODO(brianwilkerson) Add StrongModeCode.IMPLICIT_DYNAMIC_SET_LITERAL
+      ErrorCode errorCode = node is ListLiteral
+          ? StrongModeCode.IMPLICIT_DYNAMIC_LIST_LITERAL
+          : StrongModeCode.IMPLICIT_DYNAMIC_MAP_LITERAL;
+      _errorReporter.reportErrorForNode(errorCode, node);
     }
   }
 
@@ -119,10 +191,8 @@ class TypeArgumentsVerifier {
     }
   }
 
-  /**
-   * Verify that the type arguments in the given [typeName] are all within
-   * their bounds.
-   */
+  /// Verify that the type arguments in the given [typeName] are all within
+  /// their bounds.
   void _checkForTypeArgumentNotMatchingBounds(TypeName typeName) {
     var element = typeName.name.staticElement;
     var type = typeName.type;
@@ -159,17 +229,18 @@ class TypeArgumentsVerifier {
       }
       DartType boundType = typeParameters[i].bound;
       if (argType != null && boundType != null) {
+        boundType = _libraryElement.toLegacyTypeIfOptOut(boundType);
         if (shouldSubstitute) {
           boundType = Substitution.fromPairs(typeParameters, typeArguments)
               .substituteType(boundType);
         }
 
-        if (!_typeSystem.isSubtypeOf(argType, boundType)) {
+        if (!_typeSystem.isSubtypeOf2(argType, boundType)) {
           if (_shouldAllowSuperBoundedTypes(typeName)) {
             var replacedType =
                 (argType as TypeImpl).replaceTopAndBottom(_typeProvider);
             if (!identical(replacedType, argType) &&
-                _typeSystem.isSubtypeOf(replacedType, boundType)) {
+                _typeSystem.isSubtypeOf2(replacedType, boundType)) {
               // Bound is satisfied under super-bounded rules, so we're ok.
               continue;
             }
@@ -183,12 +254,10 @@ class TypeArgumentsVerifier {
     }
   }
 
-  /**
-   * Checks to ensure that the given list of type [arguments] does not have a
-   * type parameter as a type argument. The [errorCode] is either
-   * [CompileTimeErrorCode.INVALID_TYPE_ARGUMENT_IN_CONST_LIST] or
-   * [CompileTimeErrorCode.INVALID_TYPE_ARGUMENT_IN_CONST_MAP].
-   */
+  /// Checks to ensure that the given list of type [arguments] does not have a
+  /// type parameter as a type argument. The [errorCode] is either
+  /// [CompileTimeErrorCode.INVALID_TYPE_ARGUMENT_IN_CONST_LIST] or
+  /// [CompileTimeErrorCode.INVALID_TYPE_ARGUMENT_IN_CONST_MAP].
   void _checkTypeArgumentConst(
       NodeList<TypeAnnotation> arguments, ErrorCode errorCode) {
     for (TypeAnnotation type in arguments) {
@@ -216,10 +285,8 @@ class TypeArgumentsVerifier {
     }
   }
 
-  /**
-   * Verify that the given [typeArguments] are all within their bounds, as
-   * defined by the given [element].
-   */
+  /// Verify that the given [typeArguments] are all within their bounds, as
+  /// defined by the given [element].
   void _checkTypeArguments(InvocationExpression node) {
     NodeList<TypeAnnotation> typeArgumentList = node.typeArguments?.arguments;
     if (typeArgumentList == null) {
@@ -265,7 +332,7 @@ class TypeArgumentsVerifier {
 
         var substitution = Substitution.fromPairs(fnTypeParams, typeArgs);
         var bound = substitution.substituteType(rawBound);
-        if (!_typeSystem.isSubtypeOf(argType, bound)) {
+        if (!_typeSystem.isSubtypeOf2(argType, bound)) {
           _errorReporter.reportErrorForNode(
               CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS,
               typeArgumentList[i],
@@ -288,7 +355,7 @@ class TypeArgumentsVerifier {
   /// This function will return false if any of the following are true:
   ///
   /// - [inferenceContextNode] has an inference context type that does not
-  ///   contain `?`
+  ///   contain `_`
   /// - [type] does not have any `dynamic` type arguments.
   /// - the element is marked with `@optionalTypeArgs` from "package:meta".
   bool _isMissingTypeArguments(AstNode node, DartType type, Element element,

@@ -6,14 +6,32 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
+import 'package:analyzer/src/dart/analysis/session.dart';
 import 'package:analyzer/src/dart/element/element.dart';
-import 'package:analyzer/src/dart/element/member.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/resolver/variance.dart';
+import 'package:analyzer/src/generated/engine.dart';
+import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:meta/meta.dart';
 
 mixin ElementsTypesMixin {
+  InterfaceType get boolNone {
+    var element = typeProvider.boolElement;
+    return interfaceTypeNone(element);
+  }
+
+  InterfaceType get boolQuestion {
+    var element = typeProvider.boolElement;
+    return interfaceTypeQuestion(element);
+  }
+
+  InterfaceType get boolStar {
+    var element = typeProvider.boolElement;
+    return interfaceTypeStar(element);
+  }
+
   InterfaceType get doubleNone {
     var element = typeProvider.doubleType.element;
     return interfaceTypeNone(element);
@@ -129,6 +147,8 @@ mixin ElementsTypesMixin {
     return interfaceTypeStar(element);
   }
 
+  LibraryElementImpl get testLibrary => null;
+
   TypeProvider get typeProvider;
 
   VoidTypeImpl get voidNone => VoidTypeImpl.instance;
@@ -143,6 +163,7 @@ mixin ElementsTypesMixin {
     List<MethodElement> methods = const [],
   }) {
     var element = ClassElementImpl(name, 0);
+    element.enclosingElement = testLibrary;
     element.typeParameters = typeParameters;
     element.supertype = superType ?? typeProvider.objectType;
     element.interfaces = interfaces;
@@ -373,6 +394,30 @@ mixin ElementsTypesMixin {
     );
   }
 
+  LibraryElementImpl library_({
+    @required String uriStr,
+    @required TypeSystemImpl typeSystem,
+    AnalysisContext analysisContext,
+    AnalysisSessionImpl analysisSession,
+  }) {
+    var library = LibraryElementImpl(analysisContext, analysisSession, uriStr,
+        -1, 0, typeSystem.isNonNullableByDefault);
+    library.typeSystem = typeSystem;
+    library.typeProvider = typeSystem.typeProvider;
+
+    var uri = Uri.parse(uriStr);
+    var source = _MockSource(uri);
+
+    var definingUnit = CompilationUnitElementImpl();
+    definingUnit.source = source;
+    definingUnit.librarySource = source;
+
+    definingUnit.enclosingElement = library;
+    library.definingCompilationUnit = definingUnit;
+
+    return library;
+  }
+
   InterfaceType listNone(DartType type) {
     return typeProvider.listElement.instantiate(
       typeArguments: [type],
@@ -390,6 +435,27 @@ mixin ElementsTypesMixin {
   InterfaceType listStar(DartType type) {
     return typeProvider.listElement.instantiate(
       typeArguments: [type],
+      nullabilitySuffix: NullabilitySuffix.star,
+    );
+  }
+
+  InterfaceType mapNone(DartType key, DartType value) {
+    return typeProvider.mapElement.instantiate(
+      typeArguments: [key, value],
+      nullabilitySuffix: NullabilitySuffix.none,
+    );
+  }
+
+  InterfaceType mapQuestion(DartType key, DartType value) {
+    return typeProvider.mapElement.instantiate(
+      typeArguments: [key, value],
+      nullabilitySuffix: NullabilitySuffix.question,
+    );
+  }
+
+  InterfaceType mapStar(DartType key, DartType value) {
+    return typeProvider.mapElement.instantiate(
+      typeArguments: [key, value],
       nullabilitySuffix: NullabilitySuffix.star,
     );
   }
@@ -415,6 +481,7 @@ mixin ElementsTypesMixin {
     List<InterfaceType> interfaces = const [],
   }) {
     var element = MixinElementImpl(name, 0);
+    element.enclosingElement = testLibrary;
     element.typeParameters = typeParameters;
     element.superclassConstraints = constraints ?? [typeProvider.objectType];
     element.interfaces = interfaces;
@@ -425,42 +492,93 @@ mixin ElementsTypesMixin {
   ParameterElement namedParameter({
     @required String name,
     @required DartType type,
+    bool isCovariant = false,
   }) {
     var parameter = ParameterElementImpl(name, 0);
     parameter.parameterKind = ParameterKind.NAMED;
     parameter.type = type;
+    parameter.isExplicitlyCovariant = isCovariant;
     return parameter;
   }
 
   ParameterElement namedRequiredParameter({
     @required String name,
     @required DartType type,
+    bool isCovariant = false,
   }) {
     var parameter = ParameterElementImpl(name, 0);
     parameter.parameterKind = ParameterKind.NAMED_REQUIRED;
     parameter.type = type;
+    parameter.isExplicitlyCovariant = isCovariant;
     return parameter;
   }
 
-  ParameterElement positionalParameter({String name, @required DartType type}) {
+  ParameterElement positionalParameter({
+    String name,
+    @required DartType type,
+    bool isCovariant = false,
+  }) {
     var parameter = ParameterElementImpl(name ?? '', 0);
     parameter.parameterKind = ParameterKind.POSITIONAL;
     parameter.type = type;
+    parameter.isExplicitlyCovariant = isCovariant;
     return parameter;
   }
 
-  TypeParameterMember promoteTypeParameter(
-    TypeParameterElement element,
-    DartType bound,
-  ) {
-    assert(element is! TypeParameterMember);
-    return TypeParameterMember(element, null, bound);
+  TypeParameterTypeImpl promotedTypeParameterType({
+    @required TypeParameterElement element,
+    @required NullabilitySuffix nullabilitySuffix,
+    @required DartType promotedBound,
+  }) {
+    return TypeParameterTypeImpl(
+      element: element,
+      nullabilitySuffix: nullabilitySuffix,
+      promotedBound: promotedBound,
+    );
   }
 
-  ParameterElement requiredParameter({String name, @required DartType type}) {
+  TypeParameterTypeImpl promotedTypeParameterTypeNone(
+    TypeParameterElement element,
+    DartType promotedBound,
+  ) {
+    return promotedTypeParameterType(
+      element: element,
+      nullabilitySuffix: NullabilitySuffix.none,
+      promotedBound: promotedBound,
+    );
+  }
+
+  TypeParameterTypeImpl promotedTypeParameterTypeQuestion(
+    TypeParameterElement element,
+    DartType promotedBound,
+  ) {
+    return promotedTypeParameterType(
+      element: element,
+      nullabilitySuffix: NullabilitySuffix.question,
+      promotedBound: promotedBound,
+    );
+  }
+
+  TypeParameterTypeImpl promotedTypeParameterTypeStar(
+    TypeParameterElement element,
+    DartType promotedBound,
+  ) {
+    return promotedTypeParameterType(
+      element: element,
+      nullabilitySuffix: NullabilitySuffix.star,
+      promotedBound: promotedBound,
+    );
+  }
+
+  ParameterElement requiredParameter({
+    String name,
+    @required DartType type,
+    bool isCovariant = false,
+  }) {
     var parameter = ParameterElementImpl(name ?? '', 0);
     parameter.parameterKind = ParameterKind.REQUIRED;
     parameter.type = type;
+    parameter.isExplicitlyCovariant = isCovariant;
     return parameter;
   }
 
@@ -470,16 +588,6 @@ mixin ElementsTypesMixin {
     element.bound = bound;
     element.variance = variance;
     return element;
-  }
-
-  TypeParameterTypeImpl typeParameterType(
-    TypeParameterElement element, {
-    NullabilitySuffix nullabilitySuffix = NullabilitySuffix.star,
-  }) {
-    return TypeParameterTypeImpl(
-      element,
-      nullabilitySuffix: nullabilitySuffix,
-    );
   }
 
   TypeParameterTypeImpl typeParameterTypeNone(TypeParameterElement element) {
@@ -494,4 +602,14 @@ mixin ElementsTypesMixin {
   TypeParameterTypeImpl typeParameterTypeStar(TypeParameterElement element) {
     return element.instantiate(nullabilitySuffix: NullabilitySuffix.star);
   }
+}
+
+class _MockSource implements Source {
+  @override
+  final Uri uri;
+
+  _MockSource(this.uri);
+
+  @override
+  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

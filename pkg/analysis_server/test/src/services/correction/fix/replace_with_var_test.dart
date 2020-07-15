@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ReplaceWithVarTest);
   });
@@ -23,139 +23,186 @@ class ReplaceWithVarTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.omit_local_variable_types;
 
-  test_for() async {
+  Future<void> test_for() async {
     await resolveTestUnit('''
 void f(List<int> list) {
-  for (/*LINT*/int i = 0; i < list.length; i++) {
+  for (int i = 0; i < list.length; i++) {
     print(i);
   }
 }
 ''');
     await assertHasFix('''
 void f(List<int> list) {
-  for (/*LINT*/var i = 0; i < list.length; i++) {
+  for (var i = 0; i < list.length; i++) {
     print(i);
   }
 }
 ''');
   }
 
-  test_forEach() async {
+  Future<void> test_forEach() async {
     await resolveTestUnit('''
 void f(List<int> list) {
-  for (/*LINT*/int i in list) {
+  for (int i in list) {
     print(i);
   }
 }
 ''');
     await assertHasFix('''
 void f(List<int> list) {
-  for (/*LINT*/var i in list) {
+  for (var i in list) {
     print(i);
   }
 }
 ''');
   }
 
-  test_generic_instanceCreation_withArguments() async {
+  Future<void> test_forEach_final() async {
+    await resolveTestUnit('''
+void f(List<int> list) {
+  for (final int i in list) {
+    print(i);
+  }
+}
+''');
+    await assertHasFix('''
+void f(List<int> list) {
+  for (final i in list) {
+    print(i);
+  }
+}
+''');
+  }
+
+  Future<void> test_generic_instanceCreation_withArguments() async {
     await resolveTestUnit('''
 C<int> f() {
-  /*LINT*/C<int> c = C<int>();
+  C<int> c = C<int>();
   return c;
 }
 class C<T> {}
 ''');
     await assertHasFix('''
 C<int> f() {
-  /*LINT*/var c = C<int>();
+  var c = C<int>();
   return c;
 }
 class C<T> {}
 ''');
   }
 
-  test_generic_instanceCreation_withoutArguments() async {
+  Future<void> test_generic_instanceCreation_withoutArguments() async {
     await resolveTestUnit('''
 C<int> f() {
-  /*LINT*/C<int> c = C();
+  C<int> c = C();
   return c;
 }
 class C<T> {}
 ''');
     await assertHasFix('''
 C<int> f() {
-  /*LINT*/var c = C<int>();
+  var c = C<int>();
   return c;
 }
 class C<T> {}
 ''');
   }
 
-  test_generic_listLiteral() async {
+  Future<void> test_generic_listLiteral() async {
     await resolveTestUnit('''
 List f() {
-  /*LINT*/List<int> l = [];
+  List<int> l = [];
   return l;
 }
 ''');
     await assertHasFix('''
 List f() {
-  /*LINT*/var l = <int>[];
+  var l = <int>[];
   return l;
 }
 ''');
   }
 
-  test_generic_mapLiteral() async {
+  Future<void> test_generic_mapLiteral() async {
     await resolveTestUnit('''
 Map f() {
-  /*LINT*/Map<String, int> m = {};
+  Map<String, int> m = {};
   return m;
 }
 ''');
     await assertHasFix('''
 Map f() {
-  /*LINT*/var m = <String, int>{};
+  var m = <String, int>{};
   return m;
 }
 ''');
   }
 
-  test_generic_setLiteral() async {
+  Future<void> test_generic_setLiteral() async {
     await resolveTestUnit('''
 Set f() {
-  /*LINT*/Set<int> s = {};
+  Set<int> s = {};
   return s;
 }
 ''');
     await assertHasFix('''
 Set f() {
-  /*LINT*/var s = <int>{};
+  var s = <int>{};
   return s;
 }
 ''');
   }
 
-  test_generic_setLiteral_ambiguous() async {
+  Future<void> test_generic_setLiteral_ambiguous() async {
     await resolveTestUnit('''
 Set f() {
-  /*LINT*/Set s = {};
+  Set s = {};
   return s;
 }
 ''');
     await assertNoFix();
   }
 
-  test_simple() async {
+  Future<void> test_simple() async {
     await resolveTestUnit('''
 String f() {
-  /*LINT*/String s = '';
+  String s = '';
   return s;
 }
 ''');
     await assertHasFix('''
 String f() {
-  /*LINT*/var s = '';
+  var s = '';
+  return s;
+}
+''');
+  }
+
+  Future<void> test_simple_const() async {
+    await resolveTestUnit('''
+String f() {
+  const String s = '';
+  return s;
+}
+''');
+    await assertHasFix('''
+String f() {
+  const s = '';
+  return s;
+}
+''');
+  }
+
+  Future<void> test_simple_final() async {
+    await resolveTestUnit('''
+String f() {
+  final String s = '';
+  return s;
+}
+''');
+    await assertHasFix('''
+String f() {
+  final s = '';
   return s;
 }
 ''');

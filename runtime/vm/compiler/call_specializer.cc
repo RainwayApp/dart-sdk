@@ -2,7 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#ifndef DART_PRECOMPILED_RUNTIME
 #include "vm/compiler/call_specializer.h"
 
 #include "vm/compiler/backend/flow_graph_compiler.h"
@@ -113,10 +112,11 @@ bool CallSpecializer::TryCreateICData(InstanceCallInstr* call) {
 
   const Token::Kind op_kind = call->token_kind();
   if (FLAG_guess_icdata_cid) {
-    if (FLAG_precompiled_mode) {
+    if (CompilerState::Current().is_aot()) {
       // In precompiler speculate that both sides of bitwise operation
       // are Smi-s.
-      if (Token::IsBinaryBitwiseOperator(op_kind)) {
+      if (Token::IsBinaryBitwiseOperator(op_kind) &&
+          call->CanReceiverBeSmiBasedOnInterfaceTarget(zone())) {
         class_ids[0] = kSmiCid;
         class_ids[1] = kSmiCid;
       }
@@ -125,13 +125,16 @@ bool CallSpecializer::TryCreateICData(InstanceCallInstr* call) {
         Token::IsEqualityOperator(op_kind) ||
         Token::IsBinaryOperator(op_kind)) {
       // Guess cid: if one of the inputs is a number assume that the other
-      // is a number of same type.
-      const intptr_t cid_0 = class_ids[0];
-      const intptr_t cid_1 = class_ids[1];
-      if ((cid_0 == kDynamicCid) && (IsNumberCid(cid_1))) {
-        class_ids[0] = cid_1;
-      } else if (IsNumberCid(cid_0) && (cid_1 == kDynamicCid)) {
-        class_ids[1] = cid_0;
+      // is a number of same type, unless the interface target tells us this
+      // is impossible.
+      if (call->CanReceiverBeSmiBasedOnInterfaceTarget(zone())) {
+        const intptr_t cid_0 = class_ids[0];
+        const intptr_t cid_1 = class_ids[1];
+        if ((cid_0 == kDynamicCid) && (IsNumberCid(cid_1))) {
+          class_ids[0] = cid_1;
+        } else if (IsNumberCid(cid_0) && (cid_1 == kDynamicCid)) {
+          class_ids[1] = cid_0;
+        }
       }
     }
   }
@@ -258,7 +261,6 @@ void CallSpecializer::AddCheckNull(Value* to_check,
                                    intptr_t deopt_id,
                                    Environment* deopt_environment,
                                    Instruction* insert_before) {
-  ASSERT(I->can_use_strong_mode_types());
   if (to_check->Type()->is_nullable()) {
     CheckNullInstr* check_null =
         new (Z) CheckNullInstr(to_check->CopyWithType(Z), function_name,
@@ -742,14 +744,14 @@ bool CallSpecializer::TryInlineImplicitInstanceGetter(InstanceCallInstr* call) {
     field = field.CloneFromOriginal();
   }
 
-  switch (
-      flow_graph()->CheckForInstanceCall(call, RawFunction::kImplicitGetter)) {
+  switch (flow_graph()->CheckForInstanceCall(call,
+                                             FunctionLayout::kImplicitGetter)) {
     case FlowGraph::ToCheck::kCheckNull:
       AddCheckNull(call->Receiver(), call->function_name(), call->deopt_id(),
                    call->env(), call);
       break;
     case FlowGraph::ToCheck::kCheckCid:
-      if (FLAG_precompiled_mode) {
+      if (CompilerState::Current().is_aot()) {
         return false;  // AOT cannot class check
       }
       AddReceiverCheck(call);
@@ -763,14 +765,27 @@ bool CallSpecializer::TryInlineImplicitInstanceGetter(InstanceCallInstr* call) {
 
 void CallSpecializer::InlineImplicitInstanceGetter(Definition* call,
                                                    const Field& field) {
+  ASSERT(field.is_instance());
+  Definition* receiver = call->ArgumentAt(0);
+
+  const bool calls_initializer = field.NeedsInitializationCheckOnLoad();
   const Slot& slot = Slot::Get(field, &flow_graph()->parsed_function());
   LoadFieldInstr* load = new (Z) LoadFieldInstr(
-      new (Z) Value(call->ArgumentAt(0)), slot, call->token_pos());
+      new (Z) Value(receiver), slot, call->token_pos(), calls_initializer,
+      calls_initializer ? call->deopt_id() : DeoptId::kNone);
 
-  // Discard the environment from the original instruction because the load
-  // can't deoptimize.
+  Environment* load_env = nullptr;
+  if (calls_initializer) {
+    // Drop getter argument from the environment as it is not
+    // pushed on the stack when initializer is called.
+    load_env =
+        call->env()->DeepCopy(Z, call->env()->Length() - call->ArgumentCount());
+  }
   call->RemoveEnvironment();
   ReplaceCall(call, load);
+  if (calls_initializer) {
+    load_env->DeepCopyTo(Z, load);
+  }
 
   if (load->slot().nullable_cid() != kDynamicCid) {
     // Reset value types if we know concrete cid.
@@ -788,7 +803,7 @@ bool CallSpecializer::TryInlineInstanceSetter(InstanceCallInstr* instr) {
     return false;
   }
   const Function& target = targets.FirstTarget();
-  if (target.kind() != RawFunction::kImplicitSetter) {
+  if (target.kind() != FunctionLayout::kImplicitSetter) {
     // Non-implicit setter are inlined like normal method calls.
     return false;
   }
@@ -798,14 +813,14 @@ bool CallSpecializer::TryInlineInstanceSetter(InstanceCallInstr* instr) {
     field = field.CloneFromOriginal();
   }
 
-  switch (
-      flow_graph()->CheckForInstanceCall(instr, RawFunction::kImplicitSetter)) {
+  switch (flow_graph()->CheckForInstanceCall(instr,
+                                             FunctionLayout::kImplicitSetter)) {
     case FlowGraph::ToCheck::kCheckNull:
       AddCheckNull(instr->Receiver(), instr->function_name(), instr->deopt_id(),
                    instr->env(), instr);
       break;
     case FlowGraph::ToCheck::kCheckCid:
-      if (FLAG_precompiled_mode) {
+      if (CompilerState::Current().is_aot()) {
         return false;  // AOT cannot class check
       }
       AddReceiverCheck(instr);
@@ -816,7 +831,7 @@ bool CallSpecializer::TryInlineInstanceSetter(InstanceCallInstr* instr) {
 
   // True if we can use unchecked entry into the setter.
   bool is_unchecked_call = false;
-  if (!FLAG_precompiled_mode) {
+  if (!CompilerState::Current().is_aot()) {
     if (targets.IsMonomorphic() && targets.MonomorphicExactness().IsExact()) {
       if (targets.MonomorphicExactness().IsTriviallyExact()) {
         flow_graph()->AddExactnessGuard(instr,
@@ -854,9 +869,9 @@ bool CallSpecializer::TryInlineInstanceSetter(InstanceCallInstr* instr) {
 
   // Build an AssertAssignable if necessary.
   const AbstractType& dst_type = AbstractType::ZoneHandle(zone(), field.type());
-  if (I->argument_type_checks() && !dst_type.IsTopType()) {
+  if (!dst_type.IsTopTypeForSubtyping()) {
     // Compute if we need to type check the value. Always type check if
-    // not in strong mode or if at a dynamic invocation.
+    // at a dynamic invocation.
     bool needs_check = true;
     if (!instr->interface_target().IsNull()) {
       if (field.is_covariant()) {
@@ -893,14 +908,15 @@ bool CallSpecializer::TryInlineInstanceSetter(InstanceCallInstr* instr) {
         }
       }
 
-      InsertBefore(instr,
-                   new (Z) AssertAssignableInstr(
-                       instr->token_pos(), new (Z) Value(instr->ArgumentAt(1)),
-                       new (Z) Value(instantiator_type_args),
-                       new (Z) Value(function_type_args), dst_type,
-                       String::ZoneHandle(zone(), field.name()),
-                       instr->deopt_id(), target.nnbd_mode()),
-                   instr->env(), FlowGraph::kEffect);
+      InsertBefore(
+          instr,
+          new (Z) AssertAssignableInstr(
+              instr->token_pos(), new (Z) Value(instr->ArgumentAt(1)),
+              new (Z) Value(flow_graph_->GetConstant(dst_type)),
+              new (Z) Value(instantiator_type_args),
+              new (Z) Value(function_type_args),
+              String::ZoneHandle(zone(), field.name()), instr->deopt_id()),
+          instr->env(), FlowGraph::kEffect);
     }
   }
 
@@ -949,7 +965,7 @@ bool CallSpecializer::TryInlineInstanceGetter(InstanceCallInstr* call) {
     return false;
   }
   const Function& target = targets.FirstTarget();
-  if (target.kind() != RawFunction::kImplicitGetter) {
+  if (target.kind() != FunctionLayout::kImplicitGetter) {
     // Non-implicit getters are inlined like normal methods by conventional
     // inlining in FlowGraphInliner.
     return false;
@@ -1056,8 +1072,7 @@ bool CallSpecializer::TryInlineInstanceMethod(InstanceCallInstr* call) {
 // (ic_data.NumberOfChecks() * 2) entries
 // An instance-of test returning all same results can be converted to a class
 // check.
-RawBool* CallSpecializer::InstanceOfAsBool(
-    NNBDMode mode,
+BoolPtr CallSpecializer::InstanceOfAsBool(
     const ICData& ic_data,
     const AbstractType& type,
     ZoneGrowableArray<intptr_t>* results) const {
@@ -1095,18 +1110,22 @@ RawBool* CallSpecializer::InstanceOfAsBool(
     if (cls.NumTypeArguments() > 0) {
       return Bool::null();
     }
-    // As of Dart 1.5, the Null type is a subtype of (and is more specific than)
-    // any type. However, we are checking instances here and not types. The
-    // null instance is only an instance of Null, Object, and dynamic.
-    // TODO(regis): Consider nullability of type if mode is not kLegacy, or if
-    // strong mode is enabled.
-    const bool is_subtype =
-        cls.IsNullClass()
-            ? (type_class.IsNullClass() || type_class.IsObjectClass() ||
-               type_class.IsDynamicClass())
-            : Class::IsSubtypeOf(mode, cls, Object::null_type_arguments(),
-                                 type_class, Object::null_type_arguments(),
-                                 Heap::kOld);
+    bool is_subtype = false;
+    if (cls.IsNullClass()) {
+      // 'null' is an instance of Null, Object*, Never*, void, and dynamic.
+      // In addition, 'null' is an instance of any nullable type.
+      // It is also an instance of FutureOr<T> if it is an instance of T.
+      const AbstractType& unwrapped_type =
+          AbstractType::Handle(type.UnwrapFutureOr());
+      ASSERT(unwrapped_type.IsInstantiated());
+      is_subtype = unwrapped_type.IsTopTypeForInstanceOf() ||
+                   unwrapped_type.IsNullable() ||
+                   (unwrapped_type.IsLegacy() && unwrapped_type.IsNeverType());
+    } else {
+      is_subtype =
+          Class::IsSubtypeOf(cls, Object::null_type_arguments(),
+                             Nullability::kNonNullable, type, Heap::kOld);
+    }
     results->Add(cls.id());
     results->Add(static_cast<intptr_t>(is_subtype));
     if (prev.IsNull()) {
@@ -1121,8 +1140,7 @@ RawBool* CallSpecializer::InstanceOfAsBool(
 }
 
 // Returns true if checking against this type is a direct class id comparison.
-bool CallSpecializer::TypeCheckAsClassEquality(NNBDMode mode,
-                                               const AbstractType& type) {
+bool CallSpecializer::TypeCheckAsClassEquality(const AbstractType& type) {
   ASSERT(type.IsFinalized());
   // Requires CHA.
   if (!type.IsInstantiated()) return false;
@@ -1136,14 +1154,10 @@ bool CallSpecializer::TypeCheckAsClassEquality(NNBDMode mode,
     return false;
   }
 
-  if (mode != NNBDMode::kLegacyLib) {
-    return false;  // TODO(regis): Implement.
-  }
-
   // Private classes cannot be subclassed by later loaded libs.
   if (!type_class.IsPrivate()) {
     // In AOT mode we can't use CHA deoptimizations.
-    ASSERT(!FLAG_precompiled_mode || !FLAG_use_cha_deopt);
+    ASSERT(!CompilerState::Current().is_aot() || !FLAG_use_cha_deopt);
     if (FLAG_use_cha_deopt || isolate()->all_classes_finalized()) {
       if (FLAG_trace_cha) {
         THR_Print(
@@ -1169,7 +1183,16 @@ bool CallSpecializer::TypeCheckAsClassEquality(NNBDMode mode,
         TypeArguments::Handle(type.arguments());
     const bool is_raw_type = type_arguments.IsNull() ||
                              type_arguments.IsRaw(from_index, num_type_params);
-    return is_raw_type;
+    if (!is_raw_type) {
+      return false;
+    }
+  }
+  if (type.IsNullable() || type.IsTopTypeForInstanceOf() ||
+      type.IsNeverType()) {
+    // A class id check is not sufficient, since a null instance also satisfies
+    // the test against a nullable type.
+    // TODO(regis): Add a null check in addition to the class id check?
+    return false;
   }
   return true;
 }
@@ -1182,27 +1205,42 @@ bool CallSpecializer::TryReplaceInstanceOfWithRangeCheck(
 }
 
 bool CallSpecializer::TryOptimizeInstanceOfUsingStaticTypes(
-    NNBDMode mode,
     InstanceCallInstr* call,
     const AbstractType& type) {
-  ASSERT(I->can_use_strong_mode_types());
   ASSERT(Token::IsTypeTestOperator(call->token_kind()));
-
-  if (mode != NNBDMode::kLegacyLib) {
-    return false;  // TODO(regis): Implement.
-  }
-
-  if (type.IsDynamicType() || type.IsObjectType() || !type.IsInstantiated()) {
+  if (!type.IsInstantiated()) {
     return false;
   }
 
-  const intptr_t receiver_index = call->FirstArgIndex();
-  Value* left_value = call->ArgumentValueAt(receiver_index);
+  Value* left_value = call->Receiver();
+  if (left_value->Type()->IsInstanceOf(type)) {
+    ConstantInstr* replacement = flow_graph()->GetConstant(Bool::True());
+    call->ReplaceUsesWith(replacement);
+    ASSERT(current_iterator()->Current() == call);
+    current_iterator()->RemoveCurrentFromGraph();
+    return true;
+  }
 
-  if (left_value->Type()->IsSubtypeOf(mode, type)) {
+  // The goal is to emit code that will determine the result of 'x is type'
+  // depending solely on the fact that x == null or not.
+  // Checking whether the receiver is null can only help if the tested type is
+  // non-nullable or legacy (including Never*) or the Null type.
+  // Also, testing receiver for null cannot help with FutureOr.
+  if ((type.IsNullable() && !type.IsNullType()) || type.IsFutureOrType()) {
+    return false;
+  }
+
+  // If type is Null or Never*, or the static type of the receiver is a
+  // subtype of the tested type, replace 'receiver is type' with
+  //  - 'receiver == null' if type is Null or Never*,
+  //  - 'receiver != null' otherwise.
+  if (type.IsNullType() || (type.IsNeverType() && type.IsLegacy()) ||
+      left_value->Type()->IsSubtypeOf(type)) {
     Definition* replacement = new (Z) StrictCompareInstr(
         call->token_pos(),
-        type.IsNullType() ? Token::kEQ_STRICT : Token::kNE_STRICT,
+        (type.IsNullType() || (type.IsNeverType() && type.IsLegacy()))
+            ? Token::kEQ_STRICT
+            : Token::kNE_STRICT,
         left_value->CopyWithType(Z),
         new (Z) Value(flow_graph()->constant_null()),
         /* number_check = */ false, DeoptId::kNone);
@@ -1225,35 +1263,24 @@ void CallSpecializer::ReplaceWithInstanceOf(InstanceCallInstr* call) {
   Definition* instantiator_type_args = NULL;
   Definition* function_type_args = NULL;
   AbstractType& type = AbstractType::ZoneHandle(Z);
-  NNBDMode nnbd_mode;
   ASSERT(call->type_args_len() == 0);
   if (call->ArgumentCount() == 2) {
     instantiator_type_args = flow_graph()->constant_null();
     function_type_args = flow_graph()->constant_null();
     ASSERT(call->MatchesCoreName(Symbols::_simpleInstanceOf()));
     type = AbstractType::Cast(call->ArgumentAt(1)->AsConstant()->value()).raw();
-    // Since type literals are not imported, a legacy type indicates that the
-    // call originated in a legacy library. Note that the type test against a
-    // non-legacy type (even in a legacy library) such as dynamic, void, or Null
-    // yield the same result independently of the mode used.
-    nnbd_mode = type.IsLegacy() ? NNBDMode::kLegacyLib : NNBDMode::kOptedInLib;
   } else {
-    ASSERT(call->ArgumentCount() == 5);
+    ASSERT(call->ArgumentCount() == 4);
     instantiator_type_args = call->ArgumentAt(1);
     function_type_args = call->ArgumentAt(2);
     type = AbstractType::Cast(call->ArgumentAt(3)->AsConstant()->value()).raw();
-    nnbd_mode = static_cast<NNBDMode>(
-        Smi::Cast(call->ArgumentAt(4)->AsConstant()->value()).Value());
   }
 
-  // TODO(regis): Revisit call_specializer for NNBD.
-
-  if (I->can_use_strong_mode_types() &&
-      TryOptimizeInstanceOfUsingStaticTypes(nnbd_mode, call, type)) {
+  if (TryOptimizeInstanceOfUsingStaticTypes(call, type)) {
     return;
   }
 
-  if (TypeCheckAsClassEquality(nnbd_mode, type)) {
+  if (TypeCheckAsClassEquality(type)) {
     LoadClassIdInstr* left_cid = new (Z) LoadClassIdInstr(new (Z) Value(left));
     InsertBefore(call, left_cid, NULL, FlowGraph::kValue);
     const intptr_t type_cid = Class::Handle(Z, type.type_class()).id();
@@ -1277,12 +1304,11 @@ void CallSpecializer::ReplaceWithInstanceOf(InstanceCallInstr* call) {
   if (number_of_checks > 0 && number_of_checks <= FLAG_max_polymorphic_checks) {
     ZoneGrowableArray<intptr_t>* results =
         new (Z) ZoneGrowableArray<intptr_t>(number_of_checks * 2);
-    const Bool& as_bool = Bool::ZoneHandle(
-        Z, InstanceOfAsBool(nnbd_mode, unary_checks, type, results));
-    if (as_bool.IsNull() || FLAG_precompiled_mode) {
+    const Bool& as_bool =
+        Bool::ZoneHandle(Z, InstanceOfAsBool(unary_checks, type, results));
+    if (as_bool.IsNull() || CompilerState::Current().is_aot()) {
       if (results->length() == number_of_checks * 2) {
-        const bool can_deopt =
-            SpecializeTestCidsForNumericTypes(nnbd_mode, results, type);
+        const bool can_deopt = SpecializeTestCidsForNumericTypes(results, type);
         if (can_deopt &&
             !speculative_policy_->IsAllowedForInlining(call->deopt_id())) {
           // Guard against repeated speculative inlining.
@@ -1310,7 +1336,7 @@ void CallSpecializer::ReplaceWithInstanceOf(InstanceCallInstr* call) {
   InstanceOfInstr* instance_of = new (Z) InstanceOfInstr(
       call->token_pos(), new (Z) Value(left),
       new (Z) Value(instantiator_type_args), new (Z) Value(function_type_args),
-      type, call->deopt_id(), nnbd_mode);
+      type, call->deopt_id());
   ReplaceCall(call, instance_of);
 }
 
@@ -1383,8 +1409,7 @@ void CallSpecializer::VisitStaticCall(StaticCallInstr* call) {
     }
   }
 
-  if (I->can_use_strong_mode_types() &&
-      TryOptimizeStaticCallUsingStaticTypes(call)) {
+  if (TryOptimizeStaticCallUsingStaticTypes(call)) {
     return;
   }
 }
@@ -1429,19 +1454,15 @@ static void PurgeNegativeTestCidsEntries(ZoneGrowableArray<intptr_t>* results) {
 }
 
 bool CallSpecializer::SpecializeTestCidsForNumericTypes(
-    NNBDMode mode,
     ZoneGrowableArray<intptr_t>* results,
     const AbstractType& type) {
   ASSERT(results->length() >= 2);  // At least on entry.
   const ClassTable& class_table = *Isolate::Current()->class_table();
   if ((*results)[0] != kSmiCid) {
     const Class& smi_class = Class::Handle(class_table.At(kSmiCid));
-    const Class& type_class = Class::Handle(type.type_class());
-    // TODO(regis): Consider nullability of type if mode is not kLegacy, or if
-    // strong mode is enabled.
-    const bool smi_is_subtype = Class::IsSubtypeOf(
-        mode, smi_class, Object::null_type_arguments(), type_class,
-        Object::null_type_arguments(), Heap::kOld);
+    const bool smi_is_subtype =
+        Class::IsSubtypeOf(smi_class, Object::null_type_arguments(),
+                           Nullability::kNonNullable, type, Heap::kOld);
     results->Add((*results)[results->length() - 2]);
     results->Add((*results)[results->length() - 2]);
     for (intptr_t i = results->length() - 3; i > 1; --i) {
@@ -1520,9 +1541,8 @@ bool TypedDataSpecializer::HasThirdPartyImplementor(
     // instances of the [implementor_].
     if (implementor_.is_finalized()) {
       const classid_t cid = implementor_.id();
-      if (!RawObject::IsTypedDataClassId(cid) &&
-          !RawObject::IsTypedDataViewClassId(cid) &&
-          !RawObject::IsExternalTypedDataClassId(cid)) {
+      if (!IsTypedDataClassId(cid) && !IsTypedDataViewClassId(cid) &&
+          !IsExternalTypedDataClassId(cid)) {
         return true;
       }
     }
@@ -1565,12 +1585,10 @@ void TypedDataSpecializer::TryInlineCall(TemplateDartCall<0>* call) {
       value_type = call->ArgumentAt(receiver_index + 2)->Type();
     }
 
-    // TODO(regis): Revisit for NNBD support.
-
     auto& type_class = Class::Handle(zone_);
 #define TRY_INLINE(iface, member_name, type, cid)                              \
   if (!member_name.IsNull()) {                                                 \
-    if (receiver_type->IsAssignableTo(NNBDMode::kLegacyLib, member_name)) {    \
+    if (receiver_type->IsAssignableTo(member_name)) {                          \
       if (is_length_getter) {                                                  \
         type_class = member_name.type_class();                                 \
         ReplaceWithLengthGetter(call);                                         \
@@ -1580,7 +1598,7 @@ void TypedDataSpecializer::TryInlineCall(TemplateDartCall<0>* call) {
         ReplaceWithIndexGet(call, cid);                                        \
       } else {                                                                 \
         if (!index_type->IsNullableInt()) return;                              \
-        if (!value_type->IsAssignableTo(NNBDMode::kLegacyLib, type)) return;   \
+        if (!value_type->IsAssignableTo(type)) return;                         \
         type_class = member_name.type_class();                                 \
         ReplaceWithIndexSet(call, cid);                                        \
       }                                                                        \
@@ -1691,9 +1709,9 @@ Definition* TypedDataSpecializer::AppendLoadIndexed(TemplateDartCall<0>* call,
                         compiler::target::TypedDataBase::data_field_offset());
   flow_graph_->InsertBefore(call, data, call->env(), FlowGraph::kValue);
 
-  Definition* load = new (Z)
-      LoadIndexedInstr(new (Z) Value(data), new (Z) Value(index), index_scale,
-                       cid, kAlignedAccess, DeoptId::kNone, call->token_pos());
+  Definition* load = new (Z) LoadIndexedInstr(
+      new (Z) Value(data), new (Z) Value(index), /*index_unboxed=*/false,
+      index_scale, cid, kAlignedAccess, DeoptId::kNone, call->token_pos());
   flow_graph_->InsertBefore(call, load, call->env(), FlowGraph::kValue);
 
   if (cid == kTypedDataFloat32ArrayCid) {
@@ -1771,10 +1789,14 @@ void TypedDataSpecializer::AppendStoreIndexed(TemplateDartCall<0>* call,
 
   auto store = new (Z) StoreIndexedInstr(
       new (Z) Value(data), new (Z) Value(index), new (Z) Value(value),
-      kNoStoreBarrier, index_scale, cid, kAlignedAccess, DeoptId::kNone,
-      call->token_pos(), Instruction::kNotSpeculative);
+      kNoStoreBarrier, /*index_unboxed=*/false, index_scale, cid,
+      kAlignedAccess, DeoptId::kNone, call->token_pos(),
+      Instruction::kNotSpeculative);
   flow_graph_->InsertBefore(call, store, call->env(), FlowGraph::kEffect);
 }
 
+void CallSpecializer::ReplaceInstanceCallsWithDispatchTableCalls() {
+  // Only implemented for AOT.
+}
+
 }  // namespace dart
-#endif  // DART_PRECOMPILED_RUNTIME

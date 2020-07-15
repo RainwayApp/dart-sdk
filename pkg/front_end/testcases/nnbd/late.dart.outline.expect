@@ -1,11 +1,11 @@
-library;
+library /*isNonNullableByDefault*/;
 import self as self;
 import "dart:core" as core;
 
 class Class extends core::Object {
   late field core::int lateInstanceField;
-  late final field core::int lateFinalInstanceField1;
-  late final field core::int lateFinalInstanceField2;
+  late final [setter] field core::int lateFinalInstanceField1;
+  late final [setter] field core::int lateFinalInstanceField2;
   late final field core::int lateFinalInstanceFieldWithInit;
   late field self::Class lateInstanceFieldThis;
   late final field self::Class lateFinalInstanceFieldThis;

@@ -20,11 +20,15 @@ class IllegalAsyncReturnTypeTest extends DriverResolutionTest {
 int f() async {}
 ''', [
       error(StaticTypeWarningCode.ILLEGAL_ASYNC_RETURN_TYPE, 0, 3),
-      error(HintCode.MISSING_RETURN, 4, 1),
     ]);
   }
 
-  @FailingTest(issue: 'https://github.com/dart-lang/sdk/issues/38188')
+  test_function_nonFuture_void() async {
+    await assertNoErrorsInCode('''
+void f() async {}
+''');
+  }
+
   test_function_nonFuture_withReturn() async {
     await assertErrorsInCode('''
 int f() async {
@@ -53,9 +57,16 @@ class C {
   int m() async {}
 }
 ''', [
-      error(HintCode.MISSING_RETURN, 16, 1),
       error(StaticTypeWarningCode.ILLEGAL_ASYNC_RETURN_TYPE, 12, 3),
     ]);
+  }
+
+  test_method_nonFuture_void() async {
+    await assertNoErrorsInCode('''
+class C {
+  void m() async {}
+}
+''');
   }
 
   test_method_subtypeOfFuture() async {

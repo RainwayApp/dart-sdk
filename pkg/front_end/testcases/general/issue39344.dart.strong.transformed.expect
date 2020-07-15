@@ -21,6 +21,16 @@ class A extends core::Object {
   synthetic constructor •() → self::A*
     : super core::Object::•()
     ;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class B extends self::A {
   synthetic constructor •() → self::B*
@@ -56,7 +66,7 @@ class Class<T extends self::A* = self::A*> extends core::Object {
     if(t is self::B*) {
       core::List<self::Class::T*>* ys = <self::Class::T*>[t{self::Class::T* & self::B* /* '*' & '*' = '*' */}];
       alias = ys;
-      self::xs = alias as{TypeError} core::List<self::B*>*;
+      self::xs = alias as{TypeError,ForDynamic} core::List<self::B*>*;
     }
   }
   method method2b(generic-covariant-impl self::Class::T* t) → void {
@@ -64,9 +74,19 @@ class Class<T extends self::A* = self::A*> extends core::Object {
     if(t is self::B*) {
       core::List<core::List<self::Class::T*>*>* yss = <core::List<self::Class::T*>*>[<self::Class::T*>[t{self::Class::T* & self::B* /* '*' & '*' = '*' */}]];
       alias = yss;
-      self::xss = alias as{TypeError} core::List<core::List<self::B*>*>*;
+      self::xss = alias as{TypeError,ForDynamic} core::List<core::List<self::B*>*>*;
     }
   }
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 static field core::List<self::B*>* xs;
 static field core::List<core::List<self::B*>*>* xss;

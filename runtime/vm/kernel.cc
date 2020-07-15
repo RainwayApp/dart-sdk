@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/kernel.h"
 
 #include "vm/bit_vector.h"
@@ -14,7 +16,6 @@
 #include "vm/parser.h"  // For Parser::kParameter* constants.
 #include "vm/stack_frame.h"
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
 namespace kernel {
@@ -33,26 +34,6 @@ KernelLineStartsReader::KernelLineStartsReader(
   } else {
     UNREACHABLE();
   }
-}
-
-intptr_t KernelLineStartsReader::LineNumberForPosition(
-    intptr_t position) const {
-  intptr_t line_count = line_starts_data_.Length();
-  intptr_t current_start = 0;
-  for (intptr_t i = 0; i < line_count; ++i) {
-    current_start += helper_->At(line_starts_data_, i);
-    if (current_start > position) {
-      // If current_start is greater than the desired position, it means that
-      // it is for the line after |position|. However, since line numbers
-      // start at 1, we just return |i|.
-      return i;
-    }
-
-    if (current_start == position) {
-      return i + 1;
-    }
-  }
-  return line_count;
 }
 
 void KernelLineStartsReader::LocationForPosition(intptr_t position,
@@ -204,7 +185,7 @@ static int LowestFirst(const intptr_t* a, const intptr_t* b) {
  * possibly contain duplicate and unsorted data at the end.
  * Otherwise (when sublist doesn't exist in list) return new empty array.
  */
-static RawArray* AsSortedDuplicateFreeArray(GrowableArray<intptr_t>* source) {
+static ArrayPtr AsSortedDuplicateFreeArray(GrowableArray<intptr_t>* source) {
   intptr_t size = source->length();
   if (size == 0) {
     return Object::empty_array().raw();
@@ -299,7 +280,7 @@ static void CollectBytecodeFunctionTokenPositions(
       object = pool.ObjectAt(i);
       if (object.IsFunction()) {
         closure ^= object.raw();
-        if (closure.kind() == RawFunction::kClosureFunction &&
+        if (closure.kind() == FunctionLayout::kClosureFunction &&
             closure.IsLocalFunction()) {
           CollectTokenPosition(closure.token_pos(), token_positions);
           CollectTokenPosition(closure.end_token_pos(), token_positions);
@@ -491,8 +472,8 @@ class MetadataEvaluator : public KernelReaderHelper {
                            data_program_offset),
         constant_reader_(this, active_class) {}
 
-  RawObject* EvaluateMetadata(intptr_t kernel_offset,
-                              bool is_annotations_offset) {
+  ObjectPtr EvaluateMetadata(intptr_t kernel_offset,
+                             bool is_annotations_offset) {
     SetOffset(kernel_offset);
 
     // Library and LibraryDependency objects do not have a tag in kernel binary.
@@ -527,8 +508,8 @@ class MetadataEvaluator : public KernelReaderHelper {
   DISALLOW_COPY_AND_ASSIGN(MetadataEvaluator);
 };
 
-RawObject* EvaluateMetadata(const Field& metadata_field,
-                            bool is_annotations_offset) {
+ObjectPtr EvaluateMetadata(const Field& metadata_field,
+                           bool is_annotations_offset) {
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
     Thread* thread = Thread::Current();
@@ -569,7 +550,7 @@ class ParameterDescriptorBuilder : public KernelReaderHelper {
                            data_program_offset),
         constant_reader_(this, active_class) {}
 
-  RawObject* BuildParameterDescriptor(const Function& function);
+  ObjectPtr BuildParameterDescriptor(const Function& function);
 
  private:
   ConstantReader constant_reader_;
@@ -577,7 +558,7 @@ class ParameterDescriptorBuilder : public KernelReaderHelper {
   DISALLOW_COPY_AND_ASSIGN(ParameterDescriptorBuilder);
 };
 
-RawObject* ParameterDescriptorBuilder::BuildParameterDescriptor(
+ObjectPtr ParameterDescriptorBuilder::BuildParameterDescriptor(
     const Function& function) {
   SetOffset(function.kernel_offset());
   ReadUntilFunctionNode();
@@ -637,7 +618,7 @@ RawObject* ParameterDescriptorBuilder::BuildParameterDescriptor(
   return param_descriptor.raw();
 }
 
-RawObject* BuildParameterDescriptor(const Function& function) {
+ObjectPtr BuildParameterDescriptor(const Function& function) {
   LongJumpScope jump;
   if (setjmp(*jump.Set()) == 0) {
     Thread* thread = Thread::Current();
@@ -742,7 +723,13 @@ bool NeedsDynamicInvocationForwarder(const Function& function) {
   // dynamic invocation forwarder. So dynamic invocation forwarder is only
   // needed if there are non-covariant parameters of non-top type.
 
-  ASSERT(!function.IsImplicitGetterFunction());
+  // TODO(dartbug.com/40876): Implement dynamic invocation forwarders for
+  // getters.
+  if (function.IsImplicitGetterFunction() ||
+      function.IsImplicitClosureFunction() || function.IsMethodExtractor()) {
+    return false;
+  }
+
   if (function.IsImplicitSetterFunction()) {
     const auto& field = Field::Handle(zone, function.accessor_field());
     return !(field.is_covariant() || field.is_generic_covariant_impl());
@@ -756,7 +743,8 @@ bool NeedsDynamicInvocationForwarder(const Function& function) {
     for (intptr_t i = 0, n = type_params.Length(); i < n; ++i) {
       type_param ^= type_params.TypeAt(i);
       bound = type_param.bound();
-      if (!bound.IsTopType() && !type_param.IsGenericCovariantImpl()) {
+      if (!bound.IsTopTypeForSubtyping() &&
+          !type_param.IsGenericCovariantImpl()) {
         return true;
       }
     }
@@ -770,8 +758,8 @@ bool NeedsDynamicInvocationForwarder(const Function& function) {
   auto& type = AbstractType::Handle(zone);
   for (intptr_t i = function.NumImplicitParameters(); i < num_params; ++i) {
     type = function.ParameterTypeAt(i);
-    if (!type.IsTopType() && !is_generic_covariant_impl.Contains(i) &&
-        !is_covariant.Contains(i)) {
+    if (!type.IsTopTypeForSubtyping() &&
+        !is_generic_covariant_impl.Contains(i) && !is_covariant.Contains(i)) {
       return true;
     }
   }
@@ -797,21 +785,42 @@ static ProcedureAttributesMetadata ProcedureAttributesOf(
   return attrs;
 }
 
+static void BytecodeProcedureAttributesError(const Object& function_or_field,
+                                             const Object& value) {
+  FATAL3("Unexpected value of %s bytecode attribute on %s: %s",
+         Symbols::vm_procedure_attributes_metadata().ToCString(),
+         function_or_field.ToCString(), value.ToCString());
+}
+
 static ProcedureAttributesMetadata ProcedureAttributesFromBytecodeAttribute(
     Zone* zone,
     const Object& function_or_field) {
   ProcedureAttributesMetadata attrs;
-  const auto& value = Object::Handle(
+  const Object& value = Object::Handle(
       zone,
       BytecodeReader::GetBytecodeAttribute(
           function_or_field, Symbols::vm_procedure_attributes_metadata()));
   if (!value.IsNull()) {
-    if (!value.IsSmi()) {
-      FATAL3("Unexpected value of %s bytecode attribute on %s: %s",
-             Symbols::vm_procedure_attributes_metadata().ToCString(),
-             function_or_field.ToCString(), value.ToCString());
+    const intptr_t kBytecodeAttributeLength = 3;
+    int32_t elements[kBytecodeAttributeLength];
+    if (!value.IsArray()) {
+      BytecodeProcedureAttributesError(function_or_field, value);
     }
-    attrs.InitializeFromFlags(Smi::Cast(value).Value());
+    const Array& array = Array::Cast(value);
+    if (array.Length() != kBytecodeAttributeLength) {
+      BytecodeProcedureAttributesError(function_or_field, value);
+    }
+    Object& element = Object::Handle(zone);
+    for (intptr_t i = 0; i < kBytecodeAttributeLength; i++) {
+      element = array.At(i);
+      if (!element.IsSmi()) {
+        BytecodeProcedureAttributesError(function_or_field, value);
+      }
+      elements[i] = Smi::Cast(element).Value();
+    }
+    attrs.InitializeFromFlags(elements[0]);
+    attrs.method_or_setter_selector_id = elements[1];
+    attrs.getter_selector_id = elements[2];
   }
   return attrs;
 }
@@ -819,6 +828,10 @@ static ProcedureAttributesMetadata ProcedureAttributesFromBytecodeAttribute(
 ProcedureAttributesMetadata ProcedureAttributesOf(const Function& function,
                                                   Zone* zone) {
   if (function.is_declared_in_bytecode()) {
+    if (function.IsImplicitGetterOrSetter()) {
+      const Field& field = Field::Handle(zone, function.accessor_field());
+      return ProcedureAttributesFromBytecodeAttribute(zone, field);
+    }
     return ProcedureAttributesFromBytecodeAttribute(zone, function);
   }
   const Script& script = Script::Handle(zone, function.script());
@@ -837,6 +850,18 @@ ProcedureAttributesMetadata ProcedureAttributesOf(const Field& field,
   return ProcedureAttributesOf(
       zone, script, ExternalTypedData::Handle(zone, field.KernelData()),
       field.KernelDataProgramOffset(), field.kernel_offset());
+}
+
+TableSelectorMetadata* TableSelectorMetadataForProgram(
+    const KernelProgramInfo& info,
+    Zone* zone) {
+  TranslationHelper translation_helper(Thread::Current());
+  translation_helper.InitFromKernelProgramInfo(info);
+  const auto& data = ExternalTypedData::Handle(zone, info.metadata_payloads());
+  KernelReaderHelper reader_helper(zone, &translation_helper,
+                                   Script::Handle(zone), data, 0);
+  TableSelectorMetadataHelper table_selector_metadata_helper(&reader_helper);
+  return table_selector_metadata_helper.GetTableSelectorMetadata(zone);
 }
 
 }  // namespace kernel

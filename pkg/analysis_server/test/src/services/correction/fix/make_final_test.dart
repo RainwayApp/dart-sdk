@@ -4,105 +4,140 @@
 
 import 'package:analysis_server/src/services/correction/fix.dart';
 import 'package:analysis_server/src/services/linter/lint_names.dart';
+import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer_plugin/utilities/fixes/fixes.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
-    defineReflectiveTests(MakeFinalTest);
+    defineReflectiveTests(PreferFinalInForEachTest);
+    defineReflectiveTests(PreferFinalFieldsTest);
+    defineReflectiveTests(PreferFinalFieldsWithNNBDTest);
   });
 }
 
 @reflectiveTest
-class MakeFinalTest extends FixProcessorLintTest {
+class PreferFinalFieldsTest extends FixProcessorLintTest {
   @override
   FixKind get kind => DartFixKind.MAKE_FINAL;
 
   @override
   String get lintCode => LintNames.prefer_final_fields;
 
-  test_field_type() async {
+  Future<void> test_field_type() async {
     await resolveTestUnit('''
 class C {
-  int /*LINT*/f = 2;
-}
-''');
-    await assertHasFix('''
-class C {
-  final int /*LINT*/f = 2;
-}
-''');
-  }
-
-  test_field_var() async {
-    await resolveTestUnit('''
-class C {
-  var /*LINT*/f = 2;
+  int _f = 2;
+  int get g => _f;
 }
 ''');
     await assertHasFix('''
 class C {
-  final /*LINT*/f = 2;
+  final int _f = 2;
+  int get g => _f;
 }
 ''');
   }
 
-  test_local_type() async {
-    await resolveTestUnit('''
-bad() {
-  int /*LINT*/x = 2;
-}
-''');
-    await assertHasFix('''
-bad() {
-  final int /*LINT*/x = 2;
-}
-''');
-  }
-
-  test_local_var() async {
-    await resolveTestUnit('''
-bad() {
-  var /*LINT*/x = 2;
-}
-''');
-    await assertHasFix('''
-bad() {
-  final /*LINT*/x = 2;
-}
-''');
-  }
-
-  test_noKeyword() async {
+  Future<void> test_field_var() async {
     await resolveTestUnit('''
 class C {
-  /*LINT*/f = 2;
+  var _f = 2;
+  int get g => _f;
 }
 ''');
     await assertHasFix('''
 class C {
-  /*LINT*/final f = 2;
+  final _f = 2;
+  int get g => _f;
+}
+''');
+  }
+}
+
+@reflectiveTest
+class PreferFinalFieldsWithNNBDTest extends FixProcessorLintTest {
+  @override
+  List<String> get experiments => [EnableString.non_nullable];
+
+  @override
+  FixKind get kind => DartFixKind.MAKE_FINAL;
+
+  @override
+  String get lintCode => LintNames.prefer_final_fields;
+
+  Future<void> test_lateField_type() async {
+    await resolveTestUnit('''
+class C {
+  late int _f = 2;
+  int get g => _f;
+}
+''');
+    await assertHasFix('''
+class C {
+  late final int _f = 2;
+  int get g => _f;
 }
 ''');
   }
 
-  test_topLevel_type() async {
+  Future<void> test_lateField_var() async {
     await resolveTestUnit('''
-int /*LINT*/x = 2;
+class C {
+  late var _f = 2;
+  int get g => _f;
+}
 ''');
     await assertHasFix('''
-final int /*LINT*/x = 2;
+class C {
+  late final _f = 2;
+  int get g => _f;
+}
+''');
+  }
+}
+
+@reflectiveTest
+class PreferFinalInForEachTest extends FixProcessorLintTest {
+  @override
+  FixKind get kind => DartFixKind.MAKE_FINAL;
+
+  @override
+  String get lintCode => LintNames.prefer_final_in_for_each;
+
+  Future<void> test_noType() async {
+    await resolveTestUnit('''
+void fn() {
+  for (var i in [1, 2, 3]) {
+    print(i);
+  }
+}
+''');
+    await assertHasFix('''
+void fn() {
+  for (final i in [1, 2, 3]) {
+    print(i);
+  }
+}
 ''');
   }
 
-  test_topLevel_var() async {
+  Future<void> test_type() async {
     await resolveTestUnit('''
-var /*LINT*/x = 2;
+void fn() {
+  for (int i in [1, 2, 3]) {
+    print(i);
+  }
+}
 ''');
     await assertHasFix('''
-final /*LINT*/x = 2;
+void fn() {
+  for (final int i in [1, 2, 3]) {
+    print(i);
+  }
+}
 ''');
   }
 }

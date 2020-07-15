@@ -11,7 +11,7 @@ const int RUNE_EOL = 10;
 const int RUNE_LEFT_CURLY = 123;
 const int RUNE_RIGHT_CURLY = 125;
 
-final RegExp _wsRegexp = new RegExp(r'\s+');
+final RegExp _wsRegexp = RegExp(r'\s+');
 
 String collapseWhitespace(String str) => str.replaceAll(_wsRegexp, ' ');
 
@@ -19,6 +19,7 @@ bool isEmphasis(Node node) => node is Element && node.tag == 'em';
 bool isPara(Node node) => node is Element && node.tag == 'p';
 bool isBlockquote(Node node) => node is Element && node.tag == 'blockquote';
 bool isPre(Node node) => node is Element && node.tag == 'pre';
+bool isList(Node node) => node is Element && node.tag == 'ul';
 bool isH1(Node node) => node is Element && node.tag == 'h1';
 bool isH3(Node node) => node is Element && node.tag == 'h3';
 bool isHeader(Node node) => node is Element && node.tag.startsWith('h');
@@ -39,7 +40,7 @@ String joinLast(Iterable<String> strs, String join, [String last]) {
   if (strs.isEmpty) return '';
   List list = strs.toList();
   if (list.length == 1) return list.first;
-  StringBuffer buf = new StringBuffer();
+  StringBuffer buf = StringBuffer();
   for (int i = 0; i < list.length; i++) {
     if (i > 0) {
       if (i + 1 == list.length && last != null) {

@@ -21,6 +21,7 @@
 /// the references to `String` and `int` are type arguments.
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
+import 'package:analyzer/dart/element/type_visitor.dart';
 import 'package:analyzer/src/dart/element/type.dart' show InterfaceTypeImpl;
 
 /// The type associated with elements in the element model.
@@ -68,6 +69,10 @@ abstract class DartType {
   /// dart:core library.
   bool get isDartCoreInt;
 
+  /// Returns `true` if this type represents the type 'Iterable' defined in the
+  /// dart:core library.
+  bool get isDartCoreIterable;
+
   /// Returns `true` if this type represents the type 'List' defined in the
   /// dart:core library.
   bool get isDartCoreList;
@@ -104,6 +109,7 @@ abstract class DartType {
   bool get isDynamic;
 
   /// Return `true` if this type represents the type 'Object'.
+  @Deprecated('Use isDartCoreObject')
   bool get isObject;
 
   /// Return `true` if this type represents the type 'void'.
@@ -116,6 +122,9 @@ abstract class DartType {
 
   /// Return the nullability suffix of this type.
   NullabilitySuffix get nullabilitySuffix;
+
+  /// Use the given [visitor] to visit this type.
+  R accept<R>(TypeVisitor<R> visitor);
 
   /// Return the presentation of this type as it should appear when presented
   /// to users in contexts such as error messages.
@@ -159,6 +168,12 @@ Use ClassElement.instantiate() or FunctionTypeAliasElement.instantiate()
   DartType substitute2(
       List<DartType> argumentTypes, List<DartType> parameterTypes);
 }
+
+/// The type `dynamic` is a type which is a supertype of all other types, just
+/// like `Object`, with the difference that the static analysis assumes that
+/// every member access has a corresponding member with a signature that
+/// admits the given access.
+abstract class DynamicType implements DartType {}
 
 /// The type of a function, method, constructor, getter, or setter. Function
 /// types come in three variations:
@@ -246,6 +261,10 @@ abstract class InterfaceType implements ParameterizedType {
   /// declared in this type.
   List<PropertyAccessorElement> get accessors;
 
+  /// Return all the super-interfaces implemented by this interface. This
+  /// includes superclasses, mixins, interfaces, and superclass constraints.
+  List<InterfaceType> get allSupertypes;
+
   /// Return a list containing all of the constructors declared in this type.
   List<ConstructorElement> get constructors;
 
@@ -279,6 +298,20 @@ abstract class InterfaceType implements ParameterizedType {
   /// mixin declaration declares. The list will be empty if this class does not
   /// represent a mixin declaration.
   List<InterfaceType> get superclassConstraints;
+
+  /// Return the canonical interface that this type implements for [element],
+  /// or `null` if such an interface does not exist.
+  ///
+  /// For example, given the following definitions
+  /// ```
+  /// class A<E> {}
+  /// class B<E> implements A<E> {}
+  /// class C implements A<String> {}
+  /// ```
+  /// Asking the type `B<int>` for the type associated with `A` will return the
+  /// type `A<int>`. Asking the type `C` for the type associated with `A` will
+  /// return the type `A<String>`.
+  InterfaceType asInstanceOf(ClassElement element);
 
   /// Return the element representing the getter with the given [name] that is
   /// declared in this class, or `null` if this class does not declare a getter
@@ -546,6 +579,9 @@ abstract class InterfaceType implements ParameterizedType {
       InterfaceTypeImpl.getSmartLeastUpperBound(first, second);
 }
 
+/// The type `Never` represents the uninhabited bottom type.
+abstract class NeverType implements DartType {}
+
 /// A type that can track substituted type parameters, either for itself after
 /// instantiation, or from a surrounding context.
 ///
@@ -595,4 +631,13 @@ abstract class TypeParameterType implements DartType {
 
   @override
   TypeParameterElement get element;
+}
+
+/// The special type `void` is used to indicate that the value of an
+/// expression is meaningless, and intended to be discarded.
+abstract class VoidType implements DartType {
+  @override
+  @deprecated
+  VoidType substitute2(
+      List<DartType> argumentTypes, List<DartType> parameterTypes);
 }

@@ -4,12 +4,14 @@
 
 import 'dart:async';
 import 'dart:io';
+
 import 'package:args/args.dart';
 import 'package:front_end/src/api_unstable/ddc.dart'
     show InitializedCompilerState, parseExperimentalArguments;
 import 'package:path/path.dart' as p;
-import 'module_builder.dart';
+
 import '../kernel/command.dart' as kernel_compiler;
+import 'module_builder.dart';
 
 // TODO(nshahan) Merge all of this file the locations where they are used in
 // the kernel (only) version of DDC.
@@ -59,13 +61,17 @@ class SharedCompilerOptions {
   /// runtime can enable synchronous stack trace deobsfuscation.
   final bool inlineSourceMap;
 
+  /// Whether to emit the debug metadata
+  ///
+  /// Debugger uses this information about to construct mapping between
+  /// modules and libraries that otherwise requires expensive communication with
+  /// the browser.
+  final bool emitDebugMetadata;
+
   /// Whether to emit a summary file containing API signatures.
   ///
   /// This is required for a modular build process.
   final bool summarizeApi;
-
-  /// Whether to preserve metdata only accessible via mirrors.
-  final bool emitMetadata;
 
   // Whether to enable assertions.
   final bool enableAsserts;
@@ -76,10 +82,6 @@ class SharedCompilerOptions {
   /// This should only set `true` by our REPL compiler.
   bool replCompile;
 
-  /// Mapping from absolute file paths to bazel short path to substitute in
-  /// source maps.
-  final Map<String, String> bazelMapping;
-
   final Map<String, String> summaryModules;
 
   final List<ModuleFormat> moduleFormats;
@@ -88,6 +90,8 @@ class SharedCompilerOptions {
   /// [the spec](https://github.com/dart-lang/sdk/blob/master/docs/process/experimental-flags.md)
   /// for more details.
   final Map<String, bool> experiments;
+
+  final bool soundNullSafety;
 
   /// The name of the module.
   ///
@@ -100,14 +104,14 @@ class SharedCompilerOptions {
       {this.sourceMap = true,
       this.inlineSourceMap = false,
       this.summarizeApi = true,
-      this.emitMetadata = false,
       this.enableAsserts = true,
       this.replCompile = false,
-      this.bazelMapping = const {},
+      this.emitDebugMetadata = false,
       this.summaryModules = const {},
       this.moduleFormats = const [],
       this.experiments = const {},
-      this.moduleName});
+      this.moduleName,
+      this.soundNullSafety = false});
 
   SharedCompilerOptions.fromArguments(ArgResults args,
       [String moduleRoot, String summaryExtension])
@@ -115,58 +119,64 @@ class SharedCompilerOptions {
             sourceMap: args['source-map'] as bool,
             inlineSourceMap: args['inline-source-map'] as bool,
             summarizeApi: args['summarize'] as bool,
-            emitMetadata: args['emit-metadata'] as bool,
             enableAsserts: args['enable-asserts'] as bool,
             experiments: parseExperimentalArguments(
                 args['enable-experiment'] as List<String>),
-            bazelMapping:
-                _parseBazelMappings(args['bazel-mapping'] as List<String>),
             summaryModules: _parseCustomSummaryModules(
                 args['summary'] as List<String>, moduleRoot, summaryExtension),
             moduleFormats: parseModuleFormatOption(args),
             moduleName: _getModuleName(args, moduleRoot),
-            replCompile: args['repl-compile'] as bool);
+            replCompile: args['repl-compile'] as bool,
+            soundNullSafety: args['sound-null-safety'] as bool,
+            emitDebugMetadata:
+                args['experimental-emit-debug-metadata'] as bool);
 
   static void addArguments(ArgParser parser, {bool hide = true}) {
     addModuleFormatOptions(parser, hide: hide);
 
     parser
+      ..addMultiOption('out', abbr: 'o', help: 'Output file (required).')
       ..addMultiOption('summary',
           abbr: 's',
-          help: 'summary file(s) of imported libraries, optionally\n'
-              'with module import path: -s path.sum=js/import/path')
+          help: 'API summary file(s) of imported libraries, optionally\n'
+              'with module import path: -s path.dill=js/import/path')
       ..addMultiOption('enable-experiment',
-          help: 'used to enable/disable experimental language features',
-          hide: hide)
+          help: 'Enable/disable experimental language features.', hide: hide)
       ..addFlag('summarize',
-          help: 'emit an API summary file', defaultsTo: true, hide: hide)
+          help: 'Emit an API summary file.', defaultsTo: true, hide: hide)
       ..addFlag('source-map',
-          help: 'emit source mapping', defaultsTo: true, hide: hide)
+          help: 'Emit source mapping.', defaultsTo: true, hide: hide)
       ..addFlag('inline-source-map',
-          help: 'emit source mapping inline', defaultsTo: false, hide: hide)
-      ..addFlag('emit-metadata',
-          help: 'emit metadata annotations queriable via mirrors', hide: hide)
+          help: 'Emit source mapping inline.', defaultsTo: false, hide: hide)
       ..addFlag('enable-asserts',
-          help: 'enable assertions', defaultsTo: true, hide: hide)
+          help: 'Enable assertions.', defaultsTo: true, hide: hide)
       ..addOption('module-name',
           help: 'The output module name, used in some JS module formats.\n'
               'Defaults to the output file name (without .js).')
-      // TODO(jmesserly): rename this, it has nothing to do with bazel.
-      ..addMultiOption('bazel-mapping',
-          help: '--bazel-mapping=gen/to/library.dart,to/library.dart\n'
-              'adjusts the path in source maps.',
-          splitCommas: false,
-          hide: hide)
-      ..addOption('library-root',
-          help: '(deprecated) used to name libraries inside the module, '
-              'ignored with -k.',
-          hide: hide)
       ..addFlag('repl-compile',
-          help: 'compile in a more permissive REPL mode, allowing access'
+          help: 'Compile in a more permissive REPL mode, allowing access'
               ' to private members across library boundaries. This should'
               ' only be used by debugging tools.',
           defaultsTo: false,
-          hide: hide);
+          hide: hide)
+      ..addFlag('sound-null-safety',
+          help: 'Compile for sound null safety at runtime.',
+          negatable: true,
+          defaultsTo: false)
+      ..addOption('multi-root-scheme',
+          help: 'The custom scheme to indicate a multi-root uri.',
+          defaultsTo: 'org-dartlang-app')
+      ..addOption('multi-root-output-path',
+          help: 'Path to set multi-root files relative to when generating'
+              ' source-maps.',
+          hide: true)
+      // TODO(41852) Define a process for breaking changes before graduating from
+      // experimental.
+      ..addFlag('experimental-emit-debug-metadata',
+          help: 'Experimental option for compiler development.\n'
+              'Output a metadata file for debug tools next to the .js output.',
+          defaultsTo: false,
+          hide: true);
   }
 
   static String _getModuleName(ArgResults args, String moduleRoot) {
@@ -235,17 +245,6 @@ Map<String, String> _parseCustomSummaryModules(List<String> summaryPaths,
   return pathToModule;
 }
 
-Map<String, String> _parseBazelMappings(List<String> argument) {
-  var mappings = <String, String>{};
-  for (var mapping in argument) {
-    var splitMapping = mapping.split(',');
-    if (splitMapping.length >= 2) {
-      mappings[p.absolute(splitMapping[0])] = splitMapping[1];
-    }
-  }
-  return mappings;
-}
-
 /// Taken from analyzer to implement `--ignore-unrecognized-flags`
 List<String> filterUnknownArguments(List<String> args, ArgParser parser) {
   if (!args.contains('--ignore-unrecognized-flags')) return args;
@@ -264,7 +263,7 @@ List<String> filterUnknownArguments(List<String> args, ArgParser parser) {
   });
 
   String optionName(int prefixLength, String arg) {
-    int equalsOffset = arg.lastIndexOf('=');
+    var equalsOffset = arg.lastIndexOf('=');
     if (equalsOffset < 0) {
       return arg.substring(prefixLength);
     }
@@ -309,7 +308,7 @@ Uri sourcePathToUri(String source, {bool windows}) {
     source = source.replaceAll('\\', '/');
   }
 
-  Uri result = Uri.base.resolve(source);
+  var result = Uri.base.resolve(source);
   if (windows && result.scheme.length == 1) {
     // Assume c: or similar --- interpret as file path.
     return Uri.file(source, windows: true);
@@ -329,19 +328,31 @@ Uri sourcePathToRelativeUri(String source, {bool windows}) {
   return uri;
 }
 
-/// Adjusts the source paths in [sourceMap] to be relative to [sourceMapPath],
-/// and returns the new map.  Relative paths are in terms of URIs ('/'), not
-/// local OS paths (e.g., windows '\'). Sources with a multi-root scheme
-/// matching [multiRootScheme] are adjusted to be relative to
-/// [multiRootOutputPath].
-// TODO(jmesserly): find a new home for this.
-Map placeSourceMap(Map sourceMap, String sourceMapPath,
-    Map<String, String> bazelMappings, String multiRootScheme,
-    {String multiRootOutputPath}) {
+/// Adjusts the source uris in [sourceMap] to be relative uris, and returns
+/// the new map.
+///
+/// Source uris show up in two forms, absolute `file:` uris and custom
+/// [multiRootScheme] uris (also "absolute" uris, but always relative to some
+/// multi-root).
+///
+/// - `file:` uris are converted to be relative to [sourceMapBase], which
+///   defaults to the dirname of [sourceMapPath] if not provided.
+///
+/// - [multiRootScheme] uris are prefixed by [multiRootOutputPath]. If the
+///   path starts with `/lib`, then we strip that before making it relative
+///   to the [multiRootOutputPath], and assert that [multiRootOutputPath]
+///   starts with `/packages` (more explanation inline).
+///
+// TODO(#40251): Remove this logic from dev_compiler itself, push it to the
+// invokers of dev_compiler which have more knowledge about how they want
+// source paths to look.
+Map placeSourceMap(Map sourceMap, String sourceMapPath, String multiRootScheme,
+    {String multiRootOutputPath, String sourceMapBase}) {
   var map = Map.from(sourceMap);
   // Convert to a local file path if it's not.
   sourceMapPath = sourcePathToUri(p.absolute(p.fromUri(sourceMapPath))).path;
   var sourceMapDir = p.url.dirname(sourceMapPath);
+  sourceMapBase ??= sourceMapDir;
   var list = (map['sources'] as List).toList();
 
   String makeRelative(String sourcePath) {
@@ -352,32 +363,27 @@ Map placeSourceMap(Map sourceMap, String sourceMapPath,
         // TODO(sigmund): extract all source-map normalization outside ddc. This
         // custom logic is BUILD specific and could be shared with other tools
         // like dart2js.
-        var shortPath = uri.path
-            .replaceAll('/sdk/', '/dart-sdk/')
-            .replaceAll('/sdk_nnbd/', '/dart-sdk/');
+        var shortPath = uri.path.replaceAll('/sdk/', '/dart-sdk/');
         var multiRootPath = "${multiRootOutputPath ?? ''}$shortPath";
-        multiRootPath = multiRootPath;
         multiRootPath = p.url.relative(multiRootPath, from: sourceMapDir);
         return multiRootPath;
       }
       return sourcePath;
     }
 
+    if (uri.scheme == 'http') return sourcePath;
+
     // Convert to a local file path if it's not.
     sourcePath = sourcePathToUri(p.absolute(p.fromUri(uri))).path;
 
-    // Allow bazel mappings to override.
-    var match = bazelMappings != null ? bazelMappings[sourcePath] : null;
-    if (match != null) return match;
-
     // Fall back to a relative path against the source map itself.
-    sourcePath = p.url.relative(sourcePath, from: sourceMapDir);
+    sourcePath = p.url.relative(sourcePath, from: sourceMapBase);
 
     // Convert from relative local path to relative URI.
     return p.toUri(sourcePath).path;
   }
 
-  for (int i = 0; i < list.length; i++) {
+  for (var i = 0; i < list.length; i++) {
     list[i] = makeRelative(list[i] as String);
   }
   map['sources'] = list;
@@ -493,10 +499,10 @@ class ParsedArguments {
     if (args.isEmpty) return ParsedArguments._(args);
 
     var newArgs = <String>[];
-    bool isWorker = false;
-    bool isBatch = false;
-    bool reuseResult = false;
-    bool useIncrementalCompiler = false;
+    var isWorker = false;
+    var isBatch = false;
+    var reuseResult = false;
+    var useIncrementalCompiler = false;
 
     Iterable<String> argsToParse = args;
 

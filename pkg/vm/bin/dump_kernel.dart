@@ -14,10 +14,16 @@ import 'package:vm/metadata/inferred_type.dart'
     show InferredTypeMetadataRepository;
 import 'package:vm/metadata/procedure_attributes.dart'
     show ProcedureAttributesMetadataRepository;
+import 'package:vm/metadata/table_selector.dart'
+    show TableSelectorMetadataRepository;
+import 'package:vm/metadata/unboxing_info.dart'
+    show UnboxingInfoMetadataRepository;
 import 'package:vm/metadata/unreachable.dart'
     show UnreachableNodeMetadataRepository;
 import 'package:vm/metadata/call_site_attributes.dart'
     show CallSiteAttributesMetadataRepository;
+import 'package:vm/metadata/loading_units.dart'
+    show LoadingUnitsMetadataRepository;
 
 final String _usage = '''
 Usage: dump_kernel input.dill output.txt
@@ -39,9 +45,12 @@ main(List<String> arguments) async {
   component.addMetadataRepository(new DirectCallMetadataRepository());
   component.addMetadataRepository(new InferredTypeMetadataRepository());
   component.addMetadataRepository(new ProcedureAttributesMetadataRepository());
+  component.addMetadataRepository(new TableSelectorMetadataRepository());
+  component.addMetadataRepository(new UnboxingInfoMetadataRepository());
   component.addMetadataRepository(new UnreachableNodeMetadataRepository());
   component.addMetadataRepository(new BytecodeMetadataRepository());
   component.addMetadataRepository(new CallSiteAttributesMetadataRepository());
+  component.addMetadataRepository(new LoadingUnitsMetadataRepository());
 
   final List<int> bytes = new File(input).readAsBytesSync();
   new BinaryBuilderWithMetadata(bytes).readComponent(component);

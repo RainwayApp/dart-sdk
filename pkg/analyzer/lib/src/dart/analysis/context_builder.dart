@@ -20,35 +20,21 @@ import 'package:analyzer/src/dart/analysis/file_state.dart'
     show FileContentOverlay;
 import 'package:analyzer/src/dart/analysis/performance_logger.dart'
     show PerformanceLog;
-import 'package:analyzer/src/dart/sdk/sdk.dart';
 import 'package:analyzer/src/generated/sdk.dart' show DartSdkManager;
 import 'package:analyzer/src/generated/source.dart' show ContentCache;
 import 'package:meta/meta.dart';
 
-/**
- * An implementation of a context builder.
- */
+/// An implementation of a context builder.
 class ContextBuilderImpl implements ContextBuilder {
-  /**
-   * The resource provider used to access the file system.
-   */
+  /// The resource provider used to access the file system.
   final ResourceProvider resourceProvider;
 
-  /**
-   * Initialize a newly created context builder. If a [resourceProvider] is
-   * given, then it will be used to access the file system, otherwise the
-   * default resource provider will be used.
-   */
+  /// Initialize a newly created context builder. If a [resourceProvider] is
+  /// given, then it will be used to access the file system, otherwise the
+  /// default resource provider will be used.
   ContextBuilderImpl({ResourceProvider resourceProvider})
       : resourceProvider =
             resourceProvider ?? PhysicalResourceProvider.INSTANCE;
-
-  /**
-   * Return the path to the default location of the SDK, or `null` if the sdk
-   * cannot be found.
-   */
-  String get _defaultSdkPath =>
-      FolderBasedDartSdk.defaultSdkDirectory(resourceProvider)?.path;
 
   @override
   AnalysisContext createContext(
@@ -58,17 +44,15 @@ class ContextBuilderImpl implements ContextBuilder {
       List<String> librarySummaryPaths,
       @deprecated PerformanceLog performanceLog,
       @deprecated AnalysisDriverScheduler scheduler,
-      String sdkPath,
+      @required String sdkPath,
       String sdkSummaryPath}) {
+    ArgumentError.checkNotNull(sdkPath, 'sdkPath');
+
     var byteStore = MemoryByteStore();
     var fileContentOverlay = FileContentOverlay();
     performanceLog ??= PerformanceLog(StringBuffer());
 
-    sdkPath ??= _defaultSdkPath;
-    if (sdkPath == null) {
-      throw ArgumentError('Cannot find path to the SDK');
-    }
-    DartSdkManager sdkManager = DartSdkManager(sdkPath, true);
+    DartSdkManager sdkManager = DartSdkManager(sdkPath);
 
     if (scheduler == null) {
       scheduler = AnalysisDriverScheduler(performanceLog);
@@ -113,10 +97,8 @@ class ContextBuilderImpl implements ContextBuilder {
     return context;
   }
 
-  /**
-   * Convert the [declaredVariables] into a map for use with the old context
-   * builder.
-   */
+  /// Convert the [declaredVariables] into a map for use with the old context
+  /// builder.
   Map<String, String> _toMap(DeclaredVariables declaredVariables) {
     Map<String, String> map = <String, String>{};
     for (String name in declaredVariables.variableNames) {

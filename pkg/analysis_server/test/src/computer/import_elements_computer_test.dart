@@ -6,14 +6,13 @@ import 'dart:async';
 
 import 'package:analysis_server/protocol/protocol_generated.dart';
 import 'package:analysis_server/src/computer/import_elements_computer.dart';
-import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../../abstract_context.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ImportElementsComputerTest);
   });
@@ -27,7 +26,7 @@ class ImportElementsComputerTest extends AbstractContextTest {
   SourceFileEdit sourceFileEdit;
 
   void assertChanges(String expectedContent) {
-    String resultCode =
+    var resultCode =
         SourceEdit.applySequence(originalContent, sourceFileEdit.edits);
     expect(resultCode, expectedContent);
   }
@@ -37,9 +36,9 @@ class ImportElementsComputerTest extends AbstractContextTest {
   }
 
   Future<void> computeChanges(List<ImportedElements> importedElements) async {
-    SourceChange change = await computer.createEdits(importedElements);
+    var change = await computer.createEdits(importedElements);
     expect(change, isNotNull);
-    List<SourceFileEdit> edits = change.edits;
+    var edits = change.edits;
     if (edits.length == 1) {
       sourceFileEdit = edits[0];
       expect(sourceFileEdit, isNotNull);
@@ -51,7 +50,7 @@ class ImportElementsComputerTest extends AbstractContextTest {
   Future<void> createBuilder(String content) async {
     originalContent = content;
     newFile(path, content: content);
-    ResolvedUnitResult result = await session.getResolvedUnit(path);
+    var result = await session.getResolvedUnit(path);
     computer = ImportElementsComputer(resourceProvider, result);
   }
 
@@ -61,7 +60,7 @@ class ImportElementsComputerTest extends AbstractContextTest {
     path = convertPath('/home/test/lib/test.dart');
   }
 
-  test_createEdits_addImport_noDirectives() async {
+  Future<void> test_createEdits_addImport_noDirectives() async {
     await createBuilder('''
 main() {
   // paste here
@@ -80,7 +79,7 @@ main() {
 ''');
   }
 
-  test_createEdits_addImport_noPrefix() async {
+  Future<void> test_createEdits_addImport_noPrefix() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' as foo;
@@ -94,7 +93,7 @@ import 'package:pkg/foo.dart';
 ''');
   }
 
-  test_createEdits_addImport_prefix() async {
+  Future<void> test_createEdits_addImport_prefix() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart';
@@ -108,7 +107,7 @@ import 'package:pkg/foo.dart' as foo;
 ''');
   }
 
-  test_createEdits_addShow_multipleNames() async {
+  Future<void> test_createEdits_addShow_multipleNames() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' show B;
@@ -123,7 +122,7 @@ import 'package:pkg/foo.dart' as foo;
 ''');
   }
 
-  test_createEdits_addShow_removeHide() async {
+  Future<void> test_createEdits_addShow_removeHide() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' show A, B hide C, D;
@@ -136,7 +135,7 @@ import 'package:pkg/foo.dart' show A, B, C hide D;
 ''');
   }
 
-  test_createEdits_addShow_singleName_noPrefix() async {
+  Future<void> test_createEdits_addShow_singleName_noPrefix() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' show B;
@@ -149,7 +148,7 @@ import 'package:pkg/foo.dart' show B, A;
 ''');
   }
 
-  test_createEdits_addShow_singleName_prefix() async {
+  Future<void> test_createEdits_addShow_singleName_prefix() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' show C;
@@ -164,7 +163,7 @@ import 'package:pkg/foo.dart' as foo show B, A;
 ''');
   }
 
-  test_createEdits_alreadyImported_noCombinators() async {
+  Future<void> test_createEdits_alreadyImported_noCombinators() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart';
@@ -175,7 +174,7 @@ import 'package:pkg/foo.dart';
     assertNoChanges();
   }
 
-  test_createEdits_alreadyImported_withPrefix() async {
+  Future<void> test_createEdits_alreadyImported_withPrefix() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' as foo;
@@ -186,7 +185,7 @@ import 'package:pkg/foo.dart' as foo;
     assertNoChanges();
   }
 
-  test_createEdits_alreadyImported_withShow() async {
+  Future<void> test_createEdits_alreadyImported_withShow() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' show A;
@@ -197,7 +196,7 @@ import 'package:pkg/foo.dart' show A;
     assertNoChanges();
   }
 
-  test_createEdits_importSelf() async {
+  Future<void> test_createEdits_importSelf() async {
     await createBuilder('''
 class A {
   A parent;
@@ -209,7 +208,7 @@ class A {
     assertNoChanges();
   }
 
-  test_createEdits_invalidUri() async {
+  Future<void> test_createEdits_invalidUri() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'pakage:pkg/foo.dart';
@@ -223,13 +222,13 @@ import 'package:pkg/foo.dart';
 ''');
   }
 
-  test_createEdits_noElements() async {
+  Future<void> test_createEdits_noElements() async {
     await createBuilder('');
     await computeChanges(<ImportedElements>[]);
     assertNoChanges();
   }
 
-  test_createEdits_removeHide_firstInCombinator() async {
+  Future<void> test_createEdits_removeHide_firstInCombinator() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B, C;
@@ -242,7 +241,7 @@ import 'package:pkg/foo.dart' hide B, C;
 ''');
   }
 
-  test_createEdits_removeHide_lastInCombinator() async {
+  Future<void> test_createEdits_removeHide_lastInCombinator() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B, C;
@@ -255,7 +254,7 @@ import 'package:pkg/foo.dart' hide A, B;
 ''');
   }
 
-  test_createEdits_removeHide_middleInCombinator() async {
+  Future<void> test_createEdits_removeHide_middleInCombinator() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B, C;
@@ -268,7 +267,7 @@ import 'package:pkg/foo.dart' hide A, C;
 ''');
   }
 
-  test_createEdits_removeHide_multipleCombinators() async {
+  Future<void> test_createEdits_removeHide_multipleCombinators() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B, C hide A, B, C;
@@ -281,7 +280,7 @@ import 'package:pkg/foo.dart' hide A, C hide A, C;
 ''');
   }
 
-  test_createEdits_removeHide_multipleNames() async {
+  Future<void> test_createEdits_removeHide_multipleNames() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B, C hide D, E, F hide G, H, I;
@@ -294,7 +293,7 @@ import 'package:pkg/foo.dart' hide B, C hide D, F hide G, H;
 ''');
   }
 
-  test_createEdits_removeHideCombinator_first() async {
+  Future<void> test_createEdits_removeHideCombinator_first() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A hide B hide C;
@@ -307,7 +306,7 @@ import 'package:pkg/foo.dart' hide B hide C;
 ''');
   }
 
-  test_createEdits_removeHideCombinator_last() async {
+  Future<void> test_createEdits_removeHideCombinator_last() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A hide B hide C;
@@ -320,7 +319,7 @@ import 'package:pkg/foo.dart' hide A hide B;
 ''');
   }
 
-  test_createEdits_removeHideCombinator_middle() async {
+  Future<void> test_createEdits_removeHideCombinator_middle() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A hide B hide C;
@@ -333,7 +332,7 @@ import 'package:pkg/foo.dart' hide A hide C;
 ''');
   }
 
-  test_createEdits_removeHideCombinator_only() async {
+  Future<void> test_createEdits_removeHideCombinator_only() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A;
@@ -346,7 +345,7 @@ import 'package:pkg/foo.dart';
 ''');
   }
 
-  test_createEdits_removeHideCombinator_only_multiple() async {
+  Future<void> test_createEdits_removeHideCombinator_only_multiple() async {
     var fooFile = addPackageFile('pkg', 'foo.dart', '');
     await createBuilder('''
 import 'package:pkg/foo.dart' hide A, B;

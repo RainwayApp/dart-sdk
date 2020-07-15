@@ -6,8 +6,8 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
-import 'package:analyzer/dart/element/type_system.dart';
 import 'package:analyzer/error/listener.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/error/ffi_code.dart';
 
 /// A visitor used to find problems with the way the `dart:ffi` APIs are being
@@ -32,7 +32,7 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
   ];
 
   /// The type system used to check types.
-  final TypeSystem typeSystem;
+  final TypeSystemImpl typeSystem;
 
   /// The error reporter used to report errors.
   final ErrorReporter _errorReporter;
@@ -126,12 +126,17 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
       Element enclosingElement = element.enclosingElement;
       if (enclosingElement is ClassElement) {
         if (_isPointer(enclosingElement)) {
-          if (element.name == 'asFunction') {
-            _validateAsFunction(node, element);
-          } else if (element.name == 'fromFunction') {
+          if (element.name == 'fromFunction') {
             _validateFromFunction(node, element);
           }
-        } else if (_isDynamicLibrary(enclosingElement) &&
+        }
+      }
+      if (enclosingElement is ExtensionElement) {
+        if (_isNativeFunctionPointerExtension(enclosingElement)) {
+          if (element.name == 'asFunction') {
+            _validateAsFunction(node, element);
+          }
+        } else if (_isDynamicLibraryExtension(enclosingElement) &&
             element.name == 'lookupFunction') {
           _validateLookupFunction(node);
         }
@@ -152,10 +157,14 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
     return element is ClassElement && element.library.name == 'dart.ffi';
   }
 
-  /// Return `true` if the given [element] represents the class
-  /// `DynamicLibrary`.
-  bool _isDynamicLibrary(ClassElement element) =>
-      element.name == 'DynamicLibrary' && element.library.name == 'dart.ffi';
+  /// Return `true` if the given [element] represents the extension
+  /// `DynamicLibraryExtension`.
+  bool _isDynamicLibraryExtension(Element element) =>
+      element.name == 'DynamicLibraryExtension' &&
+      element.library.name == 'dart.ffi';
+
+  bool _isHandle(Element element) =>
+      element.name == 'Handle' && element.library.name == 'dart.ffi';
 
   /// Returns `true` iff [nativeType] is a `ffi.NativeFunction<???>` type.
   bool _isNativeFunctionInterfaceType(DartType nativeType) {
@@ -168,6 +177,10 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
     }
     return false;
   }
+
+  bool _isNativeFunctionPointerExtension(Element element) =>
+      element.name == 'NativeFunctionPointer' &&
+      element.library.name == 'dart.ffi';
 
   /// Returns `true` iff [nativeType] is a `ffi.NativeType` type.
   bool _isNativeTypeInterfaceType(DartType nativeType) {
@@ -197,7 +210,7 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
   }
 
   /// Returns `true` iff [nativeType] is a struct type.
-  _isStructClass(DartType nativeType) {
+  bool _isStructClass(DartType nativeType) {
     if (nativeType is InterfaceType) {
       final superClassElement = nativeType.element.supertype.element;
       if (superClassElement.library.name == 'dart.ffi') {
@@ -284,6 +297,9 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
         }
         if (name == 'Void') {
           return _PrimitiveDartType.void_;
+        }
+        if (name == 'Handle') {
+          return _PrimitiveDartType.handle;
         }
       }
     }
@@ -439,10 +455,15 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
       return dartType.isDartCoreDouble;
     } else if (nativeReturnType == _PrimitiveDartType.void_) {
       return dartType.isVoid;
+    } else if (nativeReturnType == _PrimitiveDartType.handle) {
+      InterfaceType objectType = typeSystem.objectStar;
+      return checkCovariance
+          ? /* everything is subtype of objectStar */ true
+          : typeSystem.isSubtypeOf2(objectType, dartType);
     } else if (dartType is InterfaceType && nativeType is InterfaceType) {
       return checkCovariance
-          ? typeSystem.isSubtypeOf(dartType, nativeType)
-          : typeSystem.isSubtypeOf(nativeType, dartType);
+          ? typeSystem.isSubtypeOf2(dartType, nativeType)
+          : typeSystem.isSubtypeOf2(nativeType, dartType);
     } else {
       // If the [nativeType] is not a primitive int/double type then it has to
       // be a Pointer type atm.
@@ -510,7 +531,9 @@ class FfiVerifier extends RecursiveAstVisitor<void> {
 
     // TODO(brianwilkerson) Validate that `f` is a top-level function.
     final DartType R = (T as FunctionType).returnType;
-    if ((FT as FunctionType).returnType.isVoid || _isPointer(R.element)) {
+    if ((FT as FunctionType).returnType.isVoid ||
+        _isPointer(R.element) ||
+        _isHandle(R.element)) {
       if (argCount != 1) {
         _errorReporter.reportErrorForNode(
             FfiCode.INVALID_EXCEPTION_VALUE, node.argumentList.arguments[1]);
@@ -581,5 +604,6 @@ enum _PrimitiveDartType {
   double,
   int,
   void_,
+  handle,
   none,
 }

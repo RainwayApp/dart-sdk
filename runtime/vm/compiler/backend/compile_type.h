@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_COMPILE_TYPE_H_
 #define RUNTIME_VM_COMPILER_BACKEND_COMPILE_TYPE_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/allocation.h"
 #include "vm/class_id.h"
 #include "vm/compiler/runtime_api.h"
@@ -17,7 +21,6 @@ class Definition;
 class FlowGraphSerializer;
 class SExpression;
 class SExpList;
-enum class NNBDMode;
 
 template <typename T>
 class GrowableArray;
@@ -28,8 +31,8 @@ class GrowableArray;
 //    - whether the value can potentially be null or if it is definitely not
 //      null;
 //    - concrete class id of the value or kDynamicCid if unknown statically;
-//    - abstract super type of the value, concrete type of the value in runtime
-//      is guaranteed to be sub type of this type.
+//    - abstract super type of the value, where the concrete type of the value
+//      in runtime is guaranteed to be sub type of this type.
 //
 // Values of CompileType form a lattice with a None type as a bottom and a
 // nullable Dynamic type as a top element. Method Union provides a join
@@ -39,7 +42,6 @@ class CompileType : public ZoneAllocated {
   static const bool kNullable = true;
   static const bool kNonNullable = false;
 
-  // TODO(regis): Should CompileType take an NNBDMode?
   CompileType(bool is_nullable, intptr_t cid, const AbstractType* type)
       : is_nullable_(is_nullable), cid_(cid), type_(type) {}
 
@@ -79,15 +81,15 @@ class CompileType : public ZoneAllocated {
   bool IsNull();
 
   // Return true if this type is a subtype of the given type.
-  bool IsSubtypeOf(NNBDMode mode, const AbstractType& other);
+  bool IsSubtypeOf(const AbstractType& other);
 
   // Return true if value of this type is assignable to a location of the
   // given type.
-  bool IsAssignableTo(NNBDMode mode, const AbstractType& type) {
-    bool is_instance;
-    return CanComputeIsInstanceOf(mode, type, kNullable, &is_instance) &&
-           is_instance;
-  }
+  bool IsAssignableTo(const AbstractType& other);
+
+  // Return true if value of this type always passes 'is' test
+  // against given type.
+  bool IsInstanceOf(const AbstractType& other);
 
   // Create a new CompileType representing given combination of class id and
   // abstract type. The pair is assumed to be coherent.
@@ -108,8 +110,10 @@ class CompileType : public ZoneAllocated {
     return CompileType(is_nullable, cid, nullptr);
   }
 
-  // Create a new CompileType representing given abstract type. By default
-  // values as assumed to be nullable.
+  // Create a new CompileType representing given abstract type.
+  // By default nullability of values is determined by type.
+  // CompileType can be further constrained to non-nullable values by
+  // passing kNonNullable as an optional parameter.
   static CompileType FromAbstractType(const AbstractType& type,
                                       bool is_nullable = kNullable);
 
@@ -187,6 +191,9 @@ class CompileType : public ZoneAllocated {
   // Return true if value of this type is a non-nullable double.
   bool IsDouble() { return !is_nullable() && IsNullableDouble(); }
 
+  // Return true if value of this type is a non-nullable double.
+  bool IsBool() { return !is_nullable() && IsNullableBool(); }
+
   // Return true if value of this type is either int or null.
   bool IsNullableInt() {
     if (cid_ == kSmiCid || cid_ == kMintCid) {
@@ -221,6 +228,23 @@ class CompileType : public ZoneAllocated {
     return false;
   }
 
+  // Return true if value of this type is either double or null.
+  bool IsNullableBool() {
+    if (cid_ == kBoolCid) {
+      return true;
+    }
+    if ((cid_ == kIllegalCid) || (cid_ == kDynamicCid)) {
+      return type_ != nullptr && compiler::IsBoolType(*type_);
+    }
+    return false;
+  }
+
+  // Returns true if a value of this CompileType can contain a Smi.
+  // Note that this is not the same as calling
+  // CompileType::Smi().IsAssignableTo(this) - because this compile type
+  // can be uninstantiated.
+  bool CanBeSmi();
+
   bool Specialize(GrowableArray<intptr_t>* class_ids);
 
   void PrintTo(BufferFormatter* f) const;
@@ -240,11 +264,6 @@ class CompileType : public ZoneAllocated {
   Definition* owner() const { return owner_; }
 
  private:
-  bool CanComputeIsInstanceOf(NNBDMode mode,
-                              const AbstractType& type,
-                              bool is_nullable,
-                              bool* is_instance);
-
   bool is_nullable_;
   classid_t cid_;
   const AbstractType* type_;

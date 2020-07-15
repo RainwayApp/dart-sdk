@@ -8,10 +8,9 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ImportLibraryPrefixTest);
-    defineReflectiveTests(ImportLibraryPrefixWithExtensionMethodsTest);
   });
 }
 
@@ -20,7 +19,7 @@ class ImportLibraryPrefixTest extends FixProcessorTest {
   @override
   FixKind get kind => DartFixKind.IMPORT_LIBRARY_PREFIX;
 
-  test_withClass() async {
+  Future<void> test_withClass() async {
     await resolveTestUnit('''
 import 'dart:collection' as pref;
 main() {
@@ -39,36 +38,7 @@ main() {
 ''');
   }
 
-  test_withTopLevelVariable() async {
-    await resolveTestUnit('''
-import 'dart:math' as pref;
-main() {
-  print(pref.E);
-  print(PI);
-}
-''');
-    await assertHasFix('''
-import 'dart:math' as pref;
-main() {
-  print(pref.E);
-  print(pref.PI);
-}
-''');
-  }
-}
-
-@reflectiveTest
-class ImportLibraryPrefixWithExtensionMethodsTest extends FixProcessorTest {
-  @override
-  FixKind get kind => DartFixKind.IMPORT_LIBRARY_PREFIX;
-
-  @override
-  void setUp() {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
-    super.setUp();
-  }
-
-  test_withExtension() async {
+  Future<void> test_withExtension() async {
     addSource('/home/test/lib/lib.dart', '''
 class C {}
 extension E on int {
@@ -85,6 +55,23 @@ void f(p.C c) {
 import 'lib.dart' as p;
 void f(p.C c) {
   print(p.E.m());
+}
+''');
+  }
+
+  Future<void> test_withTopLevelVariable() async {
+    await resolveTestUnit('''
+import 'dart:math' as pref;
+main() {
+  print(pref.e);
+  print(pi);
+}
+''');
+    await assertHasFix('''
+import 'dart:math' as pref;
+main() {
+  print(pref.e);
+  print(pref.pi);
 }
 ''');
   }

@@ -94,13 +94,6 @@ class AstBinaryReader {
     return def;
   }
 
-  Token _varianceKeyword(LinkedNode data) {
-    if (data.typeParameter_variance != UnlinkedTokenType.NOTHING) {
-      return _Tokens.fromType(data.typeParameter_variance);
-    }
-    return null;
-  }
-
   Element _elementOfComponents(
     int rawElementIndex,
     LinkedNodeTypeSubstitution substitutionNode,
@@ -114,7 +107,12 @@ class AstBinaryReader {
     var typeArguments = substitutionNode.typeArguments.map(_readType).toList();
     var substitution = Substitution.fromPairs(typeParameters, typeArguments);
 
-    return ExecutableMember.from2(element, substitution);
+    var member = ExecutableMember.from2(element, substitution);
+    if (substitutionNode.isLegacy) {
+      member = Member.legacy(member);
+    }
+
+    return member;
   }
 
   T _getElement<T extends Element>(int index) {
@@ -359,13 +357,16 @@ class AstBinaryReader {
   }
 
   CompilationUnit _read_compilationUnit(LinkedNode data) {
-    return astFactory.compilationUnit(
-        beginToken: null,
-        scriptTag: _readNode(data.compilationUnit_scriptTag),
-        directives: _readNodeList(data.compilationUnit_directives),
-        declarations: _readNodeList(data.compilationUnit_declarations),
-        endToken: null,
-        featureSet: null);
+    var node = astFactory.compilationUnit(
+      beginToken: null,
+      scriptTag: _readNode(data.compilationUnit_scriptTag),
+      directives: _readNodeList(data.compilationUnit_directives),
+      declarations: _readNodeList(data.compilationUnit_declarations),
+      endToken: null,
+      featureSet: null,
+    );
+    LazyCompilationUnit(node, data);
+    return node;
   }
 
   ConditionalExpression _read_conditionalExpression(LinkedNode data) {
@@ -1012,11 +1013,13 @@ class AstBinaryReader {
   }
 
   IndexExpression _read_indexExpression(LinkedNode data) {
-    return astFactory.indexExpressionForTarget(
-      _readNode(data.indexExpression_target),
-      _Tokens.OPEN_SQUARE_BRACKET,
-      _readNode(data.indexExpression_index),
-      _Tokens.CLOSE_SQUARE_BRACKET,
+    return astFactory.indexExpressionForTarget2(
+      target: _readNode(data.indexExpression_target),
+      question:
+          AstBinaryFlags.hasQuestion(data.flags) ? _Tokens.QUESTION : null,
+      leftBracket: _Tokens.OPEN_SQUARE_BRACKET,
+      index: _readNode(data.indexExpression_index),
+      rightBracket: _Tokens.CLOSE_SQUARE_BRACKET,
     )
       ..period =
           AstBinaryFlags.hasPeriod(data.flags) ? _Tokens.PERIOD_PERIOD : null
@@ -1045,7 +1048,6 @@ class AstBinaryReader {
       ),
       typeArguments: _readNode(data.instanceCreationExpression_typeArguments),
     );
-    node.staticElement = node.constructorName.staticElement;
     node.staticType = _readType(data.expression_type);
     return node;
   }
@@ -1946,6 +1948,13 @@ class AstBinaryReader {
 
   DartType _readType(LinkedNodeType data) {
     return _unitContext.readType(data);
+  }
+
+  Token _varianceKeyword(LinkedNode data) {
+    if (data.typeParameter_variance != UnlinkedTokenType.NOTHING) {
+      return _Tokens.fromType(data.typeParameter_variance);
+    }
+    return null;
   }
 
   static ParameterKind _toParameterKind(LinkedNodeFormalParameterKind kind) {

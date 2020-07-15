@@ -13,7 +13,7 @@ main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(TypeArgumentNotMatchingBoundsTest);
     defineReflectiveTests(
-      TypeArgumentNotMatchingBoundsWithExtensionMethodsTest,
+      TypeArgumentNotMatchingBoundsWithNnbdTest,
     );
   });
 }
@@ -30,22 +30,6 @@ class D = G<B> with C;
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 69, 1),
     ]);
-  }
-
-  test_not_matching_bounds() async {
-    // There should be an error, because Bar's type argument T is Foo, which
-    // doesn't extends Foo<T>.
-    await assertErrorsInCode('''
-class Foo<T> {}
-class Bar<T extends Foo<T>> {}
-class Baz extends Bar {}
-void main() {}
-''', [
-      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 65, 3),
-    ]);
-    // Instantiate-to-bounds should have instantiated "Bar" to "Bar<Foo>".
-    assertType(result.unit.declaredElement.getType('Baz').supertype,
-        'Bar<Foo<dynamic>>');
   }
 
   test_const() async {
@@ -93,6 +77,34 @@ class Y<U> extends X<U> {}
     ]);
   }
 
+  test_extensionOverride_hasTypeArguments() async {
+    await assertErrorsInCode(r'''
+extension E<T extends num> on int {
+  void foo() {}
+}
+
+void f() {
+  E<String>(0).foo();
+}
+''', [
+      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 70, 6),
+    ]);
+  }
+
+  test_extensionOverride_hasTypeArguments_call() async {
+    await assertErrorsInCode(r'''
+extension E<T extends num> on int {
+  void call() {}
+}
+
+void f() {
+  E<String>(0)();
+}
+''', [
+      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 71, 6),
+    ]);
+  }
+
   test_fieldFormalParameter() async {
     await assertErrorsInCode(r'''
 class A {}
@@ -112,7 +124,7 @@ class C {
 class A {}
 class B {}
 class G<E extends A> {}
-G<B> f() { return null; }
+G<B> f() => throw 0;
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 48, 1),
     ]);
@@ -223,7 +235,7 @@ class A {}
 class B {}
 class G<E extends A> {}
 class C {
-  G<B> m() { return null; }
+  G<B> m() => throw 0;
 }
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 60, 1),
@@ -262,12 +274,28 @@ f() { return new G<A>(); }
     ]);
   }
 
+  test_not_matching_bounds() async {
+    // There should be an error, because Bar's type argument T is Foo, which
+    // doesn't extends Foo<T>.
+    await assertErrorsInCode('''
+class Foo<T> {}
+class Bar<T extends Foo<T>> {}
+class Baz extends Bar {}
+void main() {}
+''', [
+      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 65, 3),
+    ]);
+    // Instantiate-to-bounds should have instantiated "Bar" to "Bar<Foo>".
+    assertType(result.unit.declaredElement.getType('Baz').supertype,
+        'Bar<Foo<dynamic>>');
+  }
+
   test_ofFunctionTypeAlias() async {
     await assertErrorsInCode(r'''
 class A {}
 class B {}
 typedef F<T extends A>();
-F<B> fff;
+F<B> fff = (throw 42);
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 50, 1),
     ]);
@@ -278,7 +306,7 @@ F<B> fff;
 class MyClass<T> {}
 typedef MyFunction<T, P extends MyClass<T>>();
 class A<T, P extends MyClass<T>> {
-  MyFunction<T, P> f;
+  MyFunction<T, P> f = (throw 0);
 }
 ''');
   }
@@ -288,16 +316,16 @@ class A<T, P extends MyClass<T>> {
 class A {}
 class B extends A {}
 typedef F<T extends A>();
-F<A> fa;
-F<B> fb;
+F<A> fa = (throw 0);
+F<B> fb = (throw 0);
 ''');
   }
 
   test_ofFunctionTypeAlias_noBound_matching() async {
     await assertNoErrorsInCode(r'''
 typedef F<T>();
-F<int> f1;
-F<String> f2;
+F<int> f1 = (throw 0);
+F<String> f2 = (throw 0);
 ''');
   }
 
@@ -332,7 +360,7 @@ class A {}
 class B {}
 class C<E> {}
 class D<E extends A> {}
-C<D<B>> Var;
+C<D<B>> c = (throw 0);
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 64, 1),
     ]);
@@ -355,7 +383,7 @@ class D<F extends G<B>> {}
 class A {}
 class B {}
 class G<E extends A> {}
-G<B> g;
+G<B> g = (throw 0);
 ''', [
       error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 48, 1),
     ]);
@@ -374,38 +402,50 @@ class C extends Object with G<B>{}
 }
 
 @reflectiveTest
-class TypeArgumentNotMatchingBoundsWithExtensionMethodsTest
-    extends DriverResolutionTest {
+class TypeArgumentNotMatchingBoundsWithNnbdTest
+    extends TypeArgumentNotMatchingBoundsTest {
   @override
   AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
     ..contextFeatures = FeatureSet.forTesting(
-        sdkVersion: '2.3.0', additionalFeatures: [Feature.extension_methods]);
+        sdkVersion: '2.7.0', additionalFeatures: [Feature.non_nullable]);
 
-  test_extensionOverride_hasTypeArguments() async {
-    await assertErrorsInCode(r'''
-extension E<T extends num> on int {
-  void foo() {}
-}
+  test_extends_optIn_fromOptOut_Null() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A<X extends int> {}
+''');
 
-void f() {
-  E<String>(0).foo();
-}
-''', [
-      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 70, 6),
-    ]);
+    await assertNoErrorsInCode(r'''
+// @dart=2.6
+import 'a.dart';
+
+class A1<T extends Null> extends A<T> {}
+''');
   }
 
-  test_extensionOverride_hasTypeArguments_call() async {
-    await assertErrorsInCode(r'''
-extension E<T extends num> on int {
-  void call() {}
+  test_extends_optIn_fromOptOut_otherTypeParameter() async {
+    newFile('/test/lib/a.dart', content: r'''
+void foo<T extends U, U>() {
 }
+''');
 
-void f() {
-  E<String>(0)();
+    await assertNoErrorsInCode(r'''
+// @dart=2.6
+import 'a.dart';
+
+class A {}
+class B extends A {}
+
+main() {
+  foo<B, A>();
 }
-''', [
-      error(CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS, 71, 6),
-    ]);
+''');
+  }
+
+  test_superBounded() async {
+    await assertNoErrorsInCode(r'''
+class A<X extends A<X>> {}
+
+A get foo => throw 0;
+''');
   }
 }

@@ -20,14 +20,17 @@ import 'package:_fe_analyzer_shared/src/scanner/scanner.dart'
     show
         ErrorToken,
         LanguageVersionToken,
+        Scanner,
         ScannerConfiguration,
         ScannerResult,
         Token,
         scan;
+import 'package:front_end/src/api_prototype/experimental_flags.dart';
 
 import 'package:kernel/ast.dart'
     show
         Arguments,
+        AsyncMarker,
         BottomType,
         Class,
         Component,
@@ -39,13 +42,19 @@ import 'package:kernel/ast.dart'
         LibraryDependency,
         Nullability,
         ProcedureKind,
+        Reference,
         Supertype,
-        TreeNode;
+        TreeNode,
+        Version;
 
 import 'package:kernel/class_hierarchy.dart'
     show ClassHierarchy, HandleAmbiguousSupertypes;
 
 import 'package:kernel/core_types.dart' show CoreTypes;
+
+import 'package:kernel/reference_from_index.dart' show ReferenceFromIndex;
+
+import 'package:package_config/package_config.dart';
 
 import '../../api_prototype/file_system.dart';
 
@@ -53,7 +62,9 @@ import '../../base/common.dart';
 
 import '../../base/instrumentation.dart' show Instrumentation;
 
-import '../blacklisted_classes.dart' show blacklistedCoreClasses;
+import '../../base/nnbd_mode.dart';
+
+import '../denylisted_classes.dart' show denylistedCoreClasses;
 
 import '../builder/builder.dart';
 import '../builder/class_builder.dart';
@@ -82,6 +93,9 @@ import '../fasta_codes.dart'
         messageObjectImplements,
         messageObjectMixesIn,
         messagePartOrphan,
+        messageStrongModeNNBDButOptOut,
+        messageTypedefCause,
+        messageTypedefUnaliasedTypeCause,
         noLength,
         templateAmbiguousSupertypes,
         templateCantReadFile,
@@ -97,10 +111,11 @@ import '../fasta_codes.dart'
         templateIllegalMixinDueToConstructorsCause,
         templateInternalProblemUriMissingScheme,
         templateSourceOutlineSummary,
+        templateStrongModeNNBDPackageOptOut,
         templateUntranslatableUri;
 
 import '../kernel/kernel_builder.dart'
-    show ClassHierarchyBuilder, DelayedMember, DelayedOverrideCheck;
+    show ClassHierarchyBuilder, ClassMember, DelayedOverrideCheck;
 
 import '../kernel/kernel_target.dart' show KernelTarget;
 
@@ -143,9 +158,16 @@ class SourceLoader extends Loader {
 
   ClassHierarchyBuilder builderHierarchy;
 
+  ReferenceFromIndex referenceFromIndex;
+
   /// Used when building directly to kernel.
   ClassHierarchy hierarchy;
   CoreTypes _coreTypes;
+
+  /// For builders created with a reference, this maps from that reference to
+  /// that builder. This is used for looking up source builders when finalizing
+  /// exports in dill builders.
+  Map<Reference, Builder> buildersCreatedWithReferences = {};
 
   /// Used when checking whether a return type of an async function is valid.
   ///
@@ -177,9 +199,7 @@ class SourceLoader extends Loader {
             retainDataForTesting ? new SourceLoaderDataForTesting() : null,
         super(target);
 
-  bool get nnbdStrongMode => target.context.options.nnbdStrongMode;
-
-  bool get performNnbdChecks => target.context.options.performNnbdChecks;
+  NnbdMode get nnbdMode => target.context.options.nnbdMode;
 
   CoreTypes get coreTypes {
     assert(_coreTypes != null, "CoreTypes has not been computed.");
@@ -201,16 +221,17 @@ class SourceLoader extends Loader {
     if (bytes == null) {
       // Error recovery.
       if (uri.scheme == untranslatableUriScheme) {
-        Message message = templateUntranslatableUri.withArguments(library.uri);
+        Message message =
+            templateUntranslatableUri.withArguments(library.importUri);
         library.addProblemAtAccessors(message);
-        bytes = synthesizeSourceForMissingFile(library.uri, null);
+        bytes = synthesizeSourceForMissingFile(library.importUri, null);
       } else if (!uri.hasScheme) {
         return internalProblem(
             templateInternalProblemUriMissingScheme.withArguments(uri),
             -1,
-            library.uri);
+            library.importUri);
       } else if (uri.scheme == SourceLibraryBuilder.MALFORMED_URI_SCHEME) {
-        bytes = synthesizeSourceForMissingFile(library.uri, null);
+        bytes = synthesizeSourceForMissingFile(library.importUri, null);
       }
       if (bytes != null) {
         Uint8List zeroTerminatedBytes = new Uint8List(bytes.length + 1);
@@ -229,7 +250,7 @@ class SourceLoader extends Loader {
       } on FileSystemException catch (e) {
         Message message = templateCantReadFile.withArguments(uri, e.message);
         library.addProblemAtAccessors(message);
-        rawBytes = synthesizeSourceForMissingFile(library.uri, message);
+        rawBytes = synthesizeSourceForMissingFile(library.importUri, message);
       }
       Uint8List zeroTerminatedBytes = new Uint8List(rawBytes.length + 1);
       zeroTerminatedBytes.setRange(0, rawBytes.length, rawBytes);
@@ -241,17 +262,24 @@ class SourceLoader extends Loader {
     ScannerResult result = scan(bytes,
         includeComments: includeComments,
         configuration: new ScannerConfiguration(
-            enableTripleShift: target.enableTripleShift,
-            enableExtensionMethods: target.enableExtensionMethods,
-            enableNonNullable: target.enableNonNullable),
-        languageVersionChanged: (_, LanguageVersionToken version) {
-      library.setLanguageVersion(version.major, version.minor,
-          offset: version.offset, length: version.length, explicit: true);
+            enableTripleShift: library.enableTripleShiftInLibrary,
+            enableExtensionMethods: library.enableExtensionMethodsInLibrary,
+            enableNonNullable: library.isNonNullableByDefault),
+        languageVersionChanged:
+            (Scanner scanner, LanguageVersionToken version) {
+      if (!suppressLexicalErrors) {
+        library.setLanguageVersion(new Version(version.major, version.minor),
+            offset: version.offset, length: version.length, explicit: true);
+      }
+      scanner.configuration = new ScannerConfiguration(
+          enableTripleShift: library.enableTripleShiftInLibrary,
+          enableExtensionMethods: library.enableExtensionMethodsInLibrary,
+          enableNonNullable: library.isNonNullableByDefault);
     });
     Token token = result.tokens;
     if (!suppressLexicalErrors) {
       List<int> source = getSource(bytes);
-      Uri importUri = library.uri;
+      Uri importUri = library.importUri;
       if (library.isPatch) {
         // For patch files we create a "fake" import uri.
         // We cannot use the import uri from the patched library because
@@ -269,6 +297,7 @@ class SourceLoader extends Loader {
           importUri, library.fileUri, result.lineStarts, source);
     }
     library.issuePostponedProblems();
+    library.markLanguageVersionFinal();
     while (token is ErrorToken) {
       if (!suppressLexicalErrors) {
         ErrorToken error = token;
@@ -302,6 +331,79 @@ class SourceLoader extends Loader {
     }
   }
 
+  Set<LibraryBuilder> _strongOptOutLibraries;
+
+  void registerStrongOptOutLibrary(LibraryBuilder libraryBuilder) {
+    _strongOptOutLibraries ??= {};
+    _strongOptOutLibraries.add(libraryBuilder);
+  }
+
+  @override
+  Future<Null> buildOutlines() async {
+    await super.buildOutlines();
+
+    if (_strongOptOutLibraries != null) {
+      // We have libraries that are opted out in strong mode "non-explicitly",
+      // that is, either implicitly through the package version or loaded from
+      // .dill as opt out.
+      //
+      // To reduce the verbosity of the error messages we try to reduce the
+      // message to only include the package name once for packages that are
+      // opted out.
+      //
+      // We use the current package config to retrieve the package based
+      // language version to determine whether the package as a whole is opted
+      // out. If so, we only include the package name and not the library uri
+      // in the message. For package libraries with no corresponding package
+      // config we include each library uri in the message. For non-package
+      // libraries with no corresponding package config we generate a message
+      // per library.
+      Map<String, List<LibraryBuilder>> libraryByPackage = {};
+      for (LibraryBuilder libraryBuilder in _strongOptOutLibraries) {
+        Package package =
+            target.uriTranslator.getPackage(libraryBuilder.importUri);
+
+        if (package != null &&
+            package.languageVersion != null &&
+            package.languageVersion is! InvalidLanguageVersion) {
+          Version version = new Version(
+              package.languageVersion.major, package.languageVersion.minor);
+          if (version < enableNonNullableVersion) {
+            (libraryByPackage[package?.name] ??= []).add(libraryBuilder);
+            continue;
+          }
+        }
+        if (libraryBuilder.importUri.scheme == 'package') {
+          (libraryByPackage[null] ??= []).add(libraryBuilder);
+        } else {
+          // Emit a message that doesn't mention running 'pub'.
+          addProblem(messageStrongModeNNBDButOptOut, -1, noLength,
+              libraryBuilder.fileUri);
+        }
+      }
+      if (libraryByPackage.isNotEmpty) {
+        List<String> dependencies = [];
+        libraryByPackage.forEach((String name, List<LibraryBuilder> libraries) {
+          if (name != null) {
+            dependencies.add('package:$name');
+          } else {
+            for (LibraryBuilder libraryBuilder in libraries) {
+              dependencies.add(libraryBuilder.importUri.toString());
+            }
+          }
+        });
+        // Emit a message that suggests to run 'pub' to check for opted in
+        // versions of the packages.
+        addProblem(
+            templateStrongModeNNBDPackageOptOut.withArguments(dependencies),
+            -1,
+            -1,
+            null);
+        _strongOptOutLibraries = null;
+      }
+    }
+  }
+
   List<int> getSource(List<int> bytes) {
     // bytes is 0-terminated. We don't want that included.
     if (bytes is Uint8List) {
@@ -323,10 +425,7 @@ class SourceLoader extends Loader {
       // We tokenize source files twice to keep memory usage low. This is the
       // second time, and the first time was in [buildOutline] above. So this
       // time we suppress lexical errors.
-      bool suppressLexicalErrors = true;
-      if (library.issueLexicalErrorsOnBodyBuild) suppressLexicalErrors = false;
-      Token tokens =
-          await tokenize(library, suppressLexicalErrors: suppressLexicalErrors);
+      Token tokens = await tokenize(library, suppressLexicalErrors: true);
       if (tokens == null) return;
       DietListener listener = createDietListener(library);
       DietParser parser = new DietParser(listener);
@@ -336,7 +435,7 @@ class SourceLoader extends Loader {
           // Part was included in multiple libraries. Skip it here.
           continue;
         }
-        Token tokens = await tokenize(part);
+        Token tokens = await tokenize(part, suppressLexicalErrors: true);
         if (tokens != null) {
           listener.uri = part.fileUri;
           parser.parseUnit(tokens);
@@ -367,8 +466,22 @@ class SourceLoader extends Loader {
               "debugExpression in $enclosingClass");
       }
     }
-    ProcedureBuilder builder = new ProcedureBuilderImpl(null, 0, null,
-        "debugExpr", null, null, ProcedureKind.Method, library, 0, 0, -1, -1)
+    ProcedureBuilder builder = new SourceProcedureBuilder(
+        null,
+        0,
+        null,
+        "debugExpr",
+        null,
+        null,
+        ProcedureKind.Method,
+        library,
+        0,
+        0,
+        -1,
+        -1,
+        null,
+        null,
+        AsyncMarker.Sync)
       ..parent = parent;
     BodyBuilder listener = dietListener.createListener(
         builder, dietListener.memberScope,
@@ -558,13 +671,13 @@ class SourceLoader extends Loader {
     ticker.logMs("Computed variances of $count type variables");
   }
 
-  void computeDefaultTypes(TypeBuilder dynamicType, TypeBuilder bottomType,
-      ClassBuilder objectClass) {
+  void computeDefaultTypes(TypeBuilder dynamicType, TypeBuilder nullType,
+      TypeBuilder bottomType, ClassBuilder objectClass) {
     int count = 0;
     builders.forEach((Uri uri, LibraryBuilder library) {
       if (library.loader == this) {
-        count +=
-            library.computeDefaultTypes(dynamicType, bottomType, objectClass);
+        count += library.computeDefaultTypes(
+            dynamicType, nullType, bottomType, objectClass);
       }
     });
     ticker.logMs("Computed default types for $count type variables");
@@ -595,20 +708,20 @@ class SourceLoader extends Loader {
   void checkObjectClassHierarchy(ClassBuilder objectClass) {
     if (objectClass is SourceClassBuilder &&
         objectClass.library.loader == this) {
-      if (objectClass.supertype != null) {
-        objectClass.supertype = null;
+      if (objectClass.supertypeBuilder != null) {
+        objectClass.supertypeBuilder = null;
         objectClass.addProblem(
             messageObjectExtends, objectClass.charOffset, noLength);
       }
-      if (objectClass.interfaces != null) {
+      if (objectClass.interfaceBuilders != null) {
         objectClass.addProblem(
             messageObjectImplements, objectClass.charOffset, noLength);
-        objectClass.interfaces = null;
+        objectClass.interfaceBuilders = null;
       }
-      if (objectClass.mixedInType != null) {
+      if (objectClass.mixedInTypeBuilder != null) {
         objectClass.addProblem(
             messageObjectMixesIn, objectClass.charOffset, noLength);
-        objectClass.mixedInType = null;
+        objectClass.mixedInTypeBuilder = null;
       }
     }
   }
@@ -633,10 +746,10 @@ class SourceLoader extends Loader {
       }
     }
 
-    Set<ClassBuilder> blackListedClasses = new Set<ClassBuilder>();
-    for (int i = 0; i < blacklistedCoreClasses.length; i++) {
-      blackListedClasses.add(coreLibrary
-          .lookupLocalMember(blacklistedCoreClasses[i], required: true));
+    Set<ClassBuilder> denyListedClasses = new Set<ClassBuilder>();
+    for (int i = 0; i < denylistedCoreClasses.length; i++) {
+      denyListedClasses.add(coreLibrary
+          .lookupLocalMember(denylistedCoreClasses[i], required: true));
     }
 
     // Sort the classes topologically.
@@ -648,8 +761,10 @@ class SourceLoader extends Loader {
       workList = <SourceClassBuilder>[];
       for (int i = 0; i < previousWorkList.length; i++) {
         SourceClassBuilder cls = previousWorkList[i];
-        List<Builder> directSupertypes =
+        Map<TypeDeclarationBuilder, TypeAliasBuilder> directSupertypeMap =
             cls.computeDirectSupertypes(objectClass);
+        List<TypeDeclarationBuilder> directSupertypes =
+            directSupertypeMap.keys.toList();
         bool allSupertypesProcessed = true;
         for (int i = 0; i < directSupertypes.length; i++) {
           Builder supertype = directSupertypes[i];
@@ -666,7 +781,7 @@ class SourceLoader extends Loader {
         }
         if (allSupertypesProcessed) {
           topologicallySortedClasses.add(cls);
-          checkClassSupertypes(cls, directSupertypes, blackListedClasses);
+          checkClassSupertypes(cls, directSupertypeMap, denyListedClasses);
         } else {
           workList.add(cls);
         }
@@ -713,37 +828,74 @@ class SourceLoader extends Loader {
     }
   }
 
-  void checkClassSupertypes(SourceClassBuilder cls,
-      List<Builder> directSupertypes, Set<ClassBuilder> blackListedClasses) {
-    // Check that the direct supertypes aren't black-listed or enums.
+  void checkClassSupertypes(
+      SourceClassBuilder cls,
+      Map<TypeDeclarationBuilder, TypeAliasBuilder> directSupertypeMap,
+      Set<ClassBuilder> denyListedClasses) {
+    // Check that the direct supertypes aren't deny-listed or enums.
+    List<TypeDeclarationBuilder> directSupertypes =
+        directSupertypeMap.keys.toList();
     for (int i = 0; i < directSupertypes.length; i++) {
-      Builder supertype = directSupertypes[i];
-      if (supertype is TypeAliasBuilder) {
-        TypeAliasBuilder aliasBuilder = supertype;
-        supertype = aliasBuilder.unaliasDeclaration;
-      }
+      TypeDeclarationBuilder supertype = directSupertypes[i];
       if (supertype is EnumBuilder) {
         cls.addProblem(templateExtendingEnum.withArguments(supertype.name),
             cls.charOffset, noLength);
       } else if (!cls.library.mayImplementRestrictedTypes &&
-          blackListedClasses.contains(supertype)) {
-        cls.addProblem(
-            templateExtendingRestricted
-                .withArguments(supertype.fullNameForErrors),
-            cls.charOffset,
-            noLength);
+          denyListedClasses.contains(supertype)) {
+        TypeAliasBuilder aliasBuilder = directSupertypeMap[supertype];
+        if (aliasBuilder != null) {
+          cls.addProblem(
+              templateExtendingRestricted
+                  .withArguments(supertype.fullNameForErrors),
+              cls.charOffset,
+              noLength,
+              context: [
+                messageTypedefCause.withLocation(
+                    aliasBuilder.fileUri, aliasBuilder.charOffset, noLength),
+              ]);
+        } else {
+          cls.addProblem(
+              templateExtendingRestricted
+                  .withArguments(supertype.fullNameForErrors),
+              cls.charOffset,
+              noLength);
+        }
       }
     }
 
     // Check that the mixed-in type can be used as a mixin.
-    final TypeBuilder mixedInType = cls.mixedInType;
-    if (mixedInType != null) {
+    final TypeBuilder mixedInTypeBuilder = cls.mixedInTypeBuilder;
+    if (mixedInTypeBuilder != null) {
       bool isClassBuilder = false;
-      if (mixedInType is NamedTypeBuilder) {
-        TypeDeclarationBuilder builder = mixedInType.declaration;
+      if (mixedInTypeBuilder is NamedTypeBuilder) {
+        TypeDeclarationBuilder builder = mixedInTypeBuilder.declaration;
         if (builder is TypeAliasBuilder) {
           TypeAliasBuilder aliasBuilder = builder;
-          builder = aliasBuilder.unaliasDeclaration;
+          NamedTypeBuilder namedBuilder = mixedInTypeBuilder;
+          builder = aliasBuilder.unaliasDeclaration(namedBuilder.arguments);
+          if (builder is! ClassBuilder) {
+            cls.addProblem(
+                templateIllegalMixin.withArguments(builder.fullNameForErrors),
+                cls.charOffset,
+                noLength,
+                context: [
+                  messageTypedefCause.withLocation(
+                      aliasBuilder.fileUri, aliasBuilder.charOffset, noLength),
+                ]);
+            return;
+          } else if (!cls.library.mayImplementRestrictedTypes &&
+              denyListedClasses.contains(builder)) {
+            cls.addProblem(
+                templateExtendingRestricted
+                    .withArguments(mixedInTypeBuilder.fullNameForErrors),
+                cls.charOffset,
+                noLength,
+                context: [
+                  messageTypedefUnaliasedTypeCause.withLocation(
+                      builder.fileUri, builder.charOffset, noLength),
+                ]);
+            return;
+          }
         }
         if (builder is ClassBuilder) {
           isClassBuilder = true;
@@ -754,7 +906,8 @@ class SourceLoader extends Loader {
         // TODO(ahe): Either we need to check this for superclass and
         // interfaces, or this shouldn't be necessary (or handled elsewhere).
         cls.addProblem(
-            templateIllegalMixin.withArguments(mixedInType.fullNameForErrors),
+            templateIllegalMixin
+                .withArguments(mixedInTypeBuilder.fullNameForErrors),
             cls.charOffset,
             noLength);
       }
@@ -847,6 +1000,11 @@ class SourceLoader extends Loader {
         SourceLibraryBuilder sourceLibrary = library;
         Library target = sourceLibrary.build(coreLibrary);
         if (!library.isPatch) {
+          if (sourceLibrary.referencesFrom != null) {
+            referenceFromIndex ??= new ReferenceFromIndex();
+            referenceFromIndex.addIndexedLibrary(
+                target, sourceLibrary.referencesFromIndexed);
+          }
           libraries.add(target);
         }
       }
@@ -860,7 +1018,7 @@ class SourceLoader extends Loader {
     builders.forEach((Uri uri, LibraryBuilder libraryBuilder) {
       if (!libraryBuilder.isPatch &&
           (libraryBuilder.loader == this ||
-              libraryBuilder.uri.scheme == "dart" ||
+              libraryBuilder.importUri.scheme == "dart" ||
               libraryBuilder == this.first)) {
         if (libraries.add(libraryBuilder.library)) {
           workList.add(libraryBuilder.library);
@@ -892,7 +1050,8 @@ class SourceLoader extends Loader {
     } else {
       hierarchy.onAmbiguousSupertypes = onAmbiguousSupertypes;
       Component component = computeFullComponent();
-      hierarchy.applyTreeChanges(const [], component.libraries,
+      hierarchy.coreTypes = coreTypes;
+      hierarchy.applyTreeChanges(const [], component.libraries, const [],
           reissueAmbiguousSupertypesFor: component);
     }
     for (AmbiguousTypesRecord record in ambiguousTypesRecords) {
@@ -940,12 +1099,12 @@ class SourceLoader extends Loader {
     ticker.logMs("Checked supertypes");
   }
 
-  void checkBounds() {
+  void checkTypes() {
     builders.forEach((Uri uri, LibraryBuilder library) {
       if (library is SourceLibraryBuilder) {
         if (library.loader == this) {
           library
-              .checkBoundsInOutline(typeInferenceEngine.typeSchemaEnvironment);
+              .checkTypesInOutline(typeInferenceEngine.typeSchemaEnvironment);
         }
       }
     });
@@ -954,8 +1113,7 @@ class SourceLoader extends Loader {
 
   void checkOverrides(List<SourceClassBuilder> sourceClasses) {
     List<DelayedOverrideCheck> overrideChecks =
-        builderHierarchy.overrideChecks.toList();
-    builderHierarchy.overrideChecks.clear();
+        builderHierarchy.takeDelayedOverrideChecks();
     for (int i = 0; i < overrideChecks.length; i++) {
       overrideChecks[i].check(builderHierarchy);
     }
@@ -966,12 +1124,11 @@ class SourceLoader extends Loader {
   }
 
   void checkAbstractMembers(List<SourceClassBuilder> sourceClasses) {
-    List<DelayedMember> delayedMemberChecks =
-        builderHierarchy.delayedMemberChecks.toList();
-    builderHierarchy.delayedMemberChecks.clear();
+    List<ClassMember> delayedMemberChecks =
+        builderHierarchy.takeDelayedMemberChecks();
     Set<Class> changedClasses = new Set<Class>();
     for (int i = 0; i < delayedMemberChecks.length; i++) {
-      delayedMemberChecks[i].check(builderHierarchy);
+      delayedMemberChecks[i].getMember(builderHierarchy);
       changedClasses.add(delayedMemberChecks[i].classBuilder.cls);
     }
     ticker.logMs(
@@ -1038,6 +1195,7 @@ class SourceLoader extends Loader {
         }
       }
     });
+    ticker.logMs("Build outline expressions");
   }
 
   void buildClassHierarchy(
@@ -1058,6 +1216,8 @@ class SourceLoader extends Loader {
     /// might be subject to type inference, and records dependencies between
     /// them.
     typeInferenceEngine.prepareTopLevel(coreTypes, hierarchy);
+    builderHierarchy.computeTypes();
+
     List<FieldBuilder> allImplicitlyTypedFields = <FieldBuilder>[];
     for (LibraryBuilder library in builders.values) {
       if (library.loader == this) {
@@ -1204,33 +1364,82 @@ export 'dart:async' show Future, Stream;
 
 print(object) {}
 
-class Iterator {}
+class Iterator<E> {
+  bool moveNext() => null;
+  E get current => null;
+}
 
-class Iterable {}
+class Iterable<E> {
+  Iterator<E> get iterator => null;
+}
 
-class List extends Iterable {
+class List<E> extends Iterable {
+  factory List() => null;
   factory List.unmodifiable(elements) => null;
+  factory List.filled(int length, E fill, {bool growable = false}) => null;
+  factory List.generate(int length, E generator(int index),
+      {bool growable = true}) => null;
+  void add(E) {}
+  E operator [](int index) => null;
 }
 
-class Map extends Iterable {
-  factory Map.unmodifiable(other) => null;
+class _GrowableList<E> {
+  factory _GrowableList() => null;
+  factory _GrowableList.filled() => null;
+  factory _GrowableList.generate(int length, E generator(int index)) => null;
 }
+
+class _List<E> {
+  factory _List() => null;
+  factory _List.filled() => null;
+  factory _List.generate(int length, E generator(int index)) => null;
+}
+
+class MapEntry<K, V> {
+  K key;
+  V value;
+}
+
+abstract class Map<K, V> extends Iterable {
+  factory Map.unmodifiable(other) => null;
+  Iterable<MapEntry<K, V>> get entries;
+  void operator []=(K key, V value) {}
+}
+
+abstract class _ImmutableMap<K, V> implements Map<K, V> {
+  dynamic _kvPairs;
+}
+
+abstract class pragma {
+  String name;
+  Object options;
+}
+
+class AbstractClassInstantiationError {}
 
 class NoSuchMethodError {
   NoSuchMethodError.withInvocation(receiver, invocation);
 }
 
+class StackTrace {}
+
 class Null {}
 
 class Object {
+  const Object();
   noSuchMethod(invocation) => null;
+  bool operator==(dynamic) {}
 }
 
 class String {}
 
 class Symbol {}
 
-class Set {}
+class Set<E> {
+  factory Set() = Set<E>._fake;
+  external factory Set._fake();
+  void add(E) {}
+}
 
 class Type {}
 
@@ -1262,6 +1471,10 @@ class Function {}
 const String defaultDartAsyncSource = """
 _asyncErrorWrapperHelper(continuation) {}
 
+void _asyncStarListenHelper(var object, var awaiter) {}
+
+void _asyncStarMoveNextHelper(var stream) {}
+
 _asyncStackTraceHelper(async_op) {}
 
 _asyncThenWrapperHelper(continuation) {}
@@ -1282,7 +1495,7 @@ class _AsyncStarStreamController {
   get stream => null;
 }
 
-class Completer {
+abstract class Completer {
   factory Completer.sync() => null;
 
   get future;
@@ -1292,7 +1505,7 @@ class Completer {
   completeError(error, [stackTrace]);
 }
 
-class Future {
+class Future<T> {
   factory Future.microtask(computation) => null;
 }
 
@@ -1305,6 +1518,8 @@ class _AsyncAwaitCompleter implements Completer {
   complete([value]) {}
 
   completeError(error, [stackTrace]) {}
+
+  void start(void Function() f) {}
 }
 
 class Stream {}
@@ -1333,6 +1548,8 @@ const String defaultDartInternalSource = """
 class Symbol {
   const Symbol(String name);
 }
+
+T unsafeCast<T>(Object v) {}
 """;
 
 /// A minimal implementation of dart:typed_data that is sufficient to create an

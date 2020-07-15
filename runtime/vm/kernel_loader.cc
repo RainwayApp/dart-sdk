@@ -1,6 +1,7 @@
 // Copyright (c) 2016, the Dart project authors.  Please see the AUTHORS file
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
+#if !defined(DART_PRECOMPILED_RUNTIME)
 
 #include "vm/kernel_loader.h"
 
@@ -8,6 +9,7 @@
 
 #include <memory>
 
+#include "vm/compiler/backend/flow_graph_compiler.h"
 #include "vm/compiler/frontend/constant_reader.h"
 #include "vm/compiler/frontend/kernel_translation_helper.h"
 #include "vm/dart_api_impl.h"
@@ -22,7 +24,6 @@
 #include "vm/symbols.h"
 #include "vm/thread.h"
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
 namespace dart {
 namespace kernel {
 
@@ -114,7 +115,7 @@ class SimpleExpressionConverter {
   DISALLOW_COPY_AND_ASSIGN(SimpleExpressionConverter);
 };
 
-RawArray* KernelLoader::MakeFieldsArray() {
+ArrayPtr KernelLoader::MakeFieldsArray() {
   const intptr_t len = fields_.length();
   const Array& res = Array::Handle(zone_, Array::New(len, Heap::kOld));
   for (intptr_t i = 0; i < len; i++) {
@@ -123,7 +124,7 @@ RawArray* KernelLoader::MakeFieldsArray() {
   return res.raw();
 }
 
-RawArray* KernelLoader::MakeFunctionsArray() {
+ArrayPtr KernelLoader::MakeFunctionsArray() {
   const intptr_t len = functions_.length();
   const Array& res = Array::Handle(zone_, Array::New(len, Heap::kOld));
   for (intptr_t i = 0; i < len; i++) {
@@ -132,12 +133,12 @@ RawArray* KernelLoader::MakeFunctionsArray() {
   return res.raw();
 }
 
-RawLibrary* BuildingTranslationHelper::LookupLibraryByKernelLibrary(
+LibraryPtr BuildingTranslationHelper::LookupLibraryByKernelLibrary(
     NameIndex library) {
   return loader_->LookupLibrary(library);
 }
 
-RawClass* BuildingTranslationHelper::LookupClassByKernelClass(NameIndex klass) {
+ClassPtr BuildingTranslationHelper::LookupClassByKernelClass(NameIndex klass) {
 #if defined(DEBUG)
   LibraryLookupHandleScope library_lookup_handle_scope(library_lookup_handle_);
 #endif  // defined(DEBUG)
@@ -203,8 +204,11 @@ KernelLoader::KernelLoader(Program* program,
               program_->kernel_data(),
               program_->kernel_data_size(),
               0),
-      type_translator_(&helper_, &active_class_, /* finalize= */ false),
       constant_reader_(&helper_, &active_class_),
+      type_translator_(&helper_,
+                       &constant_reader_,
+                       &active_class_,
+                       /* finalize= */ false),
       inferred_type_metadata_helper_(&helper_, &constant_reader_),
       bytecode_metadata_helper_(&helper_, &active_class_),
       external_name_class_(Class::Handle(Z)),
@@ -225,6 +229,11 @@ KernelLoader::KernelLoader(Program* program,
 void KernelLoader::ReadObfuscationProhibitions() {
   ObfuscationProhibitionsMetadataHelper helper(&helper_);
   helper.ReadProhibitions();
+}
+
+void KernelLoader::ReadLoadingUnits() {
+  LoadingUnitsMetadataHelper helper(&helper_);
+  helper.ReadLoadingUnits();
 }
 
 Object& KernelLoader::LoadEntireProgram(Program* program,
@@ -270,11 +279,19 @@ Object& KernelLoader::LoadEntireProgram(Program* program,
       if (pair != NULL) {
         // At least two entries with content. Unless the content is the same
         // that's not valid.
-        if (pair->sources->CompareTo(script_source) != 0 ||
-            !pair->line_starts->CanonicalizeEquals(line_starts)) {
-          FATAL(
+        const bool src_differ = pair->sources->CompareTo(script_source) != 0;
+        const bool line_starts_differ =
+            !pair->line_starts->CanonicalizeEquals(line_starts);
+        if (src_differ || line_starts_differ) {
+          FATAL3(
               "Invalid kernel binary: Contains at least two source entries "
-              "that do not agree.");
+              "that do not agree. URI '%s', difference: %s. Subprogram count: "
+              "%" Pd ".",
+              uri_string.ToCString(),
+              src_differ && line_starts_differ
+                  ? "src and line starts"
+                  : (src_differ ? "src" : "line starts"),
+              subprogram_count);
         }
       } else {
         UriToSourceTableEntry* tmp = new UriToSourceTableEntry();
@@ -293,7 +310,11 @@ Object& KernelLoader::LoadEntireProgram(Program* program,
     reader.set_raw_buffer(program->kernel_data() + subprogram_start);
     reader.set_size(subprogram_end - subprogram_start);
     reader.set_offset(0);
-    std::unique_ptr<Program> subprogram = Program::ReadFrom(&reader);
+    const char* error = nullptr;
+    std::unique_ptr<Program> subprogram = Program::ReadFrom(&reader, &error);
+    if (subprogram == nullptr) {
+      FATAL1("Failed to load kernel file: %s", error);
+    }
     ASSERT(subprogram->is_single_program());
     KernelLoader loader(subprogram.get(), &uri_to_source_table);
     Object& load_result = Object::Handle(loader.LoadProgram(false));
@@ -333,9 +354,9 @@ void KernelLoader::index_programs(
   subprogram_file_starts->Reverse();
 }
 
-RawString* KernelLoader::FindSourceForScript(const uint8_t* kernel_buffer,
-                                             intptr_t kernel_buffer_length,
-                                             const String& uri) {
+StringPtr KernelLoader::FindSourceForScript(const uint8_t* kernel_buffer,
+                                            intptr_t kernel_buffer_length,
+                                            const String& uri) {
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   TranslationHelper translation_helper(thread);
@@ -452,8 +473,11 @@ KernelLoader::KernelLoader(const Script& script,
           KernelProgramInfo::ZoneHandle(zone_, script.kernel_program_info())),
       translation_helper_(this, thread_, Heap::kOld),
       helper_(zone_, &translation_helper_, script, kernel_data, 0),
-      type_translator_(&helper_, &active_class_, /* finalize= */ false),
       constant_reader_(&helper_, &active_class_),
+      type_translator_(&helper_,
+                       &constant_reader_,
+                       &active_class_,
+                       /* finalize= */ false),
       inferred_type_metadata_helper_(&helper_, &constant_reader_),
       bytecode_metadata_helper_(&helper_, &active_class_),
       external_name_class_(Class::Handle(Z)),
@@ -528,7 +552,7 @@ void KernelLoader::AnnotateNativeProcedures() {
     for (intptr_t j = 0; j < annotation_count; ++j) {
       const intptr_t tag = helper_.PeekTag();
       if (tag == kConstantExpression) {
-        helper_.ReadByte();  // Skip the tag.
+        helper_.ReadByte();      // Skip the tag.
         helper_.ReadPosition();  // Skip fileOffset.
         helper_.SkipDartType();  // Skip type.
 
@@ -559,7 +583,7 @@ void KernelLoader::AnnotateNativeProcedures() {
   kernel_program_info_.set_potential_natives(potential_natives_);
 }
 
-RawString* KernelLoader::DetectExternalNameCtor() {
+StringPtr KernelLoader::DetectExternalNameCtor() {
   helper_.ReadTag();
   helper_.ReadPosition();
   NameIndex annotation_class = H.EnclosingName(
@@ -659,7 +683,7 @@ void KernelLoader::LoadNativeExtensionLibraries() {
 
         const intptr_t tag = helper_.PeekTag();
         if (tag == kConstantExpression) {
-          helper_.ReadByte();  // Skip the tag.
+          helper_.ReadByte();      // Skip the tag.
           helper_.ReadPosition();  // Skip fileOffset.
           helper_.SkipDartType();  // Skip type.
 
@@ -714,7 +738,7 @@ void KernelLoader::LoadNativeExtension(const Library& library,
 #endif
 }
 
-RawObject* KernelLoader::LoadProgram(bool process_pending_classes) {
+ObjectPtr KernelLoader::LoadProgram(bool process_pending_classes) {
   ASSERT(kernel_program_info_.constants() == Array::null());
 
   if (!program_->is_single_program()) {
@@ -786,7 +810,7 @@ void KernelLoader::LoadLibrary(const Library& library) {
   }
 }
 
-RawObject* KernelLoader::LoadExpressionEvaluationFunction(
+ObjectPtr KernelLoader::LoadExpressionEvaluationFunction(
     const String& library_url,
     const String& klass) {
   // Find the original context, i.e. library/class, in which the evaluation will
@@ -887,7 +911,11 @@ void KernelLoader::FindModifiedLibraries(Program* program,
       reader.set_raw_buffer(program->kernel_data() + subprogram_start);
       reader.set_size(subprogram_end - subprogram_start);
       reader.set_offset(0);
-      std::unique_ptr<Program> subprogram = Program::ReadFrom(&reader);
+      const char* error = nullptr;
+      std::unique_ptr<Program> subprogram = Program::ReadFrom(&reader, &error);
+      if (subprogram == nullptr) {
+        FATAL1("Failed to load kernel file: %s", error);
+      }
       ASSERT(subprogram->is_single_program());
       KernelLoader loader(subprogram.get(), /*uri_to_source_table=*/nullptr);
       loader.walk_incremental_kernel(modified_libs, is_empty_program,
@@ -941,13 +969,27 @@ void KernelLoader::walk_incremental_kernel(BitVector* modified_libs,
 void KernelLoader::ReadInferredType(const Field& field,
                                     intptr_t kernel_offset) {
   const InferredTypeMetadata type =
-      inferred_type_metadata_helper_.GetInferredType(kernel_offset);
+      inferred_type_metadata_helper_.GetInferredType(kernel_offset,
+                                                     /*read_constant=*/false);
   if (type.IsTrivial()) {
     return;
   }
   field.set_guarded_cid(type.cid);
   field.set_is_nullable(type.IsNullable());
   field.set_guarded_list_length(Field::kNoFixedLength);
+  if (FLAG_precompiled_mode) {
+    field.set_is_unboxing_candidate(
+        !field.is_late() && !field.is_static() &&
+        ((field.guarded_cid() == kDoubleCid &&
+          FlowGraphCompiler::SupportsUnboxedDoubles()) ||
+         (field.guarded_cid() == kFloat32x4Cid &&
+          FlowGraphCompiler::SupportsUnboxedSimd128()) ||
+         (field.guarded_cid() == kFloat64x2Cid &&
+          FlowGraphCompiler::SupportsUnboxedSimd128()) ||
+         type.IsInt()) &&
+        !field.is_nullable());
+    field.set_is_non_nullable_integer(!field.is_nullable() && type.IsInt());
+  }
 }
 
 void KernelLoader::CheckForInitializer(const Field& field) {
@@ -965,7 +1007,7 @@ void KernelLoader::CheckForInitializer(const Field& field) {
   field.set_has_nontrivial_initializer(false);
 }
 
-RawLibrary* KernelLoader::LoadLibrary(intptr_t index) {
+LibraryPtr KernelLoader::LoadLibrary(intptr_t index) {
   if (!program_->is_single_program()) {
     FATAL(
         "Trying to load a concatenated dill file at a time where that is "
@@ -1007,6 +1049,24 @@ RawLibrary* KernelLoader::LoadLibrary(intptr_t index) {
   if (library.Loaded()) return library.raw();
 
   library.set_is_nnbd(library_helper.IsNonNullableByDefault());
+  const NNBDCompiledMode mode =
+      library_helper.GetNonNullableByDefaultCompiledMode();
+  if (!I->null_safety() && mode == NNBDCompiledMode::kStrong) {
+    H.ReportError(
+        "Library '%s' was compiled with sound null safety (in strong mode) and "
+        "it "
+        "requires --sound-null-safety option at runtime",
+        String::Handle(library.url()).ToCString());
+  }
+  if (I->null_safety() && (mode == NNBDCompiledMode::kWeak ||
+                           mode == NNBDCompiledMode::kDisabled)) {
+    H.ReportError(
+        "Library '%s' was compiled without sound null safety (in weak mode) "
+        "and it "
+        "cannot be used with --sound-null-safety at runtime",
+        String::Handle(library.url()).ToCString());
+  }
+  library.set_nnbd_compiled_mode(mode);
 
   library_kernel_data_ = helper_.reader_.ExternalDataFromTo(
       library_kernel_offset_, library_kernel_offset_ + library_size);
@@ -1059,6 +1119,7 @@ RawLibrary* KernelLoader::LoadLibrary(intptr_t index) {
   Class& toplevel_class =
       Class::Handle(Z, Class::New(library, Symbols::TopLevel(), script,
                                   TokenPosition::kNoSource, register_class));
+  toplevel_class.set_is_abstract();
   toplevel_class.set_is_declaration_loaded();
   toplevel_class.set_is_type_finalized();
   library.set_toplevel_class(toplevel_class);
@@ -1197,6 +1258,11 @@ void KernelLoader::FinishTopLevelClassLoading(
     field.SetFieldType(type);
     ReadInferredType(field, field_offset + library_kernel_offset_);
     CheckForInitializer(field);
+    // In NNBD libraries, static fields with initializers are
+    // implicitly late.
+    if (field.has_initializer() && library.is_nnbd()) {
+      field.set_is_late(true);
+    }
     field_helper.SetJustRead(FieldHelper::kType);
     field_helper.ReadUntilExcluding(FieldHelper::kInitializer);
     intptr_t field_initializer_offset = helper_.ReaderOffset();
@@ -1263,6 +1329,7 @@ void KernelLoader::LoadLibraryImportsAndExports(Library* library,
   LibraryPrefix& library_prefix = LibraryPrefix::Handle(Z);
 
   const intptr_t deps_count = helper_.ReadListLength();
+  const Array& deps = Array::Handle(Array::New(deps_count));
   for (intptr_t dep = 0; dep < deps_count; ++dep) {
     LibraryDependencyHelper dependency_helper(&helper_);
 
@@ -1346,12 +1413,21 @@ void KernelLoader::LoadLibraryImportsAndExports(Library* library,
         }
       }
     }
+
     if (FLAG_enable_mirrors && dependency_helper.annotation_count_ > 0) {
       ASSERT(annotations_kernel_offset > 0);
       ns.AddMetadata(toplevel_class, TokenPosition::kNoSource,
                      annotations_kernel_offset);
     }
+
+    if (prefix.IsNull()) {
+      deps.SetAt(dep, ns);
+    } else {
+      deps.SetAt(dep, library_prefix);
+    }
   }
+
+  library->set_dependencies(deps);
 }
 
 void KernelLoader::LoadPreliminaryClass(ClassHelper* class_helper,
@@ -1397,6 +1473,9 @@ void KernelLoader::LoadPreliminaryClass(ClassHelper* class_helper,
 
   if (class_helper->is_transformed_mixin_application()) {
     klass->set_is_transformed_mixin_application();
+  }
+  if (class_helper->has_const_constructor()) {
+    klass->set_is_const();
   }
 }
 
@@ -1552,6 +1631,12 @@ void KernelLoader::FinishClassLoading(const Class& klass,
       field.set_is_extension_member(is_extension_member);
       ReadInferredType(field, field_offset + library_kernel_offset_);
       CheckForInitializer(field);
+      // In NNBD libraries, static fields with initializers are
+      // implicitly late.
+      if (field_helper.IsStatic() && field.has_initializer() &&
+          library.is_nnbd()) {
+        field.set_is_late(true);
+      }
       field_helper.ReadUntilExcluding(FieldHelper::kInitializer);
       intptr_t field_initializer_offset = helper_.ReaderOffset();
       field_helper.ReadUntilExcluding(FieldHelper::kEnd);
@@ -1624,7 +1709,7 @@ void KernelLoader::FinishClassLoading(const Class& klass,
     }
 
     Function& function = Function::ZoneHandle(
-        Z, Function::New(name, RawFunction::kConstructor,
+        Z, Function::New(name, FunctionLayout::kConstructor,
                          false,  // is_static
                          constructor_helper.IsConst(),
                          false,  // is_abstract
@@ -1644,6 +1729,7 @@ void KernelLoader::FinishClassLoading(const Class& klass,
                               true,   // is_method
                               false,  // is_closure
                               &function_node_helper);
+    T.SetupUnboxingInfoMetadata(function, library_kernel_offset_);
 
     if (library.is_dart_scheme() &&
         H.IsPrivate(constructor_helper.canonical_name_)) {
@@ -1797,7 +1883,7 @@ void KernelLoader::ReadVMAnnotations(const Library& library,
         // TODO(sjindel): Refactor `ExternalName` handling to do this as well
         // and avoid the "potential natives" list.
 
-        helper_.ReadByte();  // Skip the tag.
+        helper_.ReadByte();      // Skip the tag.
         helper_.ReadPosition();  // Skip fileOffset.
         helper_.SkipDartType();  // Skip type.
         const intptr_t offset_in_constant_table = helper_.ReadUInt();
@@ -1887,7 +1973,7 @@ void KernelLoader::LoadProcedure(const Library& library,
   procedure_helper.SetJustRead(ProcedureHelper::kAnnotations);
   const Object& script_class =
       ClassForScriptAt(owner, procedure_helper.source_uri_index_);
-  RawFunction::Kind kind = GetFunctionType(procedure_helper.kind_);
+  FunctionLayout::Kind kind = GetFunctionType(procedure_helper.kind_);
 
   // We do not register expression evaluation libraries with the VM:
   // The expression evaluation functions should be GC-able as soon as
@@ -1903,8 +1989,8 @@ void KernelLoader::LoadProcedure(const Library& library,
                        script_class, procedure_helper.start_position_));
   function.set_has_pragma(has_pragma_annotation);
   function.set_end_token_pos(procedure_helper.end_position_);
-  function.set_is_no_such_method_forwarder(
-      procedure_helper.IsNoSuchMethodForwarder());
+  function.set_is_synthetic(procedure_helper.IsNoSuchMethodForwarder() ||
+                            procedure_helper.IsMemberSignature());
   if (register_function) {
     functions_.Add(&function);
   } else {
@@ -1917,6 +2003,9 @@ void KernelLoader::LoadProcedure(const Library& library,
       (function.is_static() && (library.raw() == Library::InternalLibrary()))) {
     function.set_is_reflectable(false);
   }
+  if (procedure_helper.IsMemberSignature()) {
+    function.set_is_reflectable(false);
+  }
 
   ActiveMemberScope active_member(&active_class_, &function);
 
@@ -1926,29 +2015,48 @@ void KernelLoader::LoadProcedure(const Library& library,
   ASSERT(function_node_tag == kSomething);
   FunctionNodeHelper function_node_helper(&helper_);
   function_node_helper.ReadUntilIncluding(FunctionNodeHelper::kDartAsyncMarker);
+
+  const bool is_async_await_completer_owner =
+      Symbols::_AsyncAwaitCompleter().Equals(
+          String::Handle(Z, owner.ScrubbedName()));
+
   // _AsyncAwaitCompleter.future should be made non-debuggable, otherwise
   // stepping out of async methods will keep hitting breakpoint resulting in
   // infinite loop.
-  bool isAsyncAwaitCompleterFuture =
-      Symbols::_AsyncAwaitCompleter().Equals(
-          String::Handle(owner.ScrubbedName())) &&
-      Symbols::CompleterGetFuture().Equals(String::Handle(function.name()));
+  const bool is_async_await_completer_future =
+      is_async_await_completer_owner &&
+      Symbols::CompleterGetFuture().Equals(name);
   function.set_is_debuggable(function_node_helper.dart_async_marker_ ==
                                  FunctionNodeHelper::kSync &&
-                             !isAsyncAwaitCompleterFuture);
+                             !is_async_await_completer_future);
+
+  // _AsyncAwaitCompleter.start should be made non-visible in stack traces,
+  // since it is an implementation detail of our await/async desugaring.
+  if (is_async_await_completer_owner &&
+      Symbols::_AsyncAwaitStart().Equals(name)) {
+    function.set_is_visible(!FLAG_causal_async_stacks &&
+                            !FLAG_lazy_async_stacks);
+  }
+
   switch (function_node_helper.dart_async_marker_) {
     case FunctionNodeHelper::kSyncStar:
-      function.set_modifier(RawFunction::kSyncGen);
+      function.set_modifier(FunctionLayout::kSyncGen);
+      function.set_is_visible(!FLAG_causal_async_stacks &&
+                              !FLAG_lazy_async_stacks);
       break;
     case FunctionNodeHelper::kAsync:
-      function.set_modifier(RawFunction::kAsync);
+      function.set_modifier(FunctionLayout::kAsync);
       function.set_is_inlinable(!FLAG_causal_async_stacks &&
                                 !FLAG_lazy_async_stacks);
+      function.set_is_visible(!FLAG_causal_async_stacks &&
+                              !FLAG_lazy_async_stacks);
       break;
     case FunctionNodeHelper::kAsyncStar:
-      function.set_modifier(RawFunction::kAsyncGen);
+      function.set_modifier(FunctionLayout::kAsyncGen);
       function.set_is_inlinable(!FLAG_causal_async_stacks &&
                                 !FLAG_lazy_async_stacks);
+      function.set_is_visible(!FLAG_causal_async_stacks &&
+                              !FLAG_lazy_async_stacks);
       break;
     default:
       // no special modifier
@@ -1969,6 +2077,7 @@ void KernelLoader::LoadProcedure(const Library& library,
   T.SetupFunctionParameters(owner, function, is_method,
                             false,  // is_closure
                             &function_node_helper);
+  T.SetupUnboxingInfoMetadata(function, library_kernel_offset_);
 
   // Everything else is skipped implicitly, and procedure_helper and
   // function_node_helper are no longer used.
@@ -2013,8 +2122,8 @@ const Object& KernelLoader::ClassForScriptAt(const Class& klass,
   return klass;
 }
 
-RawScript* KernelLoader::LoadScriptAt(intptr_t index,
-                                      UriToSourceTable* uri_to_source_table) {
+ScriptPtr KernelLoader::LoadScriptAt(intptr_t index,
+                                     UriToSourceTable* uri_to_source_table) {
   const String& uri_string = helper_.SourceTableUriFor(index);
   const String& import_uri_string =
       helper_.SourceTableImportUriFor(index, program_->binary_version());
@@ -2114,8 +2223,8 @@ void KernelLoader::GenerateFieldAccessors(const Class& klass,
       Z,
       Function::New(
           getter_name,
-          field_helper->IsStatic() ? RawFunction::kImplicitStaticGetter
-                                   : RawFunction::kImplicitGetter,
+          field_helper->IsStatic() ? FunctionLayout::kImplicitStaticGetter
+                                   : FunctionLayout::kImplicitGetter,
           field_helper->IsStatic(),
           // The functions created by the parser have is_const for static fields
           // that are const (not just final) and they have is_const for
@@ -2141,7 +2250,7 @@ void KernelLoader::GenerateFieldAccessors(const Class& klass,
     ASSERT(!field_helper->IsConst());
     const String& setter_name = H.DartSetterName(field_helper->canonical_name_);
     Function& setter = Function::ZoneHandle(
-        Z, Function::New(setter_name, RawFunction::kImplicitSetter,
+        Z, Function::New(setter_name, FunctionLayout::kImplicitSetter,
                          field_helper->IsStatic(),
                          false,  // is_const
                          false,  // is_abstract
@@ -2159,8 +2268,8 @@ void KernelLoader::GenerateFieldAccessors(const Class& klass,
   }
 }
 
-RawLibrary* KernelLoader::LookupLibraryOrNull(NameIndex library) {
-  RawLibrary* result;
+LibraryPtr KernelLoader::LookupLibraryOrNull(NameIndex library) {
+  LibraryPtr result;
   name_index_handle_ = Smi::New(library);
   {
     result = kernel_program_info_.LookupLibrary(thread_, name_index_handle_);
@@ -2183,10 +2292,10 @@ RawLibrary* KernelLoader::LookupLibraryOrNull(NameIndex library) {
                                             handle);
 }
 
-RawLibrary* KernelLoader::LookupLibrary(NameIndex library) {
+LibraryPtr KernelLoader::LookupLibrary(NameIndex library) {
   name_index_handle_ = Smi::New(library);
   {
-    RawLibrary* result =
+    LibraryPtr result =
         kernel_program_info_.LookupLibrary(thread_, name_index_handle_);
     NoSafepointScope no_safepoint_scope(thread_);
     if (result != Library::null()) {
@@ -2217,14 +2326,14 @@ RawLibrary* KernelLoader::LookupLibrary(NameIndex library) {
                                             handle);
 }
 
-RawLibrary* KernelLoader::LookupLibraryFromClass(NameIndex klass) {
+LibraryPtr KernelLoader::LookupLibraryFromClass(NameIndex klass) {
   return LookupLibrary(H.CanonicalNameParent(klass));
 }
 
-RawClass* KernelLoader::LookupClass(const Library& library, NameIndex klass) {
+ClassPtr KernelLoader::LookupClass(const Library& library, NameIndex klass) {
   name_index_handle_ = Smi::New(klass);
   {
-    RawClass* raw_class =
+    ClassPtr raw_class =
         kernel_program_info_.LookupClass(thread_, name_index_handle_);
     NoSafepointScope no_safepoint_scope(thread_);
     if (raw_class != Class::null()) {
@@ -2256,23 +2365,23 @@ RawClass* KernelLoader::LookupClass(const Library& library, NameIndex klass) {
   return handle.raw();
 }
 
-RawFunction::Kind KernelLoader::GetFunctionType(
+FunctionLayout::Kind KernelLoader::GetFunctionType(
     ProcedureHelper::Kind procedure_kind) {
   intptr_t lookuptable[] = {
-      RawFunction::kRegularFunction,  // Procedure::kMethod
-      RawFunction::kGetterFunction,   // Procedure::kGetter
-      RawFunction::kSetterFunction,   // Procedure::kSetter
-      RawFunction::kRegularFunction,  // Procedure::kOperator
-      RawFunction::kConstructor,      // Procedure::kFactory
+      FunctionLayout::kRegularFunction,  // Procedure::kMethod
+      FunctionLayout::kGetterFunction,   // Procedure::kGetter
+      FunctionLayout::kSetterFunction,   // Procedure::kSetter
+      FunctionLayout::kRegularFunction,  // Procedure::kOperator
+      FunctionLayout::kConstructor,      // Procedure::kFactory
   };
   intptr_t kind = static_cast<int>(procedure_kind);
   ASSERT(0 <= kind && kind <= ProcedureHelper::kFactory);
-  return static_cast<RawFunction::Kind>(lookuptable[kind]);
+  return static_cast<FunctionLayout::Kind>(lookuptable[kind]);
 }
 
-RawFunction* CreateFieldInitializerFunction(Thread* thread,
-                                            Zone* zone,
-                                            const Field& field) {
+FunctionPtr CreateFieldInitializerFunction(Thread* thread,
+                                           Zone* zone,
+                                           const Field& field) {
   ASSERT(field.InitializerFunction() == Function::null());
 
   String& init_name = String::Handle(zone, field.name());
@@ -2297,7 +2406,7 @@ RawFunction* CreateFieldInitializerFunction(Thread* thread,
 
   // Create a static initializer.
   const Function& initializer_fun = Function::Handle(
-      zone, Function::New(init_name, RawFunction::kFieldInitializer,
+      zone, Function::New(init_name, FunctionLayout::kFieldInitializer,
                           field.is_static(),  // is_static
                           false,              // is_const
                           false,              // is_abstract
@@ -2324,15 +2433,6 @@ RawFunction* CreateFieldInitializerFunction(Thread* thread,
   initializer_fun.set_is_extension_member(field.is_extension_member());
   field.SetInitializerFunction(initializer_fun);
   return initializer_fun.raw();
-}
-
-ParsedFunction* ParseStaticFieldInitializer(Zone* zone, const Field& field) {
-  Thread* thread = Thread::Current();
-
-  const Function& initializer_fun = Function::ZoneHandle(
-      zone, CreateFieldInitializerFunction(thread, zone, field));
-
-  return new (zone) ParsedFunction(thread, initializer_fun);
 }
 
 }  // namespace kernel

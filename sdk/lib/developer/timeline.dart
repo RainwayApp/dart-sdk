@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// @dart = 2.6
-
 part of dart.developer;
 
 const bool _hasTimeline =
@@ -58,7 +56,7 @@ class Flow {
   /// When passed to a [Timeline] method, generates a "begin" Flow event.
   /// If [id] is not provided, an id that conflicts with no other Dart-generated
   /// flow id's will be generated.
-  static Flow begin({int id}) {
+  static Flow begin({int? id}) {
     return new Flow._(_begin, id ?? _getNextAsyncId());
   }
 
@@ -102,8 +100,9 @@ class Timeline {
   /// a [Map] of [arguments]. This slice may also optionally be associated with
   /// a [Flow] event. This operation must be finished before
   /// returning to the event queue.
-  static void startSync(String name, {Map arguments, Flow flow}) {
+  static void startSync(String name, {Map? arguments, Flow? flow}) {
     if (!_hasTimeline) return;
+    // TODO: When NNBD is complete, delete the following line.
     ArgumentError.checkNotNull(name, 'name');
     if (!_isDartStreamEnabled()) {
       // Push a null onto the stack and return.
@@ -140,14 +139,15 @@ class Timeline {
   }
 
   /// Emit an instant event.
-  static void instantSync(String name, {Map arguments}) {
+  static void instantSync(String name, {Map? arguments}) {
     if (!_hasTimeline) return;
+    // TODO: When NNBD is complete, delete the following line.
     ArgumentError.checkNotNull(name, 'name');
     if (!_isDartStreamEnabled()) {
       // Stream is disabled.
       return;
     }
-    Map instantArguments;
+    Map? instantArguments;
     if (arguments != null) {
       instantArguments = new Map.from(arguments);
     }
@@ -157,7 +157,7 @@ class Timeline {
   /// A utility method to time a synchronous [function]. Internally calls
   /// [function] bracketed by calls to [startSync] and [finishSync].
   static T timeSync<T>(String name, TimelineSyncFunction<T> function,
-      {Map arguments, Flow flow}) {
+      {Map? arguments, Flow? flow}) {
     startSync(name, arguments: arguments, flow: flow);
     try {
       return function();
@@ -172,7 +172,7 @@ class Timeline {
   /// When run on the Dart VM, uses the same monotonic clock as the embedding
   /// API's `Dart_TimelineGetMicros`.
   static int get now => _getTraceClock();
-  static final List<_SyncBlock> _stack = new List<_SyncBlock>();
+  static final List<_SyncBlock?> _stack = [];
 }
 
 /// An asynchronous task on the timeline. An asynchronous task can have many
@@ -186,8 +186,13 @@ class TimelineTask {
   /// If [parent] is provided, the parent's task ID is provided as argument
   /// 'parentId' when [start] is called. In DevTools, this argument will result
   /// in this [TimelineTask] being linked to the [parent] [TimelineTask].
-  TimelineTask({TimelineTask parent})
+  ///
+  /// If [filterKey] is provided, a property named `filterKey` will be inserted
+  /// into the arguments of each event associated with this task. The
+  /// `filterKey` will be set to the value of [filterKey].
+  TimelineTask({TimelineTask? parent, String? filterKey})
       : _parent = parent,
+        _filterKey = filterKey,
         _taskId = _getNextAsyncId() {}
 
   /// Create a task with an explicit [taskId]. This is useful if you are
@@ -196,33 +201,54 @@ class TimelineTask {
   /// Important note: only provide task IDs which have been obtained as a
   /// result of invoking [TimelineTask.pass]. Specifying a custom ID can lead
   /// to ID collisions, resulting in incorrect rendering of timeline events.
-  TimelineTask.withTaskId(int taskId)
+  ///
+  /// If [filterKey] is provided, a property named `filterKey` will be inserted
+  /// into the arguments of each event associated with this task. The
+  /// `filterKey` will be set to the value of [filterKey].
+  TimelineTask.withTaskId(int taskId, {String? filterKey})
       : _parent = null,
+        _filterKey = filterKey,
         _taskId = taskId {
+    // TODO: When NNBD is complete, delete the following line.
     ArgumentError.checkNotNull(taskId, 'taskId');
   }
 
   /// Start a synchronous operation within this task named [name].
   /// Optionally takes a [Map] of [arguments].
-  void start(String name, {Map arguments}) {
+  void start(String name, {Map? arguments}) {
     if (!_hasTimeline) return;
+    // TODO: When NNBD is complete, delete the following line.
     ArgumentError.checkNotNull(name, 'name');
     var block = new _AsyncBlock._(name, _taskId);
     _stack.add(block);
-    block._start({
-      if (arguments != null) ...arguments,
-      if (_parent != null) 'parentId': _parent._taskId.toRadixString(16),
-    });
+    // TODO(39115): Spurious error about collection literal ambiguity.
+    // TODO(39117): Spurious error about typing of `...?arguments`.
+    // TODO(39120): Spurious error even about `...arguments`.
+    // When these TODOs are done, we can use spread and if elements.
+    var map = <Object?, Object?>{};
+    if (arguments != null) {
+      for (var key in arguments.keys) {
+        map[key] = arguments[key];
+      }
+    }
+    if (_parent != null) map['parentId'] = _parent!._taskId.toRadixString(16);
+    if (_filterKey != null) map[_kFilterKey] = _filterKey;
+    block._start(map);
   }
 
   /// Emit an instant event for this task.
   /// Optionally takes a [Map] of [arguments].
-  void instant(String name, {Map arguments}) {
+  void instant(String name, {Map? arguments}) {
     if (!_hasTimeline) return;
+    // TODO: When NNBD is complete, delete the following line.
     ArgumentError.checkNotNull(name, 'name');
-    Map instantArguments;
+    Map? instantArguments;
     if (arguments != null) {
       instantArguments = new Map.from(arguments);
+    }
+    if (_filterKey != null) {
+      instantArguments ??= {};
+      instantArguments[_kFilterKey] = _filterKey;
     }
     _reportTaskEvent(
         _taskId, 'n', 'Dart', name, _argumentsAsJson(instantArguments));
@@ -230,12 +256,16 @@ class TimelineTask {
 
   /// Finish the last synchronous operation that was started.
   /// Optionally takes a [Map] of [arguments].
-  void finish({Map arguments}) {
+  void finish({Map? arguments}) {
     if (!_hasTimeline) {
       return;
     }
     if (_stack.length == 0) {
       throw new StateError('Uneven calls to start and finish');
+    }
+    if (_filterKey != null) {
+      arguments ??= {};
+      arguments[_kFilterKey] = _filterKey;
     }
     // Pop top item off of stack.
     var block = _stack.removeLast();
@@ -254,7 +284,9 @@ class TimelineTask {
     return r;
   }
 
-  final TimelineTask _parent;
+  static const String _kFilterKey = 'filterKey';
+  final TimelineTask? _parent;
+  final String? _filterKey;
   final int _taskId;
   final List<_AsyncBlock> _stack = [];
 }
@@ -279,7 +311,7 @@ class _AsyncBlock {
   }
 
   // Emit the finish event.
-  void _finish(Map arguments) {
+  void _finish(Map? arguments) {
     _reportTaskEvent(_taskId, 'e', category, name, _argumentsAsJson(arguments));
   }
 }
@@ -295,10 +327,10 @@ class _SyncBlock {
 
   /// An (optional) set of arguments which will be serialized to JSON and
   /// associated with this block.
-  Map _arguments;
+  Map? _arguments;
 
   /// An (optional) flow event associated with this block.
-  Flow _flow;
+  Flow? _flow;
 
   _SyncBlock._(this.name);
 
@@ -313,7 +345,7 @@ class _SyncBlock {
     // Report event to runtime.
     _reportTaskEvent(0, 'E', category, name, _argumentsAsJson(_arguments));
     if (_flow != null) {
-      _reportFlowEvent(category, "${_flow.id}", _flow._type, _flow.id,
+      _reportFlowEvent(category, "${_flow!.id}", _flow!._type, _flow!.id,
           _argumentsAsJson(null));
     }
   }
@@ -323,7 +355,7 @@ class _SyncBlock {
   }
 }
 
-String _argumentsAsJson(Map arguments) {
+String _argumentsAsJson(Map? arguments) {
   if ((arguments == null) || (arguments.length == 0)) {
     // Fast path no arguments. Avoid calling jsonEncode.
     return '{}';

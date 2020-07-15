@@ -62,7 +62,7 @@ namespace dart {
 // Each entry contains a key, followed by zero or more payload components,
 // and has 3 possible states: unused, occupied, or deleted.
 // The header tracks the number of entries in each state.
-// Any object except Object::sentinel() and Object::transition_sentinel()
+// Any object except the backing storage array and Object::transition_sentinel()
 // may be stored as a key. Any object may be stored in a payload.
 //
 // Parameters
@@ -85,7 +85,7 @@ class HashTable : public ValueObject {
         released_data_(NULL) {}
   // Uses 'zone' for handle allocation. 'Release' must be called at the end
   // to obtain the final table after potential growth/shrinkage.
-  HashTable(Zone* zone, RawArray* data)
+  HashTable(Zone* zone, ArrayPtr data)
       : key_handle_(&Object::Handle(zone)),
         smi_handle_(&Smi::Handle(zone)),
         data_(&Array::Handle(zone, data)),
@@ -138,7 +138,7 @@ class HashTable : public ValueObject {
 #endif  // !defined(PRODUCT)
 
     for (intptr_t i = kHeaderSize; i < data_->Length(); ++i) {
-      data_->SetAt(i, Object::sentinel());
+      data_->SetAt(i, UnusedMarker());
     }
   }
 
@@ -225,6 +225,8 @@ class HashTable : public ValueObject {
   // Sets the key of a previously unoccupied entry. This must not be the last
   // unoccupied entry.
   void InsertKey(intptr_t entry, const Object& key) const {
+    ASSERT(key.raw() != UnusedMarker().raw());
+    ASSERT(key.raw() != DeletedMarker().raw());
     ASSERT(!IsOccupied(entry));
     AdjustSmiValueAt(kOccupiedEntriesIndex, 1);
     if (IsDeleted(entry)) {
@@ -237,21 +239,24 @@ class HashTable : public ValueObject {
     ASSERT(NumOccupied() < NumEntries());
   }
 
+  const Object& UnusedMarker() const { return Object::transition_sentinel(); }
+  const Object& DeletedMarker() const { return *data_; }
+
   bool IsUnused(intptr_t entry) const {
-    return InternalGetKey(entry) == Object::sentinel().raw();
+    return InternalGetKey(entry) == UnusedMarker().raw();
   }
   bool IsOccupied(intptr_t entry) const {
     return !IsUnused(entry) && !IsDeleted(entry);
   }
   bool IsDeleted(intptr_t entry) const {
-    return InternalGetKey(entry) == Object::transition_sentinel().raw();
+    return InternalGetKey(entry) == DeletedMarker().raw();
   }
 
-  RawObject* GetKey(intptr_t entry) const {
+  ObjectPtr GetKey(intptr_t entry) const {
     ASSERT(IsOccupied(entry));
     return InternalGetKey(entry);
   }
-  RawObject* GetPayload(intptr_t entry, intptr_t component) const {
+  ObjectPtr GetPayload(intptr_t entry, intptr_t component) const {
     ASSERT(IsOccupied(entry));
     return data_->At(PayloadIndex(entry, component));
   }
@@ -266,9 +271,9 @@ class HashTable : public ValueObject {
   void DeleteEntry(intptr_t entry) const {
     ASSERT(IsOccupied(entry));
     for (intptr_t i = 0; i < kPayloadSize; ++i) {
-      UpdatePayload(entry, i, Object::transition_sentinel());
+      UpdatePayload(entry, i, DeletedMarker());
     }
-    InternalSetKey(entry, Object::transition_sentinel());
+    InternalSetKey(entry, DeletedMarker());
     AdjustSmiValueAt(kOccupiedEntriesIndex, -1);
     AdjustSmiValueAt(kDeletedEntriesIndex, 1);
   }
@@ -302,7 +307,7 @@ class HashTable : public ValueObject {
   }
   void UpdateCollisions(intptr_t collisions) const {
     if (KeyTraits::ReportStats()) {
-      if (data_->raw()->InVMIsolateHeap()) {
+      if (data_->raw()->ptr()->InVMIsolateHeap()) {
         return;
       }
       AdjustSmiValueAt(kNumProbesIndex, collisions + 1);
@@ -365,7 +370,7 @@ class HashTable : public ValueObject {
     return KeyIndex(entry) + 1 + component;
   }
 
-  RawObject* InternalGetKey(intptr_t entry) const {
+  ObjectPtr InternalGetKey(intptr_t entry) const {
     return data_->At(KeyIndex(entry));
   }
 
@@ -403,9 +408,9 @@ class UnorderedHashTable : public HashTable<KeyTraits, kUserPayloadSize, 0> {
  public:
   typedef HashTable<KeyTraits, kUserPayloadSize, 0> BaseTable;
   static const intptr_t kPayloadSize = kUserPayloadSize;
-  explicit UnorderedHashTable(RawArray* data)
+  explicit UnorderedHashTable(ArrayPtr data)
       : BaseTable(Thread::Current()->zone(), data) {}
-  UnorderedHashTable(Zone* zone, RawArray* data) : BaseTable(zone, data) {}
+  UnorderedHashTable(Zone* zone, ArrayPtr data) : BaseTable(zone, data) {}
   UnorderedHashTable(Object* key, Smi* value, Array* data)
       : BaseTable(key, value, data) {}
   // Note: Does not check for concurrent modification.
@@ -436,8 +441,8 @@ class HashTables : public AllStatic {
  public:
   // Allocates and initializes a table.
   template <typename Table>
-  static RawArray* New(intptr_t initial_capacity,
-                       Heap::Space space = Heap::kNew) {
+  static ArrayPtr New(intptr_t initial_capacity,
+                      Heap::Space space = Heap::kNew) {
     Table table(
         Thread::Current()->zone(),
         Array::New(Table::ArrayLengthForNumOccupied(initial_capacity), space));
@@ -446,7 +451,7 @@ class HashTables : public AllStatic {
   }
 
   template <typename Table>
-  static RawArray* New(const Array& array) {
+  static ArrayPtr New(const Array& array) {
     Table table(Thread::Current()->zone(), array.raw());
     table.Initialize();
     return table.Release().raw();
@@ -507,7 +512,7 @@ class HashTables : public AllStatic {
 
   // Serializes a table by concatenating its entries as an array.
   template <typename Table>
-  static RawArray* ToArray(const Table& table, bool include_payload) {
+  static ArrayPtr ToArray(const Table& table, bool include_payload) {
     const intptr_t entry_size = include_payload ? (1 + Table::kPayloadSize) : 1;
     Array& result = Array::Handle(Array::New(table.NumOccupied() * entry_size));
     typename Table::Iterator it(&table);
@@ -531,13 +536,13 @@ class HashTables : public AllStatic {
 template <typename BaseIterTable>
 class HashMap : public BaseIterTable {
  public:
-  explicit HashMap(RawArray* data)
+  explicit HashMap(ArrayPtr data)
       : BaseIterTable(Thread::Current()->zone(), data) {}
-  HashMap(Zone* zone, RawArray* data) : BaseIterTable(zone, data) {}
+  HashMap(Zone* zone, ArrayPtr data) : BaseIterTable(zone, data) {}
   HashMap(Object* key, Smi* value, Array* data)
       : BaseIterTable(key, value, data) {}
   template <typename Key>
-  RawObject* GetOrNull(const Key& key, bool* present = NULL) const {
+  ObjectPtr GetOrNull(const Key& key, bool* present = NULL) const {
     intptr_t entry = BaseIterTable::FindKey(key);
     if (present != NULL) {
       *present = (entry != -1);
@@ -545,7 +550,7 @@ class HashMap : public BaseIterTable {
     return (entry == -1) ? Object::null() : BaseIterTable::GetPayload(entry, 0);
   }
   template <typename Key>
-  RawObject* GetOrDie(const Key& key) const {
+  ObjectPtr GetOrDie(const Key& key) const {
     intptr_t entry = BaseIterTable::FindKey(key);
     if (entry == -1) UNREACHABLE();
     return BaseIterTable::GetPayload(entry, 0);
@@ -569,8 +574,8 @@ class HashMap : public BaseIterTable {
   }
   // If 'key' is not present, maps it to 'value_if_absent'. Returns the final
   // value in the map.
-  RawObject* InsertOrGetValue(const Object& key,
-                              const Object& value_if_absent) const {
+  ObjectPtr InsertOrGetValue(const Object& key,
+                             const Object& value_if_absent) const {
     EnsureCapacity();
     intptr_t entry = -1;
     if (!BaseIterTable::FindKeyOrDeletedOrUnused(key, &entry)) {
@@ -583,8 +588,8 @@ class HashMap : public BaseIterTable {
   }
   // Like InsertOrGetValue, but calls NewKey to allocate a key object if needed.
   template <typename Key>
-  RawObject* InsertNewOrGetValue(const Key& key,
-                                 const Object& value_if_absent) const {
+  ObjectPtr InsertNewOrGetValue(const Key& key,
+                                const Object& value_if_absent) const {
     EnsureCapacity();
     intptr_t entry = -1;
     if (!BaseIterTable::FindKeyOrDeletedOrUnused(key, &entry)) {
@@ -622,9 +627,9 @@ template <typename KeyTraits>
 class UnorderedHashMap : public HashMap<UnorderedHashTable<KeyTraits, 1> > {
  public:
   typedef HashMap<UnorderedHashTable<KeyTraits, 1> > BaseMap;
-  explicit UnorderedHashMap(RawArray* data)
+  explicit UnorderedHashMap(ArrayPtr data)
       : BaseMap(Thread::Current()->zone(), data) {}
-  UnorderedHashMap(Zone* zone, RawArray* data) : BaseMap(zone, data) {}
+  UnorderedHashMap(Zone* zone, ArrayPtr data) : BaseMap(zone, data) {}
   UnorderedHashMap(Object* key, Smi* value, Array* data)
       : BaseMap(key, value, data) {}
 };
@@ -632,9 +637,9 @@ class UnorderedHashMap : public HashMap<UnorderedHashTable<KeyTraits, 1> > {
 template <typename BaseIterTable>
 class HashSet : public BaseIterTable {
  public:
-  explicit HashSet(RawArray* data)
+  explicit HashSet(ArrayPtr data)
       : BaseIterTable(Thread::Current()->zone(), data) {}
-  HashSet(Zone* zone, RawArray* data) : BaseIterTable(zone, data) {}
+  HashSet(Zone* zone, ArrayPtr data) : BaseIterTable(zone, data) {}
   HashSet(Object* key, Smi* value, Array* data)
       : BaseIterTable(key, value, data) {}
   bool Insert(const Object& key) {
@@ -649,7 +654,7 @@ class HashSet : public BaseIterTable {
 
   // If 'key' is not present, insert and return it. Else, return the existing
   // key in the set (useful for canonicalization).
-  RawObject* InsertOrGet(const Object& key) const {
+  ObjectPtr InsertOrGet(const Object& key) const {
     EnsureCapacity();
     intptr_t entry = -1;
     if (!BaseIterTable::FindKeyOrDeletedOrUnused(key, &entry)) {
@@ -662,7 +667,7 @@ class HashSet : public BaseIterTable {
 
   // Like InsertOrGet, but calls NewKey to allocate a key object if needed.
   template <typename Key>
-  RawObject* InsertNewOrGet(const Key& key) const {
+  ObjectPtr InsertNewOrGet(const Key& key) const {
     EnsureCapacity();
     intptr_t entry = -1;
     if (!BaseIterTable::FindKeyOrDeletedOrUnused(key, &entry)) {
@@ -676,7 +681,7 @@ class HashSet : public BaseIterTable {
   }
 
   template <typename Key>
-  RawObject* GetOrNull(const Key& key, bool* present = NULL) const {
+  ObjectPtr GetOrNull(const Key& key, bool* present = NULL) const {
     intptr_t entry = BaseIterTable::FindKey(key);
     if (present != NULL) {
       *present = (entry != -1);
@@ -708,11 +713,11 @@ template <typename KeyTraits>
 class UnorderedHashSet : public HashSet<UnorderedHashTable<KeyTraits, 0> > {
  public:
   typedef HashSet<UnorderedHashTable<KeyTraits, 0> > BaseSet;
-  explicit UnorderedHashSet(RawArray* data)
+  explicit UnorderedHashSet(ArrayPtr data)
       : BaseSet(Thread::Current()->zone(), data) {
     ASSERT(data != Array::null());
   }
-  UnorderedHashSet(Zone* zone, RawArray* data) : BaseSet(zone, data) {}
+  UnorderedHashSet(Zone* zone, ArrayPtr data) : BaseSet(zone, data) {}
   UnorderedHashSet(Object* key, Smi* value, Array* data)
       : BaseSet(key, value, data) {}
 
@@ -720,8 +725,8 @@ class UnorderedHashSet : public HashSet<UnorderedHashTable<KeyTraits, 0> > {
     Object& entry = Object::Handle();
     for (intptr_t i = 0; i < this->data_->Length(); i++) {
       entry = this->data_->At(i);
-      if (entry.raw() == Object::sentinel().raw() ||
-          entry.raw() == Object::transition_sentinel().raw() || entry.IsSmi()) {
+      if (entry.raw() == BaseSet::UnusedMarker().raw() ||
+          entry.raw() == BaseSet::DeletedMarker().raw() || entry.IsSmi()) {
         // empty, deleted, num_used/num_deleted
         OS::PrintErr("%" Pd ": %s\n", i, entry.ToCString());
       } else {

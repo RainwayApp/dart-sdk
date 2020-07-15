@@ -14,6 +14,7 @@ import 'package:_fe_analyzer_shared/src/util/colors.dart' as colors;
 
 import "package:front_end/src/api_prototype/compiler_options.dart"
     show CompilerOptions, DiagnosticMessage;
+import 'package:front_end/src/api_prototype/experimental_flags.dart';
 
 import "package:front_end/src/api_prototype/memory_file_system.dart"
     show MemoryFileSystem;
@@ -112,7 +113,9 @@ class CompilationResult {
     if (compiledProcedure == null) {
       buffer.write("<no procedure>");
     } else {
-      new Printer(buffer).visitProcedure(compiledProcedure);
+      Printer printer = new Printer(buffer);
+      printer.visitProcedure(compiledProcedure);
+      printer.writeConstantTable(new Component());
     }
     Uri base = entryPoint.resolve(".");
     return "$buffer".replaceAll("$base", "org-dartlang-testcase:///");
@@ -409,7 +412,8 @@ Future<Context> createContext(
       printDiagnosticMessage(message, print);
       errors.add(message);
     }
-    ..environmentDefines = const {};
+    ..environmentDefines = const {}
+    ..allowedExperimentalFlags = const AllowedExperimentalFlags();
 
   final ProcessedOptions options =
       new ProcessedOptions(options: optionBuilder, inputs: [entryPoint]);

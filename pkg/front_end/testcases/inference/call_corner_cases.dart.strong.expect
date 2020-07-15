@@ -1,15 +1,4 @@
 library test;
-//
-// Problems in library:
-//
-// pkg/front_end/testcases/inference/call_corner_cases.dart:27:71: Error: 'fieldB' isn't a function or method and can't be invoked.
-//   var /*@ type=dynamic */ callFieldB = new D(). /*@target=D::fieldB*/ fieldB();
-//                                                                       ^
-//
-// pkg/front_end/testcases/inference/call_corner_cases.dart:28:67: Error: 'getB' isn't a function or method and can't be invoked.
-//   var /*@ type=dynamic */ callGetB = new D(). /*@target=D::getB*/ getB();
-//                                                                   ^
-//
 import self as self;
 import "dart:core" as core;
 
@@ -19,6 +8,16 @@ class A extends core::Object {
     ;
   method call() → core::int*
     return 0;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class B extends core::Object {
   synthetic constructor •() → self::B*
@@ -26,6 +25,16 @@ class B extends core::Object {
     ;
   get call() → self::A*
     return new self::A::•();
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class D extends core::Object {
   field self::A* fieldA = new self::A::•();
@@ -37,16 +46,22 @@ class D extends core::Object {
     return new self::A::•();
   get getB() → self::B*
     return new self::B::•();
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 static method test() → dynamic {
   core::int* callA = new self::A::•().{self::A::call}();
-  core::int* callFieldA = new self::D::•().{self::D::fieldA}();
-  core::int* callGetA = new self::D::•().{self::D::getA}();
-  dynamic callFieldB = invalid-expression "pkg/front_end/testcases/inference/call_corner_cases.dart:27:71: Error: 'fieldB' isn't a function or method and can't be invoked.
-  var /*@ type=dynamic */ callFieldB = new D(). /*@target=D::fieldB*/ fieldB();
-                                                                      ^";
-  dynamic callGetB = invalid-expression "pkg/front_end/testcases/inference/call_corner_cases.dart:28:67: Error: 'getB' isn't a function or method and can't be invoked.
-  var /*@ type=dynamic */ callGetB = new D(). /*@target=D::getB*/ getB();
-                                                                  ^";
+  core::int* callFieldA = new self::D::•().{self::D::fieldA}.{self::A::call}();
+  core::int* callGetA = new self::D::•().{self::D::getA}.{self::A::call}();
+  core::int* callFieldB = new self::D::•().{self::D::fieldB}.{self::B::call}.{self::A::call}();
+  core::int* callGetB = new self::D::•().{self::D::getB}.{self::B::call}.{self::A::call}();
 }
 static method main() → dynamic {}

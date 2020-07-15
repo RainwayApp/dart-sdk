@@ -2,6 +2,10 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+// It is hard to visually separate each code's _doc comment_ from its published
+// _documentation comment_ when each is written as an end-of-line comment.
+// ignore_for_file: slash_for_doc_comments
+
 /**
  * The errors produced during syntactic analysis (scanning and parsing).
  */
@@ -116,6 +120,11 @@ class ParserErrorCode extends ErrorCode {
 
   static const ParserErrorCode COVARIANT_AND_STATIC = _COVARIANT_AND_STATIC;
 
+  static const ParserErrorCode COVARIANT_CONSTRUCTOR = ParserErrorCode(
+      'COVARIANT_CONSTRUCTOR',
+      "A constructor can't be declared to be 'covariant'.",
+      correction: "Try removing the keyword 'covariant'.");
+
   static const ParserErrorCode COVARIANT_MEMBER = _COVARIANT_MEMBER;
 
   static const ParserErrorCode COVARIANT_TOP_LEVEL_DECLARATION =
@@ -123,20 +132,17 @@ class ParserErrorCode extends ErrorCode {
           "Top-level declarations can't be declared to be covariant.",
           correction: "Try removing the keyword 'covariant'.");
 
-  static const ParserErrorCode COVARIANT_CONSTRUCTOR = ParserErrorCode(
-      'COVARIANT_CONSTRUCTOR',
-      "A constructor can't be declared to be 'covariant'.",
-      correction: "Try removing the keyword 'covariant'.");
-
-  static const ParserErrorCode DEFERRED_AFTER_PREFIX = _DEFERRED_AFTER_PREFIX;
-
   static const ParserErrorCode DEFAULT_VALUE_IN_FUNCTION_TYPE = ParserErrorCode(
       'DEFAULT_VALUE_IN_FUNCTION_TYPE',
       "Parameters in a function type cannot have default values",
       correction: "Try removing the default value.");
 
+  static const ParserErrorCode DEFERRED_AFTER_PREFIX = _DEFERRED_AFTER_PREFIX;
+
   static const ParserErrorCode DIRECTIVE_AFTER_DECLARATION =
       _DIRECTIVE_AFTER_DECLARATION;
+
+  static const ParserErrorCode DUPLICATE_DEFERRED = _DUPLICATE_DEFERRED;
 
   /**
    * Parameters:
@@ -145,15 +151,13 @@ class ParserErrorCode extends ErrorCode {
   static const ParserErrorCode DUPLICATE_LABEL_IN_SWITCH_STATEMENT =
       _DUPLICATE_LABEL_IN_SWITCH_STATEMENT;
 
-  static const ParserErrorCode DUPLICATE_DEFERRED = _DUPLICATE_DEFERRED;
+  static const ParserErrorCode DUPLICATE_PREFIX = _DUPLICATE_PREFIX;
 
   /**
    * Parameters:
    * 0: the modifier that was duplicated
    */
   static const ParserErrorCode DUPLICATED_MODIFIER = _DUPLICATED_MODIFIER;
-
-  static const ParserErrorCode DUPLICATE_PREFIX = _DUPLICATE_PREFIX;
 
   static const ParserErrorCode EMPTY_ENUM_BODY = ParserErrorCode(
       'EMPTY_ENUM_BODY', "An enum must declare at least one constant name.",
@@ -182,6 +186,8 @@ class ParserErrorCode extends ErrorCode {
       correction:
           "This appears to be incomplete code. Try removing it or completing it.");
 
+  static const ParserErrorCode EXPECTED_INSTEAD = _EXPECTED_INSTEAD;
+
   static const ParserErrorCode EXPECTED_LIST_OR_MAP_LITERAL = ParserErrorCode(
       'EXPECTED_LIST_OR_MAP_LITERAL', "Expected a list or map literal.",
       correction:
@@ -196,8 +202,6 @@ class ParserErrorCode extends ErrorCode {
    */
   static const ParserErrorCode EXPECTED_TOKEN =
       ParserErrorCode('EXPECTED_TOKEN', "Expected to find '{0}'.");
-
-  static const ParserErrorCode EXPECTED_INSTEAD = _EXPECTED_INSTEAD;
 
   static const ParserErrorCode EXPECTED_TYPE_NAME =
       ParserErrorCode('EXPECTED_TYPE_NAME', "Expected a type name.");
@@ -215,7 +219,7 @@ class ParserErrorCode extends ErrorCode {
   // The analyzer produces this diagnostic when an abstract declaration is
   // declared in an extension. Extensions can declare only concrete members.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because the method `a` doesn't
   // have a body:
@@ -242,7 +246,7 @@ class ParserErrorCode extends ErrorCode {
   // extensions aren't classes, and it isn't possible to create an instance of
   // an extension.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because there is a constructor
   // declaration in `E`:
@@ -268,7 +272,7 @@ class ParserErrorCode extends ErrorCode {
   // found in an extension. It isn't valid to define an instance field because
   // extensions can only add behavior, not state.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `s` is an instance
   // field:
@@ -296,6 +300,9 @@ class ParserErrorCode extends ErrorCode {
 
   static const ParserErrorCode EXTERNAL_CONSTRUCTOR_WITH_BODY =
       _EXTERNAL_CONSTRUCTOR_WITH_BODY;
+
+  static const ParserErrorCode EXTERNAL_CONSTRUCTOR_WITH_INITIALIZER =
+      _EXTERNAL_CONSTRUCTOR_WITH_INITIALIZER;
 
   static const ParserErrorCode EXTERNAL_ENUM = _EXTERNAL_ENUM;
 
@@ -344,13 +351,16 @@ class ParserErrorCode extends ErrorCode {
       "A non-redirecting 'factory' constructor must have a body.",
       correction: "Try adding a body to the constructor.");
 
-  static const ParserErrorCode FIELD_INITIALIZER_OUTSIDE_CONSTRUCTOR =
-      _FIELD_INITIALIZER_OUTSIDE_CONSTRUCTOR;
-
   static const ParserErrorCode FIELD_INITIALIZED_OUTSIDE_DECLARING_CLASS =
       _FIELD_INITIALIZED_OUTSIDE_DECLARING_CLASS;
 
+  static const ParserErrorCode FIELD_INITIALIZER_OUTSIDE_CONSTRUCTOR =
+      _FIELD_INITIALIZER_OUTSIDE_CONSTRUCTOR;
+
   static const ParserErrorCode FINAL_AND_COVARIANT = _FINAL_AND_COVARIANT;
+
+  static const ParserErrorCode FINAL_AND_COVARIANT_LATE_WITH_INITIALIZER =
+      _FINAL_AND_COVARIANT_LATE_WITH_INITIALIZER;
 
   static const ParserErrorCode FINAL_AND_VAR = _FINAL_AND_VAR;
 
@@ -378,6 +388,8 @@ class ParserErrorCode extends ErrorCode {
       'FUNCTION_TYPED_PARAMETER_VAR',
       "Function-typed parameters can't specify 'const', 'final' or 'var' in place of a return type.",
       correction: "Try replacing the keyword with a return type.");
+
+  static const ParserErrorCode GETTER_CONSTRUCTOR = _GETTER_CONSTRUCTOR;
 
   static const ParserErrorCode GETTER_IN_FUNCTION = ParserErrorCode(
       'GETTER_IN_FUNCTION',
@@ -422,10 +434,8 @@ class ParserErrorCode extends ErrorCode {
       "Comment references should contain a possibly prefixed identifier and "
           "can start with 'new', but shouldn't contain anything else.");
 
-  static const ParserErrorCode INVALID_CONSTRUCTOR_NAME = ParserErrorCode(
-      'INVALID_CONSTRUCTOR_NAME',
-      "The keyword '{0}' cannot be used to name a constructor.",
-      correction: "Try giving the constructor a different name.");
+  static const ParserErrorCode INVALID_CONSTRUCTOR_NAME =
+      _INVALID_CONSTRUCTOR_NAME;
 
   static const ParserErrorCode INVALID_GENERIC_FUNCTION_TYPE = ParserErrorCode(
       'INVALID_GENERIC_FUNCTION_TYPE', "Invalid generic function type.",
@@ -488,7 +498,7 @@ class ParserErrorCode extends ErrorCode {
   // Extensions aren't classes and don't have subclasses, so the keyword serves
   // no purpose.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `i` is marked as being
   // covariant:
@@ -518,6 +528,8 @@ class ParserErrorCode extends ErrorCode {
       ParserErrorCode('LOCAL_FUNCTION_DECLARATION_MODIFIER',
           "Local function declarations can't specify any modifiers.",
           correction: "Try removing the modifier.");
+
+  static const ParserErrorCode MEMBER_WITH_CLASS_NAME = _MEMBER_WITH_CLASS_NAME;
 
   static const ParserErrorCode MISSING_ASSIGNABLE_SELECTOR =
       _MISSING_ASSIGNABLE_SELECTOR;
@@ -701,15 +713,15 @@ class ParserErrorCode extends ErrorCode {
           "through native extensions.",
       correction: "Try removing the native clause.");
 
+  static const ParserErrorCode NATIVE_CLAUSE_SHOULD_BE_ANNOTATION =
+      _NATIVE_CLAUSE_SHOULD_BE_ANNOTATION;
+
   static const ParserErrorCode NATIVE_FUNCTION_BODY_IN_NON_SDK_CODE =
       ParserErrorCode(
           'NATIVE_FUNCTION_BODY_IN_NON_SDK_CODE',
           "Native functions can only be declared in the SDK and code that is "
               "loaded through native extensions.",
           correction: "Try removing the word 'native'.");
-
-  static const ParserErrorCode NATIVE_CLAUSE_SHOULD_BE_ANNOTATION =
-      _NATIVE_CLAUSE_SHOULD_BE_ANNOTATION;
 
   static const ParserErrorCode NON_CONSTRUCTOR_FACTORY = ParserErrorCode(
       'NON_CONSTRUCTOR_FACTORY',
@@ -769,6 +781,8 @@ class ParserErrorCode extends ErrorCode {
   static const ParserErrorCode REDIRECTION_IN_NON_FACTORY_CONSTRUCTOR =
       _REDIRECTION_IN_NON_FACTORY_CONSTRUCTOR;
 
+  static const ParserErrorCode SETTER_CONSTRUCTOR = _SETTER_CONSTRUCTOR;
+
   static const ParserErrorCode SETTER_IN_FUNCTION = ParserErrorCode(
       'SETTER_IN_FUNCTION',
       "Setters can't be defined within methods or functions.",
@@ -814,10 +828,19 @@ class ParserErrorCode extends ErrorCode {
 
   static const ParserErrorCode TYPE_BEFORE_FACTORY = _TYPE_BEFORE_FACTORY;
 
-  static const ParserErrorCode TYPEDEF_IN_CLASS = _TYPEDEF_IN_CLASS;
-
   static const ParserErrorCode TYPE_PARAMETER_ON_CONSTRUCTOR =
       _TYPE_PARAMETER_ON_CONSTRUCTOR;
+
+  /**
+   * 7.1.1 Operators: Type parameters are not syntactically supported on an
+   * operator.
+   */
+  static const ParserErrorCode TYPE_PARAMETER_ON_OPERATOR = ParserErrorCode(
+      'TYPE_PARAMETERS_ON_OPERATOR',
+      "Types parameters aren't allowed when defining an operator.",
+      correction: "Try removing the type parameters.");
+
+  static const ParserErrorCode TYPEDEF_IN_CLASS = _TYPEDEF_IN_CLASS;
 
   /**
    * Parameters:
@@ -835,23 +858,6 @@ class ParserErrorCode extends ErrorCode {
   static const ParserErrorCode UNEXPECTED_TOKEN = ParserErrorCode(
       'UNEXPECTED_TOKEN', "Unexpected text '{0}'.",
       correction: "Try removing the text.");
-
-  static const ParserErrorCode WITH_BEFORE_EXTENDS = _WITH_BEFORE_EXTENDS;
-
-  static const ParserErrorCode WRONG_SEPARATOR_FOR_POSITIONAL_PARAMETER =
-      ParserErrorCode('WRONG_SEPARATOR_FOR_POSITIONAL_PARAMETER',
-          "The default value of a positional parameter should be preceded by '='.",
-          correction: "Try replacing the ':' with '='.");
-
-  /**
-   * Parameters:
-   * 0: the terminator that was expected
-   * 1: the terminator that was found
-   */
-  static const ParserErrorCode WRONG_TERMINATOR_FOR_PARAMETER_GROUP =
-      ParserErrorCode('WRONG_TERMINATOR_FOR_PARAMETER_GROUP',
-          "Expected '{0}' to close parameter group.",
-          correction: "Try replacing '{0}' with '{1}'.");
 
   static const ParserErrorCode VAR_AND_TYPE = _VAR_AND_TYPE;
 
@@ -871,6 +877,26 @@ class ParserErrorCode extends ErrorCode {
       ParserErrorCode('VAR_TYPEDEF', "Typedefs can't be declared to be 'var'.",
           correction: "Try removing the keyword 'var', or "
               "replacing it with the name of the return type.");
+
+  static const ParserErrorCode VOID_WITH_TYPE_ARGUMENTS =
+      _VOID_WITH_TYPE_ARGUMENTS;
+
+  static const ParserErrorCode WITH_BEFORE_EXTENDS = _WITH_BEFORE_EXTENDS;
+
+  static const ParserErrorCode WRONG_SEPARATOR_FOR_POSITIONAL_PARAMETER =
+      ParserErrorCode('WRONG_SEPARATOR_FOR_POSITIONAL_PARAMETER',
+          "The default value of a positional parameter should be preceded by '='.",
+          correction: "Try replacing the ':' with '='.");
+
+  /**
+   * Parameters:
+   * 0: the terminator that was expected
+   * 1: the terminator that was found
+   */
+  static const ParserErrorCode WRONG_TERMINATOR_FOR_PARAMETER_GROUP =
+      ParserErrorCode('WRONG_TERMINATOR_FOR_PARAMETER_GROUP',
+          "Expected '{0}' to close parameter group.",
+          correction: "Try replacing '{0}' with '{1}'.");
 
   /**
    * Initialize a newly created error code to have the given [name]. The message

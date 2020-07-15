@@ -282,9 +282,22 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
 
   @override
   LinkedNodeBuilder visitCompilationUnit(CompilationUnit node) {
+    var nodeImpl = node as CompilationUnitImpl;
     var builder = LinkedNodeBuilder.compilationUnit(
       compilationUnit_declarations: _writeNodeList(node.declarations),
       compilationUnit_directives: _writeNodeList(node.directives),
+      compilationUnit_languageVersion: LinkedLibraryLanguageVersionBuilder(
+        package: LinkedLanguageVersionBuilder(
+          major: nodeImpl.languageVersion.package.major,
+          minor: nodeImpl.languageVersion.package.minor,
+        ),
+        override2: nodeImpl.languageVersion.override != null
+            ? LinkedLanguageVersionBuilder(
+                major: nodeImpl.languageVersion.override.major,
+                minor: nodeImpl.languageVersion.override.minor,
+              )
+            : null,
+      ),
       compilationUnit_scriptTag: node.scriptTag?.accept(this),
       informativeId: getInformativeId(node),
     );
@@ -823,6 +836,7 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
     );
     builder.flags = AstBinaryFlags.encode(
       hasPeriod: node.period != null,
+      hasQuestion: node.question != null,
     );
     return builder;
   }
@@ -960,6 +974,7 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
       isSet: node.isSetter,
       isStatic: node.isStatic,
     );
+    builder.topLevelTypeInferenceError = LazyAst.getTypeInferenceError(node);
     _storeClassMember(builder, node);
     _storeInformativeId(builder, node);
     _writeActualReturnType(builder, node);
@@ -1474,6 +1489,7 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
       var elementIndex = _indexOfElement(element.declaration);
       var substitution = element.substitution.map;
       var substitutionBuilder = LinkedNodeTypeSubstitutionBuilder(
+        isLegacy: element.isLegacy,
         typeParameters: substitution.keys.map(_indexOfElement).toList(),
         typeArguments: substitution.values.map(_writeType).toList(),
       );
@@ -1482,6 +1498,15 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
 
     var elementIndex = _indexOfElement(element);
     return _ElementComponents(elementIndex, null);
+  }
+
+  UnlinkedTokenType _getVarianceToken(TypeParameter parameter) {
+    // TODO (kallentu) : Clean up TypeParameterImpl casting once variance is
+    // added to the interface.
+    var parameterImpl = parameter as TypeParameterImpl;
+    return parameterImpl.varianceKeyword != null
+        ? TokensWriter.astToBinaryTokenType(parameterImpl.varianceKeyword.type)
+        : null;
   }
 
   int _indexOfElement(Element element) {
@@ -1677,15 +1702,6 @@ class AstBinaryWriter extends ThrowingAstVisitor<LinkedNodeBuilder> {
 
   LinkedNodeTypeBuilder _writeType(DartType type) {
     return _linkingContext.writeType(type);
-  }
-
-  UnlinkedTokenType _getVarianceToken(TypeParameter parameter) {
-    // TODO (kallentu) : Clean up TypeParameterImpl casting once variance is
-    // added to the interface.
-    var parameterImpl = parameter as TypeParameterImpl;
-    return parameterImpl.varianceKeyword != null
-        ? TokensWriter.astToBinaryTokenType(parameterImpl.varianceKeyword.type)
-        : null;
   }
 
   /// Return `true` if the expression might be successfully serialized.

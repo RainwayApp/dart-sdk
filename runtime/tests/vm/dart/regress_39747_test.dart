@@ -7,7 +7,7 @@
 
 import "package:expect/expect.dart";
 
-double foo4() {}
+dynamic foo4() => null;
 
 var par1 = 1.0.toStringAsPrecision(12);
 

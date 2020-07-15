@@ -8,11 +8,9 @@ import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/src/dart/ast/token.dart';
 
-/**
- * A visitor that visits an [AstNode] and its parent recursively along with any
- * declarations in those nodes. Consumers typically call [visit] which catches
- * the exception thrown by [finished].
- */
+/// A visitor that visits an [AstNode] and its parent recursively along with any
+/// declarations in those nodes. Consumers typically call [visit] which catches
+/// the exception thrown by [finished].
 abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
   static final TypeName STACKTRACE_TYPE = astFactory.typeName(
       astFactory
@@ -23,50 +21,48 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
 
   LocalDeclarationVisitor(this.offset);
 
-  void declaredClass(ClassDeclaration declaration);
+  void declaredClass(ClassDeclaration declaration) {}
 
-  void declaredClassTypeAlias(ClassTypeAlias declaration);
+  void declaredClassTypeAlias(ClassTypeAlias declaration) {}
+
+  void declaredConstructor(ConstructorDeclaration declaration) {}
 
   void declaredEnum(EnumDeclaration declaration) {}
 
-  void declaredExtension(ExtensionDeclaration declaration);
+  void declaredExtension(ExtensionDeclaration declaration) {}
 
-  void declaredField(FieldDeclaration fieldDecl, VariableDeclaration varDecl);
+  void declaredField(FieldDeclaration fieldDecl, VariableDeclaration varDecl) {}
 
-  void declaredFunction(FunctionDeclaration declaration);
+  void declaredFunction(FunctionDeclaration declaration) {}
 
-  void declaredFunctionTypeAlias(FunctionTypeAlias declaration);
+  void declaredFunctionTypeAlias(FunctionTypeAlias declaration) {}
 
-  void declaredGenericTypeAlias(GenericTypeAlias declaration);
+  void declaredGenericTypeAlias(GenericTypeAlias declaration) {}
 
-  void declaredLabel(Label label, bool isCaseLabel);
+  void declaredLabel(Label label, bool isCaseLabel) {}
 
-  void declaredLocalVar(SimpleIdentifier name, TypeAnnotation type);
+  void declaredLocalVar(SimpleIdentifier name, TypeAnnotation type) {}
 
-  void declaredMethod(MethodDeclaration declaration);
+  void declaredMethod(MethodDeclaration declaration) {}
 
   void declaredMixin(MixinDeclaration declaration) {}
 
-  void declaredParam(SimpleIdentifier name, TypeAnnotation type);
+  void declaredParam(SimpleIdentifier name, TypeAnnotation type) {}
 
   void declaredTopLevelVar(
-      VariableDeclarationList varList, VariableDeclaration varDecl);
+      VariableDeclarationList varList, VariableDeclaration varDecl) {}
 
-  void declaredTypeParameter(TypeParameter node) {}
+  void declaredTypeParameter(TypeParameter declaration) {}
 
-  /**
-   * Throw an exception indicating that [LocalDeclarationVisitor] should
-   * stop visiting. This is caught in [visit] which then exits normally.
-   */
+  /// Throw an exception indicating that [LocalDeclarationVisitor] should
+  /// stop visiting. This is caught in [visit] which then exits normally.
   void finished() {
     throw _LocalDeclarationVisitorFinished();
   }
 
-  /**
-   * Visit the given [AstNode] and its parent recursively along with any
-   * declarations in those nodes. Return `true` if [finished] is called
-   * while visiting, else `false`.
-   */
+  /// Visit the given [AstNode] and its parent recursively along with any
+  /// declarations in those nodes. Return `true` if [finished] is called
+  /// while visiting, else `false`.
   bool visit(AstNode node) {
     try {
       node.accept(this);
@@ -84,7 +80,7 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
 
   @override
   void visitCatchClause(CatchClause node) {
-    SimpleIdentifier param = node.exceptionParameter;
+    var param = node.exceptionParameter;
     if (param != null) {
       declaredParam(param, node.exceptionType);
     }
@@ -97,16 +93,130 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
 
   @override
   void visitClassDeclaration(ClassDeclaration node) {
-    _visitClassDeclarationMembers(node);
+    _visitClassOrMixinMembers(node);
     visitNode(node);
   }
 
   @override
   void visitCompilationUnit(CompilationUnit node) {
+    _visitCompilationUnit(node);
+  }
+
+  @override
+  void visitConstructorDeclaration(ConstructorDeclaration node) {
+    _visitParamList(node.parameters);
+    visitNode(node);
+  }
+
+  @override
+  void visitForStatement(ForStatement node) {
+    var forLoopParts = node.forLoopParts;
+    if (forLoopParts is ForEachPartsWithDeclaration) {
+      var loopVariable = forLoopParts.loopVariable;
+      declaredLocalVar(loopVariable.identifier, loopVariable.type);
+    } else if (forLoopParts is ForPartsWithDeclarations) {
+      var varList = forLoopParts.variables;
+      if (varList != null) {
+        varList.variables.forEach((VariableDeclaration varDecl) {
+          declaredLocalVar(varDecl.name, varList.type);
+        });
+      }
+    }
+    visitNode(node);
+  }
+
+  @override
+  void visitFunctionDeclaration(FunctionDeclaration node) {
+    // declaredFunction is called by the compilation unit containing it
+    visitNode(node);
+  }
+
+  @override
+  void visitFunctionExpression(FunctionExpression node) {
+    _visitParamList(node.parameters);
+    visitNode(node);
+  }
+
+  @override
+  void visitInterpolationExpression(InterpolationExpression node) {
+    visitNode(node);
+  }
+
+  @override
+  void visitLabeledStatement(LabeledStatement node) {
+    for (var label in node.labels) {
+      declaredLabel(label, false);
+    }
+    visitNode(node);
+  }
+
+  @override
+  void visitMethodDeclaration(MethodDeclaration node) {
+    _visitParamList(node.parameters);
+    visitNode(node);
+  }
+
+  @override
+  void visitMixinDeclaration(MixinDeclaration node) {
+    _visitClassOrMixinMembers(node);
+    visitNode(node);
+  }
+
+  @override
+  void visitNode(AstNode node) {
+    // Support the case of searching partial ASTs by aborting on nodes with no
+    // parents. This is useful for the angular plugin.
+    node.parent?.accept(this);
+  }
+
+  @override
+  void visitStringInterpolation(StringInterpolation node) {
+    visitNode(node);
+  }
+
+  @override
+  void visitSwitchMember(SwitchMember node) {
+    _visitStatements(node.statements);
+    visitNode(node);
+  }
+
+  @override
+  void visitSwitchStatement(SwitchStatement node) {
+    for (var member in node.members) {
+      for (var label in member.labels) {
+        declaredLabel(label, true);
+      }
+    }
+    visitNode(node);
+  }
+
+  void _visitClassOrMixinMembers(ClassOrMixinDeclaration node) {
+    for (var member in node.members) {
+      if (member is FieldDeclaration) {
+        member.fields.variables.forEach((VariableDeclaration varDecl) {
+          declaredField(member, varDecl);
+        });
+      } else if (member is MethodDeclaration) {
+        declaredMethod(member);
+        _visitTypeParameters(member, member.typeParameters);
+      }
+    }
+  }
+
+  void _visitCompilationUnit(CompilationUnit node) {
     node.declarations.forEach((Declaration declaration) {
       if (declaration is ClassDeclaration) {
         declaredClass(declaration);
         _visitTypeParameters(declaration, declaration.typeParameters);
+        // Call declaredConstructor all ConstructorDeclarations when the class
+        // is called: constructors are accessible if the class is accessible.
+        for (var classDeclaration
+            in node.declarations.whereType<ClassDeclaration>()) {
+          for (var constructor
+              in classDeclaration.members.whereType<ConstructorDeclaration>()) {
+            declaredConstructor(constructor);
+          }
+        }
       } else if (declaration is EnumDeclaration) {
         declaredEnum(declaration);
       } else if (declaration is ExtensionDeclaration) {
@@ -145,101 +255,6 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
     });
   }
 
-  @override
-  visitConstructorDeclaration(ConstructorDeclaration node) {
-    _visitParamList(node.parameters);
-    visitNode(node);
-  }
-
-  @override
-  visitForStatement(ForStatement node) {
-    var forLoopParts = node.forLoopParts;
-    if (forLoopParts is ForEachPartsWithDeclaration) {
-      DeclaredIdentifier loopVariable = forLoopParts.loopVariable;
-      declaredLocalVar(loopVariable.identifier, loopVariable.type);
-    } else if (forLoopParts is ForPartsWithDeclarations) {
-      VariableDeclarationList varList = forLoopParts.variables;
-      if (varList != null) {
-        varList.variables.forEach((VariableDeclaration varDecl) {
-          declaredLocalVar(varDecl.name, varList.type);
-        });
-      }
-    }
-    visitNode(node);
-  }
-
-  @override
-  void visitFunctionDeclaration(FunctionDeclaration node) {
-    // declaredFunction is called by the compilation unit containing it
-    visitNode(node);
-  }
-
-  @override
-  void visitFunctionExpression(FunctionExpression node) {
-    _visitParamList(node.parameters);
-    visitNode(node);
-  }
-
-  @override
-  void visitInterpolationExpression(InterpolationExpression node) {
-    visitNode(node);
-  }
-
-  @override
-  void visitLabeledStatement(LabeledStatement node) {
-    for (Label label in node.labels) {
-      declaredLabel(label, false);
-    }
-    visitNode(node);
-  }
-
-  @override
-  void visitMethodDeclaration(MethodDeclaration node) {
-    _visitParamList(node.parameters);
-    visitNode(node);
-  }
-
-  @override
-  void visitNode(AstNode node) {
-    // Support the case of searching partial ASTs by aborting on nodes with no
-    // parents. This is useful for the angular plugin.
-    node.parent?.accept(this);
-  }
-
-  @override
-  void visitStringInterpolation(StringInterpolation node) {
-    visitNode(node);
-  }
-
-  @override
-  void visitSwitchMember(SwitchMember node) {
-    _visitStatements(node.statements);
-    visitNode(node);
-  }
-
-  @override
-  void visitSwitchStatement(SwitchStatement node) {
-    for (SwitchMember member in node.members) {
-      for (Label label in member.labels) {
-        declaredLabel(label, true);
-      }
-    }
-    visitNode(node);
-  }
-
-  void _visitClassDeclarationMembers(ClassDeclaration node) {
-    for (ClassMember member in node.members) {
-      if (member is FieldDeclaration) {
-        member.fields.variables.forEach((VariableDeclaration varDecl) {
-          declaredField(member, varDecl);
-        });
-      } else if (member is MethodDeclaration) {
-        declaredMethod(member);
-        _visitTypeParameters(member, member.typeParameters);
-      }
-    }
-  }
-
   void _visitParamList(FormalParameterList paramList) {
     if (paramList != null) {
       paramList.parameters.forEach((FormalParameter param) {
@@ -249,7 +264,7 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
         } else if (param is NormalFormalParameter) {
           normalParam = param;
         }
-        TypeAnnotation type = null;
+        TypeAnnotation type;
         if (normalParam is FieldFormalParameter) {
           type = normalParam.type;
         } else if (normalParam is FunctionTypedFormalParameter) {
@@ -257,30 +272,30 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
         } else if (normalParam is SimpleFormalParameter) {
           type = normalParam.type;
         }
-        SimpleIdentifier name = param.identifier;
+        var name = param.identifier;
         declaredParam(name, type);
       });
     }
   }
 
-  _visitStatements(NodeList<Statement> statements) {
-    for (Statement stmt in statements) {
+  void _visitStatements(NodeList<Statement> statements) {
+    for (var stmt in statements) {
       if (stmt.offset < offset) {
         if (stmt is VariableDeclarationStatement) {
-          VariableDeclarationList varList = stmt.variables;
+          var varList = stmt.variables;
           if (varList != null) {
-            for (VariableDeclaration varDecl in varList.variables) {
+            for (var varDecl in varList.variables) {
               if (varDecl.end < offset) {
                 declaredLocalVar(varDecl.name, varList.type);
               }
             }
           }
         } else if (stmt is FunctionDeclarationStatement) {
-          FunctionDeclaration declaration = stmt.functionDeclaration;
+          var declaration = stmt.functionDeclaration;
           if (declaration != null && declaration.offset < offset) {
-            SimpleIdentifier id = declaration.name;
+            var id = declaration.name;
             if (id != null) {
-              String name = id.name;
+              var name = id.name;
               if (name != null && name.isNotEmpty) {
                 declaredFunction(declaration);
                 _visitTypeParameters(
@@ -306,8 +321,6 @@ abstract class LocalDeclarationVisitor extends GeneralizingAstVisitor {
   }
 }
 
-/**
- * Internal exception used to indicate that [LocalDeclarationVisitor]
- * should stop visiting.
- */
+/// Internal exception used to indicate that [LocalDeclarationVisitor]
+/// should stop visiting.
 class _LocalDeclarationVisitorFinished {}

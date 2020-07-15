@@ -12,6 +12,7 @@ import 'add_diagnostic_property_reference_test.dart'
     as add_diagnostic_property_reference;
 import 'add_explicit_cast_test.dart' as add_explicit_cast;
 import 'add_field_formal_parameters_test.dart' as add_field_formal_parameters;
+import 'add_late_test.dart' as add_late;
 import 'add_missing_enum_case_clauses_test.dart'
     as add_missing_enum_case_clauses;
 import 'add_missing_parameter_named_test.dart' as add_missing_parameter_named;
@@ -41,6 +42,7 @@ import 'convert_documentation_into_line_test.dart'
 import 'convert_flutter_child_test.dart' as convert_flutter_child;
 import 'convert_flutter_children_test.dart' as convert_flutter_children;
 import 'convert_into_expression_body_test.dart' as convert_into_expression_body;
+import 'convert_to_contains_test.dart' as convert_to_contains;
 import 'convert_to_for_element_test.dart' as convert_to_for_element;
 import 'convert_to_generic_function_syntax_test.dart'
     as convert_to_generic_function_syntax;
@@ -51,12 +53,14 @@ import 'convert_to_list_literal_test.dart' as convert_to_list_literal;
 import 'convert_to_map_literal_test.dart' as convert_to_map_literal;
 import 'convert_to_named_arguments_test.dart' as convert_to_named_arguments;
 import 'convert_to_null_aware_test.dart' as convert_to_null_aware;
+import 'convert_to_on_type_test.dart' as convert_to_on_type;
 import 'convert_to_package_import_test.dart' as convert_to_package_import;
 import 'convert_to_relative_import_test.dart' as convert_to_relative_import;
 import 'convert_to_set_literal_test.dart' as convert_to_set_literal;
 import 'convert_to_single_quoted_string_test.dart'
     as convert_to_single_quoted_string;
 import 'convert_to_spread_test.dart' as convert_to_spread;
+import 'convert_to_where_type_test.dart' as convert_to_where_type;
 import 'create_class_test.dart' as create_class;
 import 'create_constructor_for_final_fields_test.dart'
     as create_constructor_for_final_field;
@@ -80,16 +84,19 @@ import 'import_library_project_test.dart' as import_library_project;
 import 'import_library_sdk_test.dart' as import_library_sdk;
 import 'import_library_show_test.dart' as import_library_show;
 import 'inline_invocation_test.dart' as inline_invocation;
+import 'inline_typedef_test.dart' as inline_typedef;
 import 'insert_semicolon_test.dart' as insert_semicolon;
 import 'make_class_abstract_test.dart' as make_class_abstract;
 import 'make_field_not_final_test.dart' as make_field_not_final;
 import 'make_final_test.dart' as make_final;
 import 'make_variable_not_final_test.dart' as make_variable_not_final;
 import 'move_type_arguments_to_class_test.dart' as move_type_arguments_to_class;
+import 'organize_imports_test.dart' as organize_imports;
 import 'qualify_reference_test.dart' as qualify_reference;
 import 'remove_annotation_test.dart' as remove_annotation;
 import 'remove_argument_test.dart' as remove_argument;
 import 'remove_await_test.dart' as remove_await;
+import 'remove_const_test.dart' as remove_const;
 import 'remove_dead_code_test.dart' as remove_dead_code;
 import 'remove_duplicate_case_test.dart' as remove_duplicate_case;
 import 'remove_empty_catch_test.dart' as remove_empty_catch;
@@ -97,6 +104,7 @@ import 'remove_empty_constructor_body_test.dart'
     as remove_empty_constructor_body;
 import 'remove_empty_else_test.dart' as remove_empty_else;
 import 'remove_empty_statement_test.dart' as remove_empty_statement;
+import 'remove_if_null_operator_test.dart' as remove_if_null_operator;
 import 'remove_initializer_test.dart' as remove_initializer;
 import 'remove_interpolation_braces_test.dart' as remove_interpolation_braces;
 import 'remove_method_declaration_test.dart' as remove_method_declaration;
@@ -106,6 +114,7 @@ import 'remove_parameters_in_getter_declaration_test.dart'
     as remove_parameters_in_getter_declaration;
 import 'remove_parentheses_in_getter_invocation_test.dart'
     as remove_parentheses_in_getter_invocation;
+import 'remove_question_mark_test.dart' as remove_question_mark;
 import 'remove_this_expression_test.dart' as remove_this_expression;
 import 'remove_type_annotation_test.dart' as remove_type_annotation;
 import 'remove_type_arguments_test.dart' as remove_type_arguments;
@@ -119,6 +128,7 @@ import 'remove_unused_field_test.dart' as remove_unused_field;
 import 'remove_unused_import_test.dart' as remove_unused_import;
 import 'remove_unused_label_test.dart' as remove_unused_label;
 import 'remove_unused_local_variable_test.dart' as remove_unused_local_variable;
+import 'remove_unused_parameter_test.dart' as remove_unused_parameter;
 import 'rename_to_camel_case_test.dart' as rename_to_camel_case;
 import 'replace_boolean_with_bool_test.dart' as replace_boolean_with_bool;
 import 'replace_colon_with_equals_test.dart' as replace_colon_with_equals;
@@ -130,8 +140,11 @@ import 'replace_var_with_dynamic_test.dart' as replace_var_with_dynamic;
 import 'replace_with_brackets_test.dart' as replace_with_brackets;
 import 'replace_with_conditional_assignment_test.dart'
     as replace_with_conditional_assignment;
+import 'replace_with_eight_digit_hex_test.dart' as replace_with_eight_digit_hex;
 import 'replace_with_extension_name_test.dart' as replace_with_extension_name;
+import 'replace_with_filled_test.dart' as replace_with_filled;
 import 'replace_with_identifier_test.dart' as replace_with_identifier;
+import 'replace_with_interpolation_test.dart' as replace_with_interpolation;
 import 'replace_with_is_empty_test.dart' as replace_with_is_empty;
 import 'replace_with_is_not_empty_test.dart' as replace_with_is_not_empty;
 import 'replace_with_null_aware_test.dart' as replace_with_null_aware;
@@ -146,8 +159,10 @@ import 'use_eq_eq_null_test.dart' as use_eq_eq_null;
 import 'use_is_not_empty_test.dart' as use_is_not_empty;
 import 'use_not_eq_null_test.dart' as use_not_eq_null;
 import 'use_rethrow_test.dart' as use_rethrow;
+import 'wrap_in_future_test.dart' as wrap_in_future;
+import 'wrap_in_text_test.dart' as wrap_in_text;
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     add_async.main();
     add_await.main();
@@ -156,6 +171,7 @@ main() {
     add_diagnostic_property_reference.main();
     add_explicit_cast.main();
     add_field_formal_parameters.main();
+    add_late.main();
     add_missing_enum_case_clauses.main();
     add_missing_parameter_named.main();
     add_missing_parameter_positional.main();
@@ -178,6 +194,7 @@ main() {
     convert_flutter_child.main();
     convert_flutter_children.main();
     convert_into_expression_body.main();
+    convert_to_contains.main();
     convert_to_for_element.main();
     convert_to_generic_function_syntax.main();
     convert_to_if_element.main();
@@ -187,11 +204,13 @@ main() {
     convert_to_map_literal.main();
     convert_to_named_arguments.main();
     convert_to_null_aware.main();
+    convert_to_on_type.main();
     convert_to_package_import.main();
     convert_to_relative_import.main();
     convert_to_set_literal.main();
     convert_to_single_quoted_string.main();
     convert_to_spread.main();
+    convert_to_where_type.main();
     create_class.main();
     create_constructor_for_final_field.main();
     create_constructor_super.main();
@@ -214,22 +233,26 @@ main() {
     import_library_sdk.main();
     import_library_show.main();
     inline_invocation.main();
+    inline_typedef.main();
     insert_semicolon.main();
     make_class_abstract.main();
     make_field_not_final.main();
     make_final.main();
     make_variable_not_final.main();
     move_type_arguments_to_class.main();
+    organize_imports.main();
     qualify_reference.main();
     remove_annotation.main();
     remove_argument.main();
     remove_await.main();
+    remove_const.main();
     remove_dead_code.main();
     remove_duplicate_case.main();
     remove_empty_catch.main();
     remove_empty_constructor_body.main();
     remove_empty_else.main();
     remove_empty_statement.main();
+    remove_if_null_operator.main();
     remove_initializer.main();
     remove_interpolation_braces.main();
     remove_method_declaration.main();
@@ -237,6 +260,7 @@ main() {
     remove_operator.main();
     remove_parameters_in_getter_declaration.main();
     remove_parentheses_in_getter_invocation.main();
+    remove_question_mark.main();
     remove_this_expression.main();
     remove_type_annotation.main();
     remove_type_arguments.main();
@@ -250,6 +274,7 @@ main() {
     remove_unused_import.main();
     remove_unused_label.main();
     remove_unused_local_variable.main();
+    remove_unused_parameter.main();
     rename_to_camel_case.main();
     replace_boolean_with_bool.main();
     replace_colon_with_equals.main();
@@ -260,8 +285,11 @@ main() {
     replace_var_with_dynamic.main();
     replace_with_brackets.main();
     replace_with_conditional_assignment.main();
+    replace_with_eight_digit_hex.main();
     replace_with_extension_name.main();
+    replace_with_filled.main();
     replace_with_identifier.main();
+    replace_with_interpolation.main();
     replace_with_is_empty.main();
     replace_with_is_not_empty.main();
     replace_with_null_aware.main();
@@ -275,5 +303,7 @@ main() {
     use_is_not_empty.main();
     use_not_eq_null.main();
     use_rethrow.main();
+    wrap_in_future.main();
+    wrap_in_text.main();
   }, name: 'fix');
 }

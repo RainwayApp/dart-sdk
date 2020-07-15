@@ -69,7 +69,7 @@ void BlockStack<BlockSize>::Reset() {
 }
 
 template <int BlockSize>
-typename BlockStack<BlockSize>::Block* BlockStack<BlockSize>::Blocks() {
+typename BlockStack<BlockSize>::Block* BlockStack<BlockSize>::TakeBlocks() {
   MutexLocker ml(&mutex_);
   while (!partial_.IsEmpty()) {
     full_.Push(partial_.Pop());
@@ -105,10 +105,11 @@ void StoreBuffer::PushBlock(Block* block, ThresholdPolicy policy) {
   if ((policy == kCheckThreshold) && Overflowed()) {
     MutexLocker ml(&mutex_);
     Thread* thread = Thread::Current();
-    // Sanity check: it makes no sense to schedule the GC in another isolate.
+    // Sanity check: it makes no sense to schedule the GC in another isolate
+    // group.
     // (If Isolate ever gets multiple store buffers, we should avoid this
     // coupling by passing in an explicit callback+parameter at construction.)
-    ASSERT(thread->isolate()->store_buffer() == this);
+    ASSERT(thread->isolate_group()->store_buffer() == this);
     thread->ScheduleInterrupts(Thread::kVMInterrupt);
   }
 }

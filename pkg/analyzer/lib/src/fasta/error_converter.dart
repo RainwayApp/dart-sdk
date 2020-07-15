@@ -175,10 +175,6 @@ class FastaErrorReporter {
         errorReporter?.reportErrorForOffset(
             ParserErrorCode.INVALID_CODE_POINT, offset, length, ['\\u{...}']);
         return;
-      case "INVALID_CONSTRUCTOR_NAME":
-        errorReporter?.reportErrorForOffset(
-            CompileTimeErrorCode.INVALID_CONSTRUCTOR_NAME, offset, length);
-        return;
       case "INVALID_GENERIC_FUNCTION_TYPE":
         errorReporter?.reportErrorForOffset(
             ParserErrorCode.INVALID_GENERIC_FUNCTION_TYPE, offset, length);
@@ -277,6 +273,10 @@ class FastaErrorReporter {
             CompileTimeErrorCode.SUPER_IN_REDIRECTING_CONSTRUCTOR,
             offset,
             length);
+        return;
+      case "TYPE_PARAMETER_ON_OPERATOR":
+        errorReporter?.reportErrorForOffset(
+            ParserErrorCode.TYPE_PARAMETER_ON_OPERATOR, offset, length);
         return;
       case "UNDEFINED_CLASS":
         errorReporter?.reportErrorForOffset(

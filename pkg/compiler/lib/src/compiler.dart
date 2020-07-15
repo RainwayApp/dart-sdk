@@ -38,7 +38,7 @@ import 'js_model/js_strategy.dart';
 import 'kernel/kernel_strategy.dart';
 import 'kernel/loader.dart' show KernelLoaderTask, KernelResult;
 import 'null_compiler_output.dart' show NullCompilerOutput;
-import 'options.dart' show CompilerOptions, DiagnosticOptions;
+import 'options.dart' show CompilerOptions;
 import 'serialization/task.dart';
 import 'serialization/strategies.dart';
 import 'ssa/nodes.dart' show HInstruction;
@@ -135,16 +135,18 @@ abstract class Compiler {
     options.deriveOptions();
     options.validate();
 
-    abstractValueStrategy = options.useTrivialAbstractValueDomain
-        ? const TrivialAbstractValueStrategy()
-        : const TypeMaskStrategy();
+    abstractValueStrategy = options.experimentalPowersets
+        ? throw UnimplementedError('Powerset abstract value domain')
+        : options.useTrivialAbstractValueDomain
+            ? const TrivialAbstractValueStrategy()
+            : const TypeMaskStrategy();
     CompilerTask kernelFrontEndTask;
     selfTask = new GenericTask('self', measurer);
     _outputProvider = new _CompilerOutput(this, outputProvider);
     if (makeReporter != null) {
       _reporter = makeReporter(this, options);
     } else {
-      _reporter = new CompilerDiagnosticReporter(this, options);
+      _reporter = new CompilerDiagnosticReporter(this);
     }
     kernelFrontEndTask = new GenericTask('Front end', measurer);
     frontendStrategy = new KernelFrontendStrategy(
@@ -631,7 +633,7 @@ class SuppressionInfo {
 class CompilerDiagnosticReporter extends DiagnosticReporter {
   final Compiler compiler;
   @override
-  final DiagnosticOptions options;
+  CompilerOptions get options => compiler.options;
 
   Entity _currentElement;
   bool hasCrashed = false;
@@ -644,16 +646,16 @@ class CompilerDiagnosticReporter extends DiagnosticReporter {
   /// suppressed for each library.
   Map<Uri, SuppressionInfo> suppressedWarnings = <Uri, SuppressionInfo>{};
 
-  CompilerDiagnosticReporter(this.compiler, this.options);
+  CompilerDiagnosticReporter(this.compiler);
 
   Entity get currentElement => _currentElement;
 
   @override
   DiagnosticMessage createMessage(Spannable spannable, MessageKind messageKind,
-      [Map arguments = const {}]) {
+      [Map<String, String> arguments = const {}]) {
     SourceSpan span = spanFromSpannable(spannable);
     MessageTemplate template = MessageTemplate.TEMPLATES[messageKind];
-    Message message = template.message(arguments, options.terseDiagnostics);
+    Message message = template.message(arguments, options);
     return new DiagnosticMessage(span, spannable, message);
   }
 
@@ -678,7 +680,7 @@ class CompilerDiagnosticReporter extends DiagnosticReporter {
   @deprecated
   @override
   void reportInfo(Spannable node, MessageKind messageKind,
-      [Map arguments = const {}]) {
+      [Map<String, String> arguments = const {}]) {
     reportDiagnosticInternal(createMessage(node, messageKind, arguments),
         const <DiagnosticMessage>[], api.Diagnostic.INFO);
   }
@@ -830,7 +832,7 @@ class CompilerDiagnosticReporter extends DiagnosticReporter {
 
   void pleaseReportCrash() {
     print(MessageTemplate.TEMPLATES[MessageKind.PLEASE_REPORT_THE_CRASH]
-        .message({'buildId': compiler.options.buildId}));
+        .message({'buildId': compiler.options.buildId}, options));
   }
 
   /// Finds the approximate [Element] for [node]. [currentElement] is used as
@@ -848,7 +850,7 @@ class CompilerDiagnosticReporter extends DiagnosticReporter {
   @override
   void log(message) {
     Message msg = MessageTemplate.TEMPLATES[MessageKind.GENERIC]
-        .message({'text': '$message'});
+        .message({'text': '$message'}, options);
     reportDiagnostic(new DiagnosticMessage(null, null, msg),
         const <DiagnosticMessage>[], api.Diagnostic.VERBOSE_INFO);
   }
@@ -899,9 +901,11 @@ class CompilerDiagnosticReporter extends DiagnosticReporter {
           kind = MessageKind.HIDDEN_WARNINGS;
         }
         MessageTemplate template = MessageTemplate.TEMPLATES[kind];
-        Message message = template.message(
-            {'warnings': info.warnings, 'hints': info.hints, 'uri': uri},
-            options.terseDiagnostics);
+        Message message = template.message({
+          'warnings': info.warnings.toString(),
+          'hints': info.hints.toString(),
+          'uri': uri.toString(),
+        }, options);
         reportDiagnostic(new DiagnosticMessage(null, null, message),
             const <DiagnosticMessage>[], api.Diagnostic.HINT);
       });

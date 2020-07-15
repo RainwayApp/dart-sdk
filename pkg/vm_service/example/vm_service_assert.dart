@@ -154,6 +154,8 @@ String assertEventKind(String obj) {
   if (obj == "ServiceExtensionAdded") return obj;
   if (obj == "ServiceRegistered") return obj;
   if (obj == "ServiceUnregistered") return obj;
+  if (obj == "TimelineEvents") return obj;
+  if (obj == "TimelineStreamSubscriptionsUpdate") return obj;
   if (obj == "VMFlagUpdate") return obj;
   if (obj == "VMUpdate") return obj;
   if (obj == "WriteEvent") return obj;
@@ -362,6 +364,13 @@ vms.ClassList assertClassList(vms.ClassList obj) {
   assertNotNull(obj);
   assertString(obj.type);
   assertListOfClassRef(obj.classes);
+  return obj;
+}
+
+vms.ClientName assertClientName(vms.ClientName obj) {
+  assertNotNull(obj);
+  assertString(obj.type);
+  assertString(obj.name);
   return obj;
 }
 
@@ -611,6 +620,8 @@ vms.Func assertFunc(vms.Func obj) {
   } else {
     throw "Unexpected value: ${obj.owner}";
   }
+  assertBool(obj.isStatic);
+  assertBool(obj.isConst);
   return obj;
 }
 
@@ -903,6 +914,28 @@ List<vms.ProfileFunction> assertListOfProfileFunction(
     List<vms.ProfileFunction> list) {
   for (vms.ProfileFunction elem in list) {
     assertProfileFunction(elem);
+  }
+  return list;
+}
+
+vms.ProtocolList assertProtocolList(vms.ProtocolList obj) {
+  assertNotNull(obj);
+  assertString(obj.type);
+  assertListOfProtocol(obj.protocols);
+  return obj;
+}
+
+vms.Protocol assertProtocol(vms.Protocol obj) {
+  assertNotNull(obj);
+  assertString(obj.protocolName);
+  assertInt(obj.major);
+  assertInt(obj.minor);
+  return obj;
+}
+
+List<vms.Protocol> assertListOfProtocol(List<vms.Protocol> list) {
+  for (vms.Protocol elem in list) {
+    assertProtocol(elem);
   }
   return list;
 }

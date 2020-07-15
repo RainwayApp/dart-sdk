@@ -18,11 +18,10 @@ import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/source/package_map_resolver.dart';
 import 'package:analyzer/src/test_utilities/mock_sdk.dart';
 import 'package:analyzer/src/test_utilities/resource_provider_mixin.dart';
-import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(PluginWatcherTest);
   });
@@ -38,17 +37,17 @@ class PluginWatcherTest with ResourceProviderMixin {
     watcher = PluginWatcher(resourceProvider, manager);
   }
 
-  test_addedDriver() async {
-    String pkg1Path = newFolder('/pkg1').path;
+  Future<void> test_addedDriver() async {
+    var pkg1Path = newFolder('/pkg1').path;
     newFile('/pkg1/lib/test1.dart');
     newFile('/pkg2/lib/pkg2.dart');
     newFile('/pkg2/pubspec.yaml', content: 'name: pkg2');
     newFile(
         '/pkg2/${PluginLocator.toolsFolderName}/${PluginLocator.defaultPluginFolderName}/bin/plugin.dart');
 
-    ContextRoot contextRoot =
+    var contextRoot =
         ContextRoot(pkg1Path, [], pathContext: resourceProvider.pathContext);
-    TestDriver driver = TestDriver(resourceProvider, contextRoot);
+    var driver = TestDriver(resourceProvider, contextRoot);
     driver.analysisOptions.enabledPluginNames = ['pkg2'];
     expect(manager.addedContextRoots, isEmpty);
     watcher.addedDriver(driver, contextRoot);
@@ -72,13 +71,13 @@ class PluginWatcherTest with ResourceProviderMixin {
     expect(manager.addedContextRoots, hasLength(1));
   }
 
-  test_addedDriver_missingPackage() async {
-    String pkg1Path = newFolder('/pkg1').path;
+  Future<void> test_addedDriver_missingPackage() async {
+    var pkg1Path = newFolder('/pkg1').path;
     newFile('/pkg1/lib/test1.dart');
 
-    ContextRoot contextRoot =
+    var contextRoot =
         ContextRoot(pkg1Path, [], pathContext: resourceProvider.pathContext);
-    TestDriver driver = TestDriver(resourceProvider, contextRoot);
+    var driver = TestDriver(resourceProvider, contextRoot);
     driver.analysisOptions.enabledPluginNames = ['pkg3'];
     watcher.addedDriver(driver, contextRoot);
     expect(manager.addedContextRoots, isEmpty);
@@ -96,11 +95,11 @@ class PluginWatcherTest with ResourceProviderMixin {
     expect(watcher.manager, manager);
   }
 
-  test_removedDriver() {
-    String pkg1Path = newFolder('/pkg1').path;
-    ContextRoot contextRoot =
+  void test_removedDriver() {
+    var pkg1Path = newFolder('/pkg1').path;
+    var contextRoot =
         ContextRoot(pkg1Path, [], pathContext: resourceProvider.pathContext);
-    TestDriver driver = TestDriver(resourceProvider, contextRoot);
+    var driver = TestDriver(resourceProvider, contextRoot);
     watcher.addedDriver(driver, contextRoot);
     watcher.removedDriver(driver);
     expect(manager.removedContextRoots, equals([contextRoot]));
@@ -121,10 +120,10 @@ class TestDriver implements AnalysisDriver {
   final _resultController = StreamController<ResolvedUnitResult>();
 
   TestDriver(this.resourceProvider, ContextRoot contextRoot) {
-    path.Context pathContext = resourceProvider.pathContext;
-    MockSdk sdk = MockSdk(resourceProvider: resourceProvider);
-    String packageName = pathContext.basename(contextRoot.root);
-    String libPath = pathContext.join(contextRoot.root, 'lib');
+    var pathContext = resourceProvider.pathContext;
+    var sdk = MockSdk(resourceProvider: resourceProvider);
+    var packageName = pathContext.basename(contextRoot.root);
+    var libPath = pathContext.join(contextRoot.root, 'lib');
     sourceFactory = SourceFactory([
       DartUriResolver(sdk),
       PackageMapUriResolver(resourceProvider, {
@@ -141,7 +140,7 @@ class TestDriver implements AnalysisDriver {
   Stream<ResolvedUnitResult> get results => _resultController.stream;
 
   @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class TestPluginManager implements PluginManager {
@@ -157,7 +156,7 @@ class TestPluginManager implements PluginManager {
   }
 
   @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 
   @override
   void recordPluginFailure(String hostPackageName, String message) {}

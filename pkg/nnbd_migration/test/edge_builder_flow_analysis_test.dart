@@ -430,19 +430,19 @@ void h(int k) {}
 
   Future<void> test_conditionalExpression() async {
     await analyze('''
-int f(int i) => i == null ? g(i) : h(i);
+int f(int i, int l) => i == null ? g(l) : h(i);
 int g(int j) => 1;
 int h(int k) => 1;
 ''');
     var iNode = decoratedTypeAnnotation('int i').node;
     var jNode = decoratedTypeAnnotation('int j').node;
     var kNode = decoratedTypeAnnotation('int k').node;
+    var lNode = decoratedTypeAnnotation('int l').node;
     // No edge from i to k because i is known to be non-nullable at the site of
     // the call to h()
     assertNoEdge(iNode, kNode);
-    // But there is an edge from i to j
-    // TODO(paulberry): there should be a guard on this edge.
-    assertEdge(iNode, jNode, hard: false);
+    // But there is an edge from l to j
+    assertEdge(lNode, jNode, hard: false, guards: [iNode]);
   }
 
   Future<void> test_conditionalExpression_propagates_promotions() async {
@@ -1230,7 +1230,7 @@ void g(List<int> j) {}
     assertNoEdge(nNode, jNode);
     // But there is an edge from nonNull(List<int>) to j
     assertEdge(inSet(neverClosure), jNode, hard: false);
-    assertEdge(intParamNode, jParamNode, hard: false);
+    assertEdge(intParamNode, jParamNode, hard: false, checkable: false);
   }
 
   Future<void> test_postfixDecrement() async {

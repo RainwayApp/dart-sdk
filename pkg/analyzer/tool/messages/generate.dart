@@ -1,17 +1,15 @@
-/**
- * This file contains code to generate scanner and parser message
- * based on the information in pkg/front_end/messages.yaml.
- *
- * For each message in messages.yaml that contains an 'index:' field,
- * this tool generates an error with the name specified by the 'analyzerCode:'
- * field and an entry in the fastaAnalyzerErrorList for that generated error.
- * The text in the 'analyzerCode:' field must contain the name of the class
- * containing the error and the name of the error separated by a `.`
- * (e.g. ParserErrorCode.EQUALITY_CANNOT_BE_EQUALITY_OPERAND).
- *
- * It is expected that 'pkg/front_end/tool/fasta generate-messages'
- * has already been successfully run.
- */
+/// This file contains code to generate scanner and parser message
+/// based on the information in pkg/front_end/messages.yaml.
+///
+/// For each message in messages.yaml that contains an 'index:' field,
+/// this tool generates an error with the name specified by the 'analyzerCode:'
+/// field and an entry in the fastaAnalyzerErrorList for that generated error.
+/// The text in the 'analyzerCode:' field must contain the name of the class
+/// containing the error and the name of the error separated by a `.`
+/// (e.g. ParserErrorCode.EQUALITY_CANNOT_BE_EQUALITY_OPERAND).
+///
+/// It is expected that 'pkg/front_end/tool/fasta generate-messages'
+/// has already been successfully run.
 import 'dart:io';
 
 import 'package:_fe_analyzer_shared/src/scanner/scanner.dart';
@@ -135,7 +133,7 @@ part of 'syntactic_errors.dart';
     for (Map entry in translatedEntries) {
       final name = nameForEntry(entry);
       final errorCode = name[1];
-      if (!syntacticErrorsSource.contains('_$errorCode')) {
+      if (!syntacticErrorsSource.contains(' _$errorCode')) {
         if (publicCount == 0) {
           print('');
           print('The following ParserErrorCodes should be updated'

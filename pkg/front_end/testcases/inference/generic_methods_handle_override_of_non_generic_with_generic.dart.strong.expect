@@ -43,6 +43,16 @@ class C extends core::Object {
     return x;
   method g(core::int* x) → dynamic
     return x;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class D extends self::C {
   synthetic constructor •() → self::D*
@@ -54,6 +64,6 @@ class D extends self::C {
     return x;
 }
 static method main() → dynamic {
-  core::int* y = (new self::D::•() as self::C*).{self::C::m}(42) as{TypeError} core::int*;
+  core::int* y = (new self::D::•() as self::C*).{self::C::m}(42) as{TypeError,ForDynamic} core::int*;
   core::print(y);
 }

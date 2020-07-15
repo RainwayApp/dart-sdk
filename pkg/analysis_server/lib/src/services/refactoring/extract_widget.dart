@@ -37,7 +37,6 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
   final int length;
 
   CorrectionUtils utils;
-  Flutter flutter;
 
   ClassElement classBuildContext;
   ClassElement classKey;
@@ -78,7 +77,6 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
       this.searchEngine, this.resolveResult, this.offset, this.length)
       : sessionHelper = AnalysisSessionHelper(resolveResult.session) {
     utils = CorrectionUtils(resolveResult);
-    flutter = Flutter.of(resolveResult);
   }
 
   @override
@@ -90,29 +88,27 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
     return resolveResult.unit.featureSet;
   }
 
+  Flutter get _flutter => Flutter.instance;
+
   bool get _isNonNullable => _featureSet.isEnabled(Feature.non_nullable);
 
   @override
   Future<RefactoringStatus> checkFinalConditions() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
-    RefactoringStatus result = RefactoringStatus();
+    var result = RefactoringStatus();
     result.addStatus(validateClassName(name));
     return result;
   }
 
   @override
   Future<RefactoringStatus> checkInitialConditions() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
-    RefactoringStatus result = RefactoringStatus();
+    var result = RefactoringStatus();
 
     result.addStatus(_checkSelection());
     if (result.hasFatalError) {
       return result;
     }
 
-    AstNode astNode = _expression ?? _method ?? _statements.first;
+    var astNode = _expression ?? _method ?? _statements.first;
     _enclosingUnitMember = astNode.thisOrAncestorMatching((n) {
       return n is CompilationUnitMember && n.parent is CompilationUnit;
     });
@@ -125,7 +121,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
   @override
   RefactoringStatus checkName() {
-    RefactoringStatus result = RefactoringStatus();
+    var result = RefactoringStatus();
 
     // Validate the name.
     result.addStatus(validateClassName(name));
@@ -134,10 +130,8 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
     if (!result.hasFatalError) {
       visitLibraryTopLevelElements(resolveResult.libraryElement, (element) {
         if (hasDisplayName(element, name)) {
-          String message = format(
-              "Library already declares {0} with name '{1}'.",
-              getElementKindName(element),
-              name);
+          var message = format("Library already declares {0} with name '{1}'.",
+              getElementKindName(element), name);
           result.addError(message, newLocation_fromElement(element));
         }
       });
@@ -148,8 +142,6 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
   @override
   Future<SourceChange> createChange() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     var changeBuilder = DartChangeBuilder(sessionHelper.session);
     await changeBuilder.addFileEdit(resolveResult.path, (builder) {
       if (_expression != null) {
@@ -179,7 +171,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
   /// Checks if [offset] is a widget creation expression that can be extracted.
   RefactoringStatus _checkSelection() {
-    AstNode node =
+    var node =
         NodeLocator(offset, offset + length).searchWithin(resolveResult.unit);
 
     // Treat single ReturnStatement as its expression.
@@ -192,8 +184,8 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
     _enclosingClassElement = _enclosingClassNode?.declaredElement;
 
     // new MyWidget(...)
-    var newExpression = flutter.identifyNewExpression(node);
-    if (flutter.isWidgetCreation(newExpression)) {
+    var newExpression = _flutter.identifyNewExpression(node);
+    if (_flutter.isWidgetCreation(newExpression)) {
       _expression = newExpression;
       return RefactoringStatus();
     }
@@ -211,7 +203,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
       if (statements.isNotEmpty) {
         var lastStatement = statements.last;
         if (lastStatement is ReturnStatement &&
-            flutter.isWidgetExpression(lastStatement.expression)) {
+            _flutter.isWidgetExpression(lastStatement.expression)) {
           _statements = statements;
           _statementsRange = range.startEnd(statements.first, statements.last);
           return RefactoringStatus();
@@ -228,8 +220,8 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
         break;
       }
       if (node is MethodDeclaration) {
-        DartType returnType = node.returnType?.type;
-        if (flutter.isWidgetType(returnType) && node.body != null) {
+        var returnType = node.returnType?.type;
+        if (_flutter.isWidgetType(returnType) && node.body != null) {
           _method = node;
           return RefactoringStatus();
         }
@@ -243,25 +235,19 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
   }
 
   Future<RefactoringStatus> _initializeClasses() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     var result = RefactoringStatus();
 
     Future<ClassElement> getClass(String name) async {
-      // TODO(brianwilkerson) Determine whether this await is necessary.
-      await null;
-      var element = await sessionHelper.getClass(flutter.widgetsUri, name);
+      var element = await sessionHelper.getClass(_flutter.widgetsUri, name);
       if (element == null) {
         result.addFatalError(
-          "Unable to find '$name' in ${flutter.widgetsUri}",
+          "Unable to find '$name' in ${_flutter.widgetsUri}",
         );
       }
       return element;
     }
 
     Future<PropertyAccessorElement> getAccessor(String uri, String name) async {
-      // TODO(brianwilkerson) Determine whether this await is necessary.
-      await null;
       var element = await sessionHelper.getTopLevelPropertyAccessor(uri, name);
       if (element == null) {
         result.addFatalError("Unable to find 'required' in $uri");
@@ -282,11 +268,9 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
   /// Prepare referenced local variables and fields, that should be turned
   /// into the widget class fields and constructor parameters.
   Future<RefactoringStatus> _initializeParameters() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     _ParametersCollector collector;
     if (_expression != null) {
-      SourceRange localRange = range.node(_expression);
+      var localRange = range.node(_expression);
       collector = _ParametersCollector(_enclosingClassElement, localRange);
       _expression.accept(collector);
     }
@@ -298,7 +282,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
       }
     }
     if (_method != null) {
-      SourceRange localRange = range.node(_method);
+      var localRange = range.node(_method);
       collector = _ParametersCollector(_enclosingClassElement, localRange);
       _method.body.accept(collector);
     }
@@ -322,7 +306,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
       }
     }
 
-    RefactoringStatus status = collector.status;
+    var status = collector.status;
 
     // If there is an existing parameter "key" warn the user.
     // We could rename it, but that would require renaming references to it.
@@ -335,7 +319,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
     }
 
     // Collect used public names.
-    var usedNames = Set<String>();
+    var usedNames = <String>{};
     for (var parameter in _parameters) {
       if (!parameter.name.startsWith('_')) {
         usedNames.add(parameter.name);
@@ -362,8 +346,8 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
   /// Remove the [_method] declaration.
   void _removeMethodDeclaration(DartFileEditBuilder builder) {
-    SourceRange methodRange = range.node(_method);
-    SourceRange linesRange =
+    var methodRange = range.node(_method);
+    var linesRange =
         utils.getLinesRange(methodRange, skipLeadingEmptyLines: true);
     builder.addDeletion(linesRange);
   }
@@ -385,7 +369,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
         // Insert field references (as named arguments).
         // Ensure that invocation arguments are named.
-        int argumentIndex = 0;
+        var argumentIndex = 0;
         for (var parameter in _parameters) {
           if (parameter != _parameters.first) {
             builder.write(', ');
@@ -393,7 +377,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
           builder.write(parameter.name);
           builder.write(': ');
           if (parameter.isMethodParameter) {
-            Expression argument = arguments[argumentIndex++];
+            var argument = arguments[argumentIndex++];
             if (argument is NamedExpression) {
               argument = (argument as NamedExpression).expression;
             }
@@ -505,10 +489,10 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
             },
             bodyWriter: () {
               if (_expression != null) {
-                String indentOld = utils.getLinePrefix(_expression.offset);
-                String indentNew = '    ';
+                var indentOld = utils.getLinePrefix(_expression.offset);
+                var indentNew = '    ';
 
-                String code = utils.getNodeText(_expression);
+                var code = utils.getNodeText(_expression);
                 code = _replaceIndent(code, indentOld, indentNew);
 
                 builder.writeln('{');
@@ -519,10 +503,10 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
                 builder.writeln('  }');
               } else if (_statements != null) {
-                String indentOld = utils.getLinePrefix(_statementsRange.offset);
-                String indentNew = '    ';
+                var indentOld = utils.getLinePrefix(_statementsRange.offset);
+                var indentNew = '    ';
 
-                String code = utils.getRangeText(_statementsRange);
+                var code = utils.getRangeText(_statementsRange);
                 code = _replaceIndent(code, indentOld, indentNew);
 
                 builder.writeln('{');
@@ -533,7 +517,7 @@ class ExtractWidgetRefactoringImpl extends RefactoringImpl
 
                 builder.writeln('  }');
               } else {
-                String code = utils.getNodeText(_method.body);
+                var code = utils.getNodeText(_method.body);
                 builder.writeln(code);
               }
             },
@@ -598,7 +582,7 @@ class _ParametersCollector extends RecursiveAstVisitor<void> {
   final SourceRange expressionRange;
 
   final RefactoringStatus status = RefactoringStatus();
-  final Set<Element> uniqueElements = Set<Element>();
+  final Set<Element> uniqueElements = <Element>{};
   final List<_Parameter> parameters = [];
 
   List<ClassElement> enclosingClasses;
@@ -607,17 +591,17 @@ class _ParametersCollector extends RecursiveAstVisitor<void> {
 
   @override
   void visitSimpleIdentifier(SimpleIdentifier node) {
-    Element element = node.staticElement;
+    var element = node.staticElement;
     if (element == null) {
       return;
     }
-    String elementName = element.displayName;
+    var elementName = element.displayName;
 
     DartType type;
     if (element is MethodElement) {
       if (_isMemberOfEnclosingClass(element)) {
         status.addError(
-            "Reference to an enclosing class method cannot be extracted.");
+            'Reference to an enclosing class method cannot be extracted.');
       }
     } else if (element is LocalVariableElement) {
       if (!expressionRange.contains(element.nameOffset)) {
@@ -628,7 +612,7 @@ class _ParametersCollector extends RecursiveAstVisitor<void> {
         }
       }
     } else if (element is PropertyAccessorElement) {
-      PropertyInducingElement field = element.variable;
+      var field = element.variable;
       if (_isMemberOfEnclosingClass(field)) {
         if (node.inSetterContext()) {
           status.addError("Write to '$elementName' cannot be extracted.");

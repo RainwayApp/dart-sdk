@@ -11,7 +11,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'abstract_refactoring.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(InlineLocalTest);
   });
@@ -22,7 +22,7 @@ class InlineLocalTest extends RefactoringTest {
   @override
   InlineLocalRefactoringImpl refactoring;
 
-  test_access() async {
+  Future<void> test_access() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -38,27 +38,27 @@ main() {
     expect(refactoring.referenceCount, 2);
   }
 
-  test_bad_selectionMethod() async {
+  Future<void> test_bad_selectionMethod() async {
     await indexTestUnit(r'''
 main() {
 }
 ''');
     _createRefactoring('main() {');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     _assert_fatalError_selection(status);
   }
 
-  test_bad_selectionParameter() async {
+  Future<void> test_bad_selectionParameter() async {
     await indexTestUnit(r'''
 main(int test) {
 }
 ''');
     _createRefactoring('test) {');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     _assert_fatalError_selection(status);
   }
 
-  test_bad_selectionVariable_hasAssignments_1() async {
+  Future<void> test_bad_selectionVariable_hasAssignments_1() async {
     await indexTestUnit(r'''
 main() {
   int test = 0;
@@ -66,12 +66,12 @@ main() {
 }
 ''');
     _createRefactoring('test = 0');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     assertRefactoringStatus(status, RefactoringProblemSeverity.FATAL,
         expectedContextSearch: 'test = 1');
   }
 
-  test_bad_selectionVariable_hasAssignments_2() async {
+  Future<void> test_bad_selectionVariable_hasAssignments_2() async {
     await indexTestUnit(r'''
 main() {
   int test = 0;
@@ -79,12 +79,12 @@ main() {
 }
 ''');
     _createRefactoring('test = 0');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     assertRefactoringStatus(status, RefactoringProblemSeverity.FATAL,
         expectedContextSearch: 'test += 1');
   }
 
-  test_bad_selectionVariable_notInBlock() async {
+  Future<void> test_bad_selectionVariable_notInBlock() async {
     await indexTestUnit(r'''
 main() {
   if (true)
@@ -92,22 +92,22 @@ main() {
 }
 ''');
     _createRefactoring('test = 0');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     assertRefactoringStatus(status, RefactoringProblemSeverity.FATAL);
   }
 
-  test_bad_selectionVariable_notInitialized() async {
+  Future<void> test_bad_selectionVariable_notInitialized() async {
     await indexTestUnit(r'''
 main() {
   int test;
 }
 ''');
     _createRefactoring('test;');
-    RefactoringStatus status = await refactoring.checkInitialConditions();
+    var status = await refactoring.checkInitialConditions();
     assertRefactoringStatus(status, RefactoringProblemSeverity.FATAL);
   }
 
-  test_OK_cascade_intoCascade() async {
+  Future<void> test_OK_cascade_intoCascade() async {
     await indexTestUnit(r'''
 class A {
   foo() {}
@@ -131,7 +131,7 @@ main() {
 ''');
   }
 
-  test_OK_cascade_intoNotCascade() async {
+  Future<void> test_OK_cascade_intoNotCascade() async {
     await indexTestUnit(r'''
 class A {
   foo() {}
@@ -155,7 +155,7 @@ main() {
 ''');
   }
 
-  test_OK_inSwitchCase() async {
+  Future<void> test_OK_inSwitchCase() async {
     await indexTestUnit('''
 main(int p) {
   switch (p) {
@@ -179,7 +179,7 @@ main(int p) {
 ''');
   }
 
-  test_OK_intoStringInterpolation_binaryExpression() async {
+  Future<void> test_OK_intoStringInterpolation_binaryExpression() async {
     await indexTestUnit(r'''
 main() {
   int test = 1 + 2;
@@ -201,7 +201,7 @@ process(x) {}
 ''');
   }
 
-  test_OK_intoStringInterpolation_simpleIdentifier() async {
+  Future<void> test_OK_intoStringInterpolation_simpleIdentifier() async {
     await indexTestUnit(r'''
 main() {
   int foo = 1 + 2;
@@ -225,7 +225,7 @@ process(x) {}
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_differentQuotes() async {
+  Future<void> test_OK_intoStringInterpolation_string_differentQuotes() async {
     await indexTestUnit(r'''
 main() {
   String a = "aaa";
@@ -241,7 +241,7 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_doubleQuotes() async {
+  Future<void> test_OK_intoStringInterpolation_string_doubleQuotes() async {
     await indexTestUnit(r'''
 main() {
   String a = "aaa";
@@ -257,7 +257,8 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_multiLineIntoMulti_leadingSpaces() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_multiLineIntoMulti_leadingSpaces() async {
     await indexTestUnit(r"""
 main() {
   String a = '''\ \
@@ -280,7 +281,8 @@ bbb''';
 """);
   }
 
-  test_OK_intoStringInterpolation_string_multiLineIntoMulti_unixEOL() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_multiLineIntoMulti_unixEOL() async {
     await indexTestUnit(r"""
 main() {
   String a = '''
@@ -305,7 +307,8 @@ bbb''';
 """);
   }
 
-  test_OK_intoStringInterpolation_string_multiLineIntoMulti_windowsEOL() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_multiLineIntoMulti_windowsEOL() async {
     await indexTestUnit(r"""
 main() {
   String a = '''
@@ -332,7 +335,8 @@ bbb''';
         .replaceAll('\n', '\r\n'));
   }
 
-  test_OK_intoStringInterpolation_string_multiLineIntoSingle() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_multiLineIntoSingle() async {
     await indexTestUnit(r'''
 main() {
   String a = """aaa""";
@@ -348,7 +352,7 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_raw() async {
+  Future<void> test_OK_intoStringInterpolation_string_raw() async {
     await indexTestUnit(r'''
 main() {
   String a = r'an $ignored interpolation';
@@ -364,7 +368,8 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_singleLineIntoMulti_doubleQuotes() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_singleLineIntoMulti_doubleQuotes() async {
     await indexTestUnit(r'''
 main() {
   String a = "aaa";
@@ -380,7 +385,8 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_string_singleLineIntoMulti_singleQuotes() async {
+  Future<void>
+      test_OK_intoStringInterpolation_string_singleLineIntoMulti_singleQuotes() async {
     await indexTestUnit(r"""
 main() {
   String a = 'aaa';
@@ -396,7 +402,7 @@ main() {
 """);
   }
 
-  test_OK_intoStringInterpolation_string_singleQuotes() async {
+  Future<void> test_OK_intoStringInterpolation_string_singleQuotes() async {
     await indexTestUnit(r'''
 main() {
   String a = 'aaa';
@@ -412,7 +418,7 @@ main() {
 ''');
   }
 
-  test_OK_intoStringInterpolation_stringInterpolation() async {
+  Future<void> test_OK_intoStringInterpolation_stringInterpolation() async {
     await indexTestUnit(r'''
 main() {
   String a = 'aaa';
@@ -430,11 +436,8 @@ main() {
 ''');
   }
 
-  /**
-   * <p>
-   * https://code.google.com/p/dart/issues/detail?id=18587
-   */
-  test_OK_keepNextCommentedLine() async {
+  /// https://code.google.com/p/dart/issues/detail?id=18587
+  Future<void> test_OK_keepNextCommentedLine() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -454,7 +457,7 @@ main() {
 ''');
   }
 
-  test_OK_noUsages_1() async {
+  Future<void> test_OK_noUsages_1() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -470,7 +473,7 @@ main() {
 ''');
   }
 
-  test_OK_noUsages_2() async {
+  Future<void> test_OK_noUsages_2() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -484,7 +487,7 @@ main() {
 ''');
   }
 
-  test_OK_oneUsage() async {
+  Future<void> test_OK_oneUsage() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -500,7 +503,7 @@ main() {
 ''');
   }
 
-  test_OK_parenthesis_decrement_intoNegate() async {
+  Future<void> test_OK_parenthesis_decrement_intoNegate() async {
     await indexTestUnit('''
 main() {
   var a = 1;
@@ -518,7 +521,7 @@ main() {
 ''');
   }
 
-  test_OK_parenthesis_instanceCreation_intoList() async {
+  Future<void> test_OK_parenthesis_instanceCreation_intoList() async {
     await indexTestUnit('''
 class A {}
 main() {
@@ -536,7 +539,7 @@ main() {
 ''');
   }
 
-  test_OK_parenthesis_intoIndexExpression_index() async {
+  Future<void> test_OK_parenthesis_intoIndexExpression_index() async {
     await indexTestUnit('''
 main() {
   var items = [];
@@ -554,7 +557,7 @@ main() {
 ''');
   }
 
-  test_OK_parenthesis_intoParenthesizedExpression() async {
+  Future<void> test_OK_parenthesis_intoParenthesizedExpression() async {
     await indexTestUnit('''
 f(m, x, y) {
   int test = x as int;
@@ -572,7 +575,7 @@ f(m, x, y) {
 ''');
   }
 
-  test_OK_parenthesis_negate_intoNegate() async {
+  Future<void> test_OK_parenthesis_negate_intoNegate() async {
     await indexTestUnit('''
 main() {
   var a = 1;
@@ -590,7 +593,7 @@ main() {
 ''');
   }
 
-  test_OK_parenthesis_plus_intoMultiply() async {
+  Future<void> test_OK_parenthesis_plus_intoMultiply() async {
     await indexTestUnit('''
 main() {
   var test = 1 + 2;
@@ -606,7 +609,7 @@ main() {
 ''');
   }
 
-  test_OK_twoUsages() async {
+  Future<void> test_OK_twoUsages() async {
     await indexTestUnit('''
 main() {
   int test = 1 + 2;
@@ -633,7 +636,7 @@ main() {
   }
 
   void _createRefactoring(String search) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     refactoring = InlineLocalRefactoring(
       searchEngine,
       testAnalysisResult,

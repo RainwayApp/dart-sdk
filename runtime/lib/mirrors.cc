@@ -21,14 +21,14 @@ namespace dart {
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
 #define RETURN_OR_PROPAGATE(expr)                                              \
-  RawObject* result = expr;                                                    \
-  if (RawObject::IsErrorClassId(result->GetClassIdMayBeSmi())) {               \
+  ObjectPtr result = expr;                                                     \
+  if (IsErrorClassId(result->GetClassIdMayBeSmi())) {                          \
     Exceptions::PropagateError(Error::Handle(Error::RawCast(result)));         \
   }                                                                            \
   return result;
 
-static RawInstance* CreateMirror(const String& mirror_class_name,
-                                 const Array& constructor_arguments) {
+static InstancePtr CreateMirror(const String& mirror_class_name,
+                                const Array& constructor_arguments) {
   const Library& mirrors_lib = Library::Handle(Library::MirrorsLibrary());
   const String& constructor_name = Symbols::DotUnder();
 
@@ -54,14 +54,14 @@ static void ThrowNoSuchMethod(const Instance& receiver,
   const Smi& invocation_type =
       Smi::Handle(Smi::New(InvocationMirror::EncodeType(level, kind)));
 
-  const Array& args = Array::Handle(Array::New(6));
+  const Array& args = Array::Handle(Array::New(7));
   args.SetAt(0, receiver);
   args.SetAt(1, function_name);
   args.SetAt(2, invocation_type);
-  // TODO(regis): Support invocation of generic functions with type arguments.
-  args.SetAt(3, Object::null_type_arguments());
-  args.SetAt(4, arguments);
-  args.SetAt(5, argument_names);
+  args.SetAt(3, Object::smi_zero());  // Type arguments length.
+  args.SetAt(4, Object::null_type_arguments());
+  args.SetAt(5, arguments);
+  args.SetAt(6, argument_names);
 
   const Library& libcore = Library::Handle(Library::CoreLibrary());
   const Class& NoSuchMethodError =
@@ -90,8 +90,8 @@ static void EnsureConstructorsAreCompiled(const Function& func) {
   func.EnsureHasCode();
 }
 
-static RawInstance* CreateParameterMirrorList(const Function& func,
-                                              const Instance& owner_mirror) {
+static InstancePtr CreateParameterMirrorList(const Function& func,
+                                             const Instance& owner_mirror) {
   HANDLESCOPE(Thread::Current());
   const intptr_t implicit_param_count = func.NumImplicitParameters();
   const intptr_t non_implicit_param_count =
@@ -184,8 +184,8 @@ static RawInstance* CreateParameterMirrorList(const Function& func,
   return results.raw();
 }
 
-static RawInstance* CreateTypeVariableMirror(const TypeParameter& param,
-                                             const Instance& owner_mirror) {
+static InstancePtr CreateTypeVariableMirror(const TypeParameter& param,
+                                            const Instance& owner_mirror) {
   const Array& args = Array::Handle(Array::New(3));
   args.SetAt(0, param);
   args.SetAt(1, String::Handle(param.name()));
@@ -195,7 +195,7 @@ static RawInstance* CreateTypeVariableMirror(const TypeParameter& param,
 
 // We create a list in native code and let Dart code create the type mirror
 // object and the ordered map.
-static RawInstance* CreateTypeVariableList(const Class& cls) {
+static InstancePtr CreateTypeVariableList(const Class& cls) {
   const TypeArguments& args = TypeArguments::Handle(cls.type_parameters());
   if (args.IsNull()) {
     return Object::empty_array().raw();
@@ -214,10 +214,10 @@ static RawInstance* CreateTypeVariableList(const Class& cls) {
   return result.raw();
 }
 
-static RawInstance* CreateTypedefMirror(const Class& cls,
-                                        const AbstractType& type,
-                                        const Bool& is_declaration,
-                                        const Instance& owner_mirror) {
+static InstancePtr CreateTypedefMirror(const Class& cls,
+                                       const AbstractType& type,
+                                       const Bool& is_declaration,
+                                       const Instance& owner_mirror) {
   const Array& args = Array::Handle(Array::New(6));
   args.SetAt(0, MirrorReference::Handle(MirrorReference::New(cls)));
   args.SetAt(1, type);
@@ -228,7 +228,7 @@ static RawInstance* CreateTypedefMirror(const Class& cls,
   return CreateMirror(Symbols::_TypedefMirror(), args);
 }
 
-static RawInstance* CreateFunctionTypeMirror(const AbstractType& type) {
+static InstancePtr CreateFunctionTypeMirror(const AbstractType& type) {
   ASSERT(type.IsFunctionType());
   const Class& cls = Class::Handle(Type::Cast(type).type_class());
   const Function& func = Function::Handle(Type::Cast(type).signature());
@@ -239,9 +239,9 @@ static RawInstance* CreateFunctionTypeMirror(const AbstractType& type) {
   return CreateMirror(Symbols::_FunctionTypeMirror(), args);
 }
 
-static RawInstance* CreateMethodMirror(const Function& func,
-                                       const Instance& owner_mirror,
-                                       const AbstractType& instantiator) {
+static InstancePtr CreateMethodMirror(const Function& func,
+                                      const Instance& owner_mirror,
+                                      const AbstractType& instantiator) {
   const Array& args = Array::Handle(Array::New(6));
   args.SetAt(0, MirrorReference::Handle(MirrorReference::New(func)));
 
@@ -259,7 +259,7 @@ static RawInstance* CreateMethodMirror(const Function& func,
       (static_cast<intptr_t>(func.IsGetterFunction()) << Mirrors::kGetter);
   kind_flags |=
       (static_cast<intptr_t>(func.IsSetterFunction()) << Mirrors::kSetter);
-  bool is_ctor = (func.kind() == RawFunction::kConstructor);
+  bool is_ctor = (func.kind() == FunctionLayout::kConstructor);
   kind_flags |= (static_cast<intptr_t>(is_ctor) << Mirrors::kConstructor);
   kind_flags |= (static_cast<intptr_t>(is_ctor && func.is_const())
                  << Mirrors::kConstCtor);
@@ -272,7 +272,7 @@ static RawInstance* CreateMethodMirror(const Function& func,
                  << Mirrors::kFactoryCtor);
   kind_flags |=
       (static_cast<intptr_t>(func.is_external()) << Mirrors::kExternal);
-  bool is_synthetic = func.is_no_such_method_forwarder();
+  bool is_synthetic = func.is_synthetic();
   kind_flags |= (static_cast<intptr_t>(is_synthetic) << Mirrors::kSynthetic);
   kind_flags |= (static_cast<intptr_t>(func.is_extension_member())
                  << Mirrors::kExtensionMember);
@@ -281,8 +281,8 @@ static RawInstance* CreateMethodMirror(const Function& func,
   return CreateMirror(Symbols::_MethodMirror(), args);
 }
 
-static RawInstance* CreateVariableMirror(const Field& field,
-                                         const Instance& owner_mirror) {
+static InstancePtr CreateVariableMirror(const Field& field,
+                                        const Instance& owner_mirror) {
   const MirrorReference& field_ref =
       MirrorReference::Handle(MirrorReference::New(field));
 
@@ -301,17 +301,19 @@ static RawInstance* CreateVariableMirror(const Field& field,
   return CreateMirror(Symbols::_VariableMirror(), args);
 }
 
-static RawInstance* CreateClassMirror(const Class& cls,
-                                      const AbstractType& type,
-                                      const Bool& is_declaration,
-                                      const Instance& owner_mirror) {
+static InstancePtr CreateClassMirror(const Class& cls,
+                                     const AbstractType& type,
+                                     const Bool& is_declaration,
+                                     const Instance& owner_mirror) {
   if (type.IsTypeRef()) {
     AbstractType& ref_type = AbstractType::Handle(TypeRef::Cast(type).type());
     ASSERT(!ref_type.IsTypeRef());
     ASSERT(ref_type.IsCanonical());
     return CreateClassMirror(cls, ref_type, is_declaration, owner_mirror);
   }
-  ASSERT(!cls.IsDynamicClass() && !cls.IsVoidClass());
+  ASSERT(!cls.IsDynamicClass());
+  ASSERT(!cls.IsVoidClass());
+  ASSERT(!cls.IsNeverClass());
   ASSERT(!type.IsNull());
   ASSERT(type.IsFinalized());
 
@@ -349,7 +351,7 @@ static bool IsCensoredLibrary(const String& url) {
   return false;
 }
 
-static RawInstance* CreateLibraryMirror(Thread* thread, const Library& lib) {
+static InstancePtr CreateLibraryMirror(Thread* thread, const Library& lib) {
   Zone* zone = thread->zone();
   ASSERT(!lib.IsNull());
   const Array& args = Array::Handle(zone, Array::New(3));
@@ -366,24 +368,24 @@ static RawInstance* CreateLibraryMirror(Thread* thread, const Library& lib) {
   return CreateMirror(Symbols::_LibraryMirror(), args);
 }
 
-static RawInstance* CreateCombinatorMirror(const Object& identifiers,
-                                           bool is_show) {
+static InstancePtr CreateCombinatorMirror(const Object& identifiers,
+                                          bool is_show) {
   const Array& args = Array::Handle(Array::New(2));
   args.SetAt(0, identifiers);
   args.SetAt(1, Bool::Get(is_show));
   return CreateMirror(Symbols::_CombinatorMirror(), args);
 }
 
-static RawInstance* CreateLibraryDependencyMirror(Thread* thread,
-                                                  const Instance& importer,
-                                                  const Library& importee,
-                                                  const Array& show_names,
-                                                  const Array& hide_names,
-                                                  const Object& metadata,
-                                                  const LibraryPrefix& prefix,
-                                                  const String& prefix_name,
-                                                  const bool is_import,
-                                                  const bool is_deferred) {
+static InstancePtr CreateLibraryDependencyMirror(Thread* thread,
+                                                 const Instance& importer,
+                                                 const Library& importee,
+                                                 const Array& show_names,
+                                                 const Array& hide_names,
+                                                 const Object& metadata,
+                                                 const LibraryPrefix& prefix,
+                                                 const String& prefix_name,
+                                                 const bool is_import,
+                                                 const bool is_deferred) {
   const Instance& importee_mirror =
       Instance::Handle(CreateLibraryMirror(thread, importee));
   if (importee_mirror.IsNull()) {
@@ -425,12 +427,12 @@ static RawInstance* CreateLibraryDependencyMirror(Thread* thread,
   return CreateMirror(Symbols::_LibraryDependencyMirror(), args);
 }
 
-static RawInstance* CreateLibraryDependencyMirror(Thread* thread,
-                                                  const Instance& importer,
-                                                  const Namespace& ns,
-                                                  const LibraryPrefix& prefix,
-                                                  const bool is_import,
-                                                  const bool is_deferred) {
+static InstancePtr CreateLibraryDependencyMirror(Thread* thread,
+                                                 const Instance& importer,
+                                                 const Namespace& ns,
+                                                 const LibraryPrefix& prefix,
+                                                 const bool is_import,
+                                                 const bool is_deferred) {
   const Library& importee = Library::Handle(ns.library());
   const Array& show_names = Array::Handle(ns.show_names());
   const Array& hide_names = Array::Handle(ns.hide_names());
@@ -451,7 +453,7 @@ static RawInstance* CreateLibraryDependencyMirror(Thread* thread,
                                        prefix_name, is_import, is_deferred);
 }
 
-static RawGrowableObjectArray* CreateBytecodeLibraryDependencies(
+static GrowableObjectArrayPtr CreateBytecodeLibraryDependencies(
     Thread* thread,
     const Library& lib,
     const Instance& lib_mirror) {
@@ -595,7 +597,7 @@ DEFINE_NATIVE_ENTRY(LibraryMirror_libraryDependencies, 0, 2) {
   return deps.raw();
 }
 
-static RawInstance* CreateTypeMirror(const AbstractType& type) {
+static InstancePtr CreateTypeMirror(const AbstractType& type) {
   if (type.IsTypeRef()) {
     AbstractType& ref_type = AbstractType::Handle(TypeRef::Cast(type).type());
     ASSERT(!ref_type.IsTypeRef());
@@ -625,6 +627,10 @@ static RawInstance* CreateTypeMirror(const AbstractType& type) {
       Array& args = Array::Handle(Array::New(1));
       args.SetAt(0, Symbols::Dynamic());
       return CreateMirror(Symbols::_SpecialTypeMirror(), args);
+    } else if (cls.IsNeverClass()) {
+      Array& args = Array::Handle(Array::New(1));
+      args.SetAt(0, Symbols::Never());
+      return CreateMirror(Symbols::_SpecialTypeMirror(), args);
     }
     // TODO(regis): Until mirrors reflect nullability, force kLegacy, except for
     // Null type, which should remain nullable.
@@ -646,7 +652,7 @@ static RawInstance* CreateTypeMirror(const AbstractType& type) {
   return Instance::null();
 }
 
-static RawInstance* CreateIsolateMirror() {
+static InstancePtr CreateIsolateMirror() {
   Thread* thread = Thread::Current();
   Isolate* isolate = thread->isolate();
   const String& debug_name = String::Handle(String::New(isolate->name()));
@@ -691,8 +697,8 @@ static void VerifyMethodKindShifts() {
 #endif
 }
 
-static RawAbstractType* InstantiateType(const AbstractType& type,
-                                        const AbstractType& instantiator) {
+static AbstractTypePtr InstantiateType(const AbstractType& type,
+                                       const AbstractType& instantiator) {
   // Generic function type parameters are not reified, but mapped to dynamic,
   // i.e. all function type parameters are free with a null vector.
   ASSERT(type.IsFinalized());
@@ -707,8 +713,8 @@ static RawAbstractType* InstantiateType(const AbstractType& type,
     instantiator_type_args = instantiator.arguments();
   }
   AbstractType& result = AbstractType::Handle(type.InstantiateFrom(
-      NNBDMode::kLegacyLib, instantiator_type_args,
-      Object::null_type_arguments(), kAllFree, NULL, Heap::kOld));
+      instantiator_type_args, Object::null_type_arguments(), kAllFree,
+      Heap::kOld));
   ASSERT(result.IsFinalized());
   return result.Canonicalize();
 }
@@ -830,7 +836,8 @@ DEFINE_NATIVE_ENTRY(Mirrors_makeLocalClassMirror, 0, 1) {
   ASSERT(type.HasTypeClass());
   const Class& cls = Class::Handle(type.type_class());
   ASSERT(!cls.IsNull());
-  if (cls.IsDynamicClass() || cls.IsVoidClass() || cls.IsTypedefClass()) {
+  if (cls.IsDynamicClass() || cls.IsVoidClass() || cls.IsNeverClass() ||
+      cls.IsTypedefClass()) {
     Exceptions::ThrowArgumentError(type);
     UNREACHABLE();
   }
@@ -1105,9 +1112,9 @@ DEFINE_NATIVE_ENTRY(ClassMirror_members, 0, 3) {
   for (intptr_t i = 0; i < num_functions; i++) {
     func ^= functions.At(i);
     if (func.is_reflectable() &&
-        (func.kind() == RawFunction::kRegularFunction ||
-         func.kind() == RawFunction::kGetterFunction ||
-         func.kind() == RawFunction::kSetterFunction)) {
+        (func.kind() == FunctionLayout::kRegularFunction ||
+         func.kind() == FunctionLayout::kGetterFunction ||
+         func.kind() == FunctionLayout::kSetterFunction)) {
       member_mirror =
           CreateMethodMirror(func, owner_mirror, owner_instantiator);
       member_mirrors.Add(member_mirror);
@@ -1140,7 +1147,7 @@ DEFINE_NATIVE_ENTRY(ClassMirror_constructors, 0, 3) {
   Function& func = Function::Handle();
   for (intptr_t i = 0; i < num_functions; i++) {
     func ^= functions.At(i);
-    if (func.is_reflectable() && func.kind() == RawFunction::kConstructor) {
+    if (func.is_reflectable() && func.kind() == FunctionLayout::kConstructor) {
       constructor_mirror =
           CreateMethodMirror(func, owner_mirror, owner_instantiator);
       constructor_mirrors.Add(constructor_mirror);
@@ -1172,19 +1179,18 @@ DEFINE_NATIVE_ENTRY(LibraryMirror_members, 0, 2) {
     entry = entries.GetNext();
     if (entry.IsClass()) {
       const Class& klass = Class::Cast(entry);
-      // We filter out dynamic.
-      // TODO(12478): Should not need to filter out dynamic.
-      if (!klass.IsDynamicClass()) {
-        error = klass.EnsureIsFinalized(thread);
-        if (!error.IsNull()) {
-          Exceptions::PropagateError(error);
-        }
-        type = klass.DeclarationType();
-        member_mirror = CreateClassMirror(klass, type,
-                                          Bool::True(),  // is_declaration
-                                          owner_mirror);
-        member_mirrors.Add(member_mirror);
+      ASSERT(!klass.IsDynamicClass());
+      ASSERT(!klass.IsVoidClass());
+      ASSERT(!klass.IsNeverClass());
+      error = klass.EnsureIsFinalized(thread);
+      if (!error.IsNull()) {
+        Exceptions::PropagateError(error);
       }
+      type = klass.DeclarationType();
+      member_mirror = CreateClassMirror(klass, type,
+                                        Bool::True(),  // is_declaration
+                                        owner_mirror);
+      member_mirrors.Add(member_mirror);
     } else if (entry.IsField()) {
       const Field& field = Field::Cast(entry);
       if (field.is_reflectable()) {
@@ -1194,9 +1200,9 @@ DEFINE_NATIVE_ENTRY(LibraryMirror_members, 0, 2) {
     } else if (entry.IsFunction()) {
       const Function& func = Function::Cast(entry);
       if (func.is_reflectable() &&
-          (func.kind() == RawFunction::kRegularFunction ||
-           func.kind() == RawFunction::kGetterFunction ||
-           func.kind() == RawFunction::kSetterFunction)) {
+          (func.kind() == FunctionLayout::kRegularFunction ||
+           func.kind() == FunctionLayout::kGetterFunction ||
+           func.kind() == FunctionLayout::kSetterFunction)) {
         member_mirror =
             CreateMethodMirror(func, owner_mirror, AbstractType::Handle());
         member_mirrors.Add(member_mirror);
@@ -1413,7 +1419,8 @@ DEFINE_NATIVE_ENTRY(ClassMirror_invokeConstructor, 0, 5) {
   GET_NON_NULL_NATIVE_ARGUMENT(Array, explicit_args, arguments->NativeArgAt(3));
   GET_NON_NULL_NATIVE_ARGUMENT(Array, arg_names, arguments->NativeArgAt(4));
 
-  const Error& error = Error::Handle(zone, klass.EnsureIsFinalized(thread));
+  const Error& error =
+      Error::Handle(zone, klass.EnsureIsAllocateFinalized(thread));
   if (!error.IsNull()) {
     Exceptions::PropagateError(error);
     UNREACHABLE();
@@ -1437,7 +1444,7 @@ DEFINE_NATIVE_ENTRY(ClassMirror_invokeConstructor, 0, 5) {
       Function::Handle(klass.LookupFunction(internal_constructor_name));
 
   if (lookup_constructor.IsNull() ||
-      (lookup_constructor.kind() != RawFunction::kConstructor) ||
+      (lookup_constructor.kind() != FunctionLayout::kConstructor) ||
       !lookup_constructor.is_reflectable()) {
     ThrowNoSuchMethod(AbstractType::Handle(klass.RareType()),
                       external_constructor_name, explicit_args, arg_names,
@@ -1477,8 +1484,7 @@ DEFINE_NATIVE_ENTRY(ClassMirror_invokeConstructor, 0, 5) {
       // type arguments of the type reflected by the class mirror.
       ASSERT(redirect_type.IsInstantiated(kFunctions));
       redirect_type ^= redirect_type.InstantiateFrom(
-          NNBDMode::kLegacyLib, type_arguments, Object::null_type_arguments(),
-          kNoneFree, NULL, Heap::kOld);
+          type_arguments, Object::null_type_arguments(), kNoneFree, Heap::kOld);
       redirect_type ^= redirect_type.Canonicalize();
     }
 
@@ -1504,11 +1510,10 @@ DEFINE_NATIVE_ENTRY(ClassMirror_invokeConstructor, 0, 5) {
 
   const int kTypeArgsLen = 0;
   const Array& args_descriptor_array = Array::Handle(
-      ArgumentsDescriptor::New(kTypeArgsLen, args.Length(), arg_names));
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, args.Length(), arg_names));
 
   ArgumentsDescriptor args_descriptor(args_descriptor_array);
-  if (!redirected_constructor.AreValidArguments(NNBDMode::kLegacyLib,
-                                                args_descriptor, NULL)) {
+  if (!redirected_constructor.AreValidArguments(args_descriptor, NULL)) {
     external_constructor_name = redirected_constructor.name();
     ThrowNoSuchMethod(AbstractType::Handle(klass.RareType()),
                       external_constructor_name, explicit_args, arg_names,
@@ -1518,7 +1523,7 @@ DEFINE_NATIVE_ENTRY(ClassMirror_invokeConstructor, 0, 5) {
   }
   const Object& type_error =
       Object::Handle(redirected_constructor.DoArgumentTypesMatch(
-          NNBDMode::kLegacyLib, args, args_descriptor, type_arguments));
+          args, args_descriptor, type_arguments));
   if (!type_error.IsNull()) {
     Exceptions::PropagateError(Error::Cast(type_error));
     UNREACHABLE();
@@ -1635,9 +1640,9 @@ DEFINE_NATIVE_ENTRY(MethodMirror_source, 0, 1) {
   return func.GetSource();
 }
 
-static RawInstance* CreateSourceLocation(const String& uri,
-                                         intptr_t line,
-                                         intptr_t column) {
+static InstancePtr CreateSourceLocation(const String& uri,
+                                        intptr_t line,
+                                        intptr_t column) {
   const Array& args = Array::Handle(Array::New(3));
   args.SetAt(0, uri);
   args.SetAt(1, Smi::Handle(Smi::New(line)));
@@ -1700,6 +1705,8 @@ DEFINE_NATIVE_ENTRY(DeclarationMirror_location, 0, 1) {
     ASSERT(!script.IsNull());
     const String& uri = String::Handle(zone, script.url());
     return CreateSourceLocation(uri, 1, 1);
+  } else {
+    FATAL1("Unexpected declaration type: %s", decl.ToCString());
   }
 
   ASSERT(!script.IsNull());
@@ -1756,7 +1763,7 @@ DEFINE_NATIVE_ENTRY(VariableMirror_type, 0, 2) {
 DEFINE_NATIVE_ENTRY(TypeMirror_subtypeTest, 0, 2) {
   GET_NON_NULL_NATIVE_ARGUMENT(AbstractType, a, arguments->NativeArgAt(0));
   GET_NON_NULL_NATIVE_ARGUMENT(AbstractType, b, arguments->NativeArgAt(1));
-  return Bool::Get(a.IsSubtypeOf(NNBDMode::kLegacyLib, b, Heap::kNew)).raw();
+  return Bool::Get(a.IsSubtypeOf(b, Heap::kNew)).raw();
 }
 
 #endif  // !DART_PRECOMPILED_RUNTIME

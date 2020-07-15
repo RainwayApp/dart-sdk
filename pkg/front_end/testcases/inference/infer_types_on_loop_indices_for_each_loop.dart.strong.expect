@@ -36,6 +36,16 @@ class Foo extends core::Object {
   synthetic constructor •() → self::Foo*
     : super core::Object::•()
     ;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class Bar<T extends core::Iterable<core::String*>* = core::Iterable<core::String*>*> extends core::Object {
   synthetic constructor •() → self::Bar<self::Bar::T*>*
@@ -48,6 +58,16 @@ class Bar<T extends core::Iterable<core::String*>* = core::Iterable<core::String
                                            ^" in i as{TypeError} core::int*;
     }
   }
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class Baz<T extends core::Object* = dynamic, E extends core::Iterable<self::Baz::T*>* = core::Iterable<dynamic>*, S extends self::Baz::E* = core::Iterable<dynamic>*> extends core::Object {
   synthetic constructor •() → self::Baz<self::Baz::T*, self::Baz::E*, self::Baz::S*>*
@@ -61,6 +81,16 @@ class Baz<T extends core::Object* = dynamic, E extends core::Iterable<self::Baz:
       self::Baz::T* y = i;
     }
   }
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 static method test() → dynamic {
   core::List<self::Foo*>* list = <self::Foo*>[];
@@ -71,7 +101,7 @@ static method test() → dynamic {
                                             ^" in x as{TypeError} core::String*;
   }
   for (dynamic x in list) {
-    core::String* y = x as{TypeError} core::String*;
+    core::String* y = x as{TypeError,ForDynamic} core::String*;
   }
   for (final self::Foo* #t4 in list) {
     core::String* x = let final<BottomType> #t5 = invalid-expression "pkg/front_end/testcases/inference/infer_types_on_loop_indices_for_each_loop.dart:39:15: Error: A value of type 'Foo' can't be assigned to a variable of type 'String'.
@@ -84,16 +114,16 @@ Try changing the type of the variable.
   dynamic z;
   for (final self::Foo* #t6 in list) {
     z = #t6;
-    core::String* y = z as{TypeError} core::String*;
+    core::String* y = z as{TypeError,ForDynamic} core::String*;
   }
   core::Iterable<dynamic>* iter = list;
   for (final dynamic #t7 in iter) {
-    self::Foo* x = #t7 as{TypeError} self::Foo*;
+    self::Foo* x = #t7 as{TypeError,ForDynamic} self::Foo*;
     self::Foo* y = x;
   }
   dynamic iter2 = list;
-  for (final dynamic #t8 in iter2 as{TypeError} core::Iterable<dynamic>*) {
-    self::Foo* x = #t8 as{TypeError} self::Foo*;
+  for (final dynamic #t8 in iter2 as{TypeError,ForDynamic} core::Iterable<dynamic>*) {
+    self::Foo* x = #t8 as{TypeError,ForDynamic} self::Foo*;
     self::Foo* y = x;
   }
   core::Map<core::String*, self::Foo*>* map = <core::String*, self::Foo*>{};
@@ -103,7 +133,7 @@ Try changing the type of the variable.
  - 'Iterable' is from 'dart:core'.
   for (var /*@ type=dynamic */ x in /*error:FOR_IN_OF_INVALID_TYPE*/ map) {
                                                                      ^" in map as{TypeError} core::Iterable<dynamic>*) {
-    core::String* y = x as{TypeError} core::String*;
+    core::String* y = x as{TypeError,ForDynamic} core::String*;
   }
   for (core::String* x in map.{core::Map::keys}) {
     core::String* y = x;

@@ -2,25 +2,32 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'package:analysis_server/src/protocol_server.dart';
 import 'package:analyzer/dart/analysis/results.dart';
-import 'package:analyzer/src/generated/resolver.dart';
+import 'package:analyzer/file_system/physical_file_system.dart';
+import 'package:analyzer/src/dart/analysis/session.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/generated/source.dart';
-import 'package:meta/meta.dart';
+import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:nnbd_migration/instrumentation.dart';
 import 'package:nnbd_migration/nnbd_migration.dart';
 import 'package:nnbd_migration/src/decorated_class_hierarchy.dart';
+import 'package:nnbd_migration/src/decorated_type.dart';
 import 'package:nnbd_migration/src/edge_builder.dart';
 import 'package:nnbd_migration/src/edit_plan.dart';
+import 'package:nnbd_migration/src/exceptions.dart';
 import 'package:nnbd_migration/src/fix_aggregator.dart';
 import 'package:nnbd_migration/src/fix_builder.dart';
 import 'package:nnbd_migration/src/node_builder.dart';
 import 'package:nnbd_migration/src/nullability_node.dart';
-import 'package:nnbd_migration/src/potential_modification.dart';
+import 'package:nnbd_migration/src/postmortem_file.dart';
 import 'package:nnbd_migration/src/variables.dart';
 
 /// Implementation of the [NullabilityMigration] public API.
 class NullabilityMigrationImpl implements NullabilityMigration {
+  /// Set this constant to a pathname to cause nullability migration to output
+  /// a post-mortem file that can be later examined by tool/postmortem.dart.
+  static const String _postmortemPath = null;
+
   final NullabilityMigrationListener listener;
 
   Variables _variables;
@@ -35,13 +42,21 @@ class NullabilityMigrationImpl implements NullabilityMigration {
 
   bool _propagated = false;
 
-  /// Indicates whether migration should use the new [FixBuilder]
-  /// infrastructure.  Once FixBuilder is at feature parity with the old
-  /// implementation, this option will be removed and FixBuilder will be used
-  /// unconditionally.
-  ///
-  /// Currently defaults to `false`.
-  final bool useFixBuilder;
+  /// Indicates whether code removed by the migration engine should be removed
+  /// by commenting it out.  A value of `false` means to actually delete the
+  /// code that is removed.
+  final bool removeViaComments;
+
+  final bool warnOnWeakCode;
+
+  final _decoratedTypeParameterBounds = DecoratedTypeParameterBounds();
+
+  /// If not `null`, the object that will be used to write out post-mortem
+  /// information once migration is complete.
+  final PostmortemFileWriter _postmortemFileWriter =
+      _makePostmortemFileWriter();
+
+  final LineInfo Function(String) _getLineInfo;
 
   /// Prepares to perform nullability migration.
   ///
@@ -50,172 +65,163 @@ class NullabilityMigrationImpl implements NullabilityMigration {
   /// complete.  TODO(paulberry): remove this mode once the migration algorithm
   /// is fully implemented.
   ///
-  /// [useFixBuilder] indicates whether migration should use the new
-  /// [FixBuilder] infrastructure.  Once FixBuilder is at feature parity with
-  /// the old implementation, this option will be removed and FixBuilder will
-  /// be used unconditionally.
+  /// Optional parameter [removeViaComments] indicates whether code that the
+  /// migration tool wishes to remove should instead be commenting it out.
+  ///
+  /// Optional parameter [warnOnWeakCode] indicates whether weak-only code
+  /// should be warned about or removed (in the way specified by
+  /// [removeViaComments]).
   NullabilityMigrationImpl(NullabilityMigrationListener listener,
+      LineInfo Function(String) getLineInfo,
       {bool permissive: false,
       NullabilityMigrationInstrumentation instrumentation,
-      bool useFixBuilder: false})
-      : this._(listener, NullabilityGraph(instrumentation: instrumentation),
-            permissive, instrumentation, useFixBuilder);
+      bool removeViaComments = false,
+      bool warnOnWeakCode = true})
+      : this._(
+            listener,
+            NullabilityGraph(instrumentation: instrumentation),
+            permissive,
+            instrumentation,
+            removeViaComments,
+            warnOnWeakCode,
+            getLineInfo);
 
-  NullabilityMigrationImpl._(this.listener, this._graph, this._permissive,
-      this._instrumentation, this.useFixBuilder) {
+  NullabilityMigrationImpl._(
+      this.listener,
+      this._graph,
+      this._permissive,
+      this._instrumentation,
+      this.removeViaComments,
+      this.warnOnWeakCode,
+      this._getLineInfo) {
     _instrumentation?.immutableNodes(_graph.never, _graph.always);
+    _postmortemFileWriter?.graph = _graph;
   }
 
   @override
+  bool get isPermissive => _permissive;
+
+  @override
   void finalizeInput(ResolvedUnitResult result) {
-    if (!useFixBuilder) return;
+    ExperimentStatusException.sanityCheck(result);
     if (!_propagated) {
       _propagated = true;
-      _graph.propagate();
+      _graph.propagate(_postmortemFileWriter);
     }
     var unit = result.unit;
     var compilationUnit = unit.declaredElement;
     var library = compilationUnit.library;
     var source = compilationUnit.source;
+    // Hierarchies were created assuming the libraries being migrated are opted
+    // out, but the FixBuilder will analyze assuming they're opted in.  So we
+    // need to clear the hierarchies before we continue.
+    (result.session as AnalysisSessionImpl).clearHierarchies();
     var fixBuilder = FixBuilder(
         source,
         _decoratedClassHierarchy,
         result.typeProvider,
-        library.typeSystem as Dart2TypeSystem,
+        library.typeSystem as TypeSystemImpl,
         _variables,
-        library);
-    fixBuilder.visitAll(unit);
-    var changes = FixAggregator.run(unit, fixBuilder.changes);
-    for (var entry in changes.entries) {
-      final lineInfo = LineInfo.fromContent(source.contents.data);
-      var fix = _SingleNullabilityFix(
-          source, const _DummyPotentialModification(), lineInfo);
-      listener.addFix(fix);
-      // TODO(paulberry): don't pass null to instrumentation.
-      _instrumentation?.fix(fix, null);
-      listener.addEdit(fix, entry.value.toSourceEdit(entry.key));
+        library,
+        _permissive ? listener : null,
+        unit,
+        warnOnWeakCode,
+        _graph);
+    try {
+      DecoratedTypeParameterBounds.current = _decoratedTypeParameterBounds;
+      fixBuilder.visitAll();
+    } finally {
+      DecoratedTypeParameterBounds.current = null;
+    }
+    var changes = FixAggregator.run(unit, result.content, fixBuilder.changes,
+        removeViaComments: removeViaComments, warnOnWeakCode: warnOnWeakCode);
+    _instrumentation?.changes(source, changes);
+    final lineInfo = LineInfo.fromContent(source.contents.data);
+    var offsets = changes.keys.toList();
+    offsets.sort();
+    for (var offset in offsets) {
+      var edits = changes[offset];
+      var descriptions = edits
+          .map((edit) => edit.info)
+          .where((info) => info != null)
+          .map((info) => info.description.appliedMessage)
+          .join(', ');
+      var sourceEdit = edits.toSourceEdit(offset);
+      listener.addSuggestion(
+          descriptions, _computeLocation(lineInfo, sourceEdit, source));
+      listener.addEdit(source, sourceEdit);
     }
   }
 
   void finish() {
-    if (useFixBuilder) return;
-    _graph.propagate();
-    if (_graph.unsatisfiedSubstitutions.isNotEmpty) {
-      // TODO(paulberry): for now we just ignore unsatisfied substitutions, to
-      // work around https://github.com/dart-lang/sdk/issues/38257
-      // throw new UnimplementedError('Need to report unsatisfied substitutions');
-    }
-    // TODO(paulberry): it would be nice to report on unsatisfied edges as well,
-    // however, since every `!` we add has an unsatisfied edge associated with
-    // it, we can't report on every unsatisfied edge.  We need to figure out a
-    // way to report unsatisfied edges that isn't too overwhelming.
-    if (_variables != null) {
-      broadcast(_variables, listener, _instrumentation);
-    }
+    _postmortemFileWriter?.write();
+    _instrumentation?.finished();
   }
 
   void prepareInput(ResolvedUnitResult result) {
+    ExperimentStatusException.sanityCheck(result);
     if (_variables == null) {
-      _variables = Variables(_graph, result.typeProvider,
-          instrumentation: _instrumentation);
+      _variables = Variables(_graph, result.typeProvider, _getLineInfo,
+          instrumentation: _instrumentation,
+          postmortemFileWriter: _postmortemFileWriter);
       _decoratedClassHierarchy = DecoratedClassHierarchy(_variables, _graph);
     }
     var unit = result.unit;
-    unit.accept(NodeBuilder(_variables, unit.declaredElement.source,
-        _permissive ? listener : null, _graph, result.typeProvider,
-        instrumentation: _instrumentation));
+    try {
+      DecoratedTypeParameterBounds.current = _decoratedTypeParameterBounds;
+      unit.accept(NodeBuilder(
+          _variables,
+          unit.declaredElement.source,
+          _permissive ? listener : null,
+          _graph,
+          result.typeProvider,
+          _getLineInfo,
+          instrumentation: _instrumentation));
+    } finally {
+      DecoratedTypeParameterBounds.current = null;
+    }
   }
 
   void processInput(ResolvedUnitResult result) {
+    ExperimentStatusException.sanityCheck(result);
     var unit = result.unit;
-    unit.accept(EdgeBuilder(
-        result.typeProvider,
-        result.typeSystem,
-        _variables,
-        _graph,
-        unit.declaredElement.source,
-        _permissive ? listener : null,
-        _decoratedClassHierarchy,
-        instrumentation: _instrumentation));
-  }
-
-  @visibleForTesting
-  static void broadcast(
-      Variables variables,
-      NullabilityMigrationListener listener,
-      NullabilityMigrationInstrumentation instrumentation) {
-    for (var entry in variables.getPotentialModifications().entries) {
-      var source = entry.key;
-      final lineInfo = LineInfo.fromContent(source.contents.data);
-      for (var potentialModification in entry.value) {
-        var modifications = potentialModification.modifications;
-        if (modifications.isEmpty) {
-          continue;
-        }
-        var fix =
-            _SingleNullabilityFix(source, potentialModification, lineInfo);
-        listener.addFix(fix);
-        instrumentation?.fix(fix, potentialModification.reasons);
-        for (var edit in modifications) {
-          listener.addEdit(fix, edit);
-        }
-      }
+    try {
+      DecoratedTypeParameterBounds.current = _decoratedTypeParameterBounds;
+      unit.accept(EdgeBuilder(
+          result.typeProvider,
+          result.typeSystem,
+          _variables,
+          _graph,
+          unit.declaredElement.source,
+          _permissive ? listener : null,
+          _decoratedClassHierarchy,
+          instrumentation: _instrumentation));
+    } finally {
+      DecoratedTypeParameterBounds.current = null;
     }
   }
-}
-
-/// Dummy implementation of [PotentialModification] used as a temporary bridge
-/// between the old pre-FixBuilder logic and the new FixBuilder logic (which
-/// doesn't use [PotentialModification]).
-///
-/// TODO(paulberry): once we've fully migrated over to the new logic, this class
-/// should go away (as should [PotentialModification]).
-class _DummyPotentialModification implements PotentialModification {
-  const _DummyPotentialModification();
 
   @override
-  NullabilityFixDescription get description => null;
-
-  @override
-  Iterable<SourceEdit> get modifications => const [];
-
-  @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
-}
-
-/// Implementation of [SingleNullabilityFix] used internally by
-/// [NullabilityMigration].
-class _SingleNullabilityFix extends SingleNullabilityFix {
-  @override
-  final Source source;
-
-  @override
-  final NullabilityFixDescription description;
-
-  List<Location> _locations;
-
-  factory _SingleNullabilityFix(Source source,
-      PotentialModification potentialModification, LineInfo lineInfo) {
-    List<Location> locations = [];
-
-    for (var modification in potentialModification.modifications) {
-      final locationInfo = lineInfo.getLocation(modification.offset);
-      locations.add(new Location(
-        source.fullName,
-        modification.offset,
-        modification.length,
-        locationInfo.lineNumber,
-        locationInfo.columnNumber,
-      ));
-    }
-
-    return _SingleNullabilityFix._(source, potentialModification.description,
-        locations: locations);
+  void update() {
+    _graph.update(_postmortemFileWriter);
   }
 
-  _SingleNullabilityFix._(this.source, this.description,
-      {List<Location> locations})
-      : this._locations = locations;
+  static Location _computeLocation(
+      LineInfo lineInfo, SourceEdit edit, Source source) {
+    final locationInfo = lineInfo.getLocation(edit.offset);
+    var location = new Location(
+      source.fullName,
+      edit.offset,
+      edit.length,
+      locationInfo.lineNumber,
+      locationInfo.columnNumber,
+    );
+    return location;
+  }
 
-  List<Location> get locations => _locations;
+  static PostmortemFileWriter _makePostmortemFileWriter() {
+    if (_postmortemPath == null) return null;
+    return PostmortemFileWriter(
+        PhysicalResourceProvider.INSTANCE.getFile(_postmortemPath));
+  }
 }

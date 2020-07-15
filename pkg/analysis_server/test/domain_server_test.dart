@@ -7,6 +7,7 @@ import 'package:analysis_server/protocol/protocol_constants.dart';
 import 'package:analysis_server/protocol/protocol_generated.dart';
 import 'package:analysis_server/src/analysis_server.dart';
 import 'package:analysis_server/src/domain_server.dart';
+import 'package:analysis_server/src/server/crash_reporting_attachments.dart';
 import 'package:analysis_server/src/utilities/mocks.dart';
 import 'package:analyzer/file_system/memory_file_system.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
@@ -16,7 +17,7 @@ import 'package:test/test.dart';
 import 'constants.dart';
 import 'mocks.dart';
 
-main() {
+void main() {
   AnalysisServer server;
   ServerDomainHandler handler;
   MockServerChannel serverChannel;
@@ -28,7 +29,8 @@ main() {
         serverChannel,
         resourceProvider,
         AnalysisServerOptions(),
-        DartSdkManager('', false),
+        DartSdkManager(''),
+        CrashReportingAttachmentsBuilder.empty,
         InstrumentationService.NULL_SERVICE);
     handler = ServerDomainHandler(server);
   });
@@ -47,7 +49,7 @@ main() {
 
     group('setSubscriptions', () {
       test('invalid service name', () {
-        Request request = Request('0', SERVER_REQUEST_SET_SUBSCRIPTIONS, {
+        var request = Request('0', SERVER_REQUEST_SET_SUBSCRIPTIONS, {
           SUBSCRIPTIONS: ['noSuchService']
         });
         var response = handler.handleRequest(request);
@@ -57,7 +59,7 @@ main() {
       test('success', () {
         expect(server.serverServices, isEmpty);
         // send request
-        Request request =
+        var request =
             ServerSetSubscriptionsParams([ServerService.STATUS]).toRequest('0');
         var response = handler.handleRequest(request);
         expect(response, isResponseSuccess('0'));

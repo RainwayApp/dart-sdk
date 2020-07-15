@@ -23,7 +23,6 @@ main(List<String> args) async {
       'data'));
   await runTests<_Data>(dataDir,
       args: args,
-      supportedMarkers: cfeAnalyzerMarkers,
       createUriForFileName: createUriForFileName,
       onFailure: onFailure,
       runTest: runTestFor<_Data>(
@@ -40,7 +39,10 @@ class AssignedVariablesDataComputer extends DataComputer<_Data> {
   /// Function that computes a data mapping for [member].
   ///
   /// Fills [actualMap] with the data.
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<_Data>> actualMap,
       {bool verbose}) {
     MemberBuilderImpl memberBuilder =
@@ -98,7 +100,7 @@ class _AssignedVariablesDataInterpreter implements DataInterpreter<_Data> {
   const _AssignedVariablesDataInterpreter();
 
   @override
-  String getText(_Data actualData) {
+  String getText(_Data actualData, [String indentation]) {
     var parts = <String>[];
     if (actualData.declared.isNotEmpty) {
       parts.add('declared=${_setToString(actualData.declared)}');

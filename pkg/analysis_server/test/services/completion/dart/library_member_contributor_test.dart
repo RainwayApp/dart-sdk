@@ -4,16 +4,14 @@
 
 import 'package:analysis_server/src/provisional/completion/dart/completion_dart.dart';
 import 'package:analysis_server/src/services/completion/dart/library_member_contributor.dart';
-import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'completion_contributor_util.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
-//    defineReflectiveTests(LibraryMemberContributorTest);
-    defineReflectiveTests(LibraryMemberContributorWithExtensionMethodsTest);
+    defineReflectiveTests(LibraryMemberContributorTest);
   });
 }
 
@@ -24,7 +22,19 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     return LibraryMemberContributor();
   }
 
-  test_libraryPrefix() async {
+  Future<void> test_extension() async {
+    // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
+    addSource('/home/test/lib/b.dart', '''
+extension MyExt on int {}
+''');
+    addTestSource('''
+        import "b.dart" as b;
+        main() {b.^}''');
+    await computeSuggestions();
+    assertSuggest('MyExt');
+  }
+
+  Future<void> test_libraryPrefix() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addTestSource('import "dart:async" as bar; foo() {bar.^}');
     await computeSuggestions();
@@ -32,14 +42,14 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNotSuggested('loadLibrary');
   }
 
-  test_libraryPrefix2() async {
+  Future<void> test_libraryPrefix2() async {
     // SimpleIdentifier  MethodInvocation  ExpressionStatement
     addTestSource('import "dart:async" as bar; foo() {bar.^ print("f")}');
     await computeSuggestions();
     assertSuggestClass('Future');
   }
 
-  test_libraryPrefix3() async {
+  Future<void> test_libraryPrefix3() async {
     // SimpleIdentifier  MethodInvocation  ExpressionStatement
     addTestSource('import "dart:async" as bar; foo() {new bar.F^ print("f")}');
     await computeSuggestions();
@@ -47,7 +57,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertSuggestConstructor('Future.delayed');
   }
 
-  test_libraryPrefix_cascade() async {
+  Future<void> test_libraryPrefix_cascade() async {
     addTestSource('''
     import "dart:math" as math;
     main() {math..^}''');
@@ -55,7 +65,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNoSuggestions();
   }
 
-  test_libraryPrefix_cascade2() async {
+  Future<void> test_libraryPrefix_cascade2() async {
     addTestSource('''
     import "dart:math" as math;
     main() {math.^.}''');
@@ -63,7 +73,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertSuggestFunction('min', 'T');
   }
 
-  test_libraryPrefix_cascade3() async {
+  Future<void> test_libraryPrefix_cascade3() async {
     addTestSource('''
     import "dart:math" as math;
     main() {math..^a}''');
@@ -71,7 +81,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNoSuggestions();
   }
 
-  test_libraryPrefix_cascade4() async {
+  Future<void> test_libraryPrefix_cascade4() async {
     addTestSource('''
     import "dart:math" as math;
     main() {math.^.a}''');
@@ -79,7 +89,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertSuggestFunction('min', 'T');
   }
 
-  test_libraryPrefix_deferred() async {
+  Future<void> test_libraryPrefix_deferred() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addTestSource('import "dart:async" deferred as bar; foo() {bar.^}');
     await computeSuggestions();
@@ -87,7 +97,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertSuggestFunction('loadLibrary', 'Future<dynamic>');
   }
 
-  test_libraryPrefix_deferred_inPart() async {
+  Future<void> test_libraryPrefix_deferred_inPart() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addSource('/home/test/lib/a.dart', '''
         library testA;
@@ -101,7 +111,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNotSuggested('foo');
   }
 
-  test_libraryPrefix_with_exports() async {
+  Future<void> test_libraryPrefix_with_exports() async {
     addSource('/home/test/lib/a.dart', 'library libA; class A { }');
     addSource('/home/test/lib/b.dart', '''
         library libB;
@@ -116,7 +126,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNotSuggested('C');
   }
 
-  test_PrefixedIdentifier_library() async {
+  Future<void> test_PrefixedIdentifier_library() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addSource('/home/test/lib/b.dart', '''
         lib B;
@@ -141,7 +151,7 @@ class LibraryMemberContributorTest extends DartCompletionContributorTest {
     assertNotSuggested('==');
   }
 
-  test_PrefixedIdentifier_library_export_withShow() async {
+  Future<void> test_PrefixedIdentifier_library_export_withShow() async {
     addSource('/home/test/lib/a.dart', r'''
 class A {}
 class B {}
@@ -160,7 +170,7 @@ main() {
     assertNotSuggested('B');
   }
 
-  test_PrefixedIdentifier_library_import_withShow() async {
+  Future<void> test_PrefixedIdentifier_library_import_withShow() async {
     addSource('/home/test/lib/a.dart', r'''
 class A {}
 class B {}
@@ -176,7 +186,7 @@ main() {
     assertNotSuggested('B');
   }
 
-  test_PrefixedIdentifier_library_inPart() async {
+  Future<void> test_PrefixedIdentifier_library_inPart() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addSource('/home/test/lib/b.dart', '''
         lib B;
@@ -206,7 +216,7 @@ main() {
     assertNotSuggested('==');
   }
 
-  test_PrefixedIdentifier_library_typesOnly() async {
+  Future<void> test_PrefixedIdentifier_library_typesOnly() async {
     // SimpleIdentifier  PrefixedIdentifier  TypeName
     addSource('/home/test/lib/b.dart', '''
         lib B;
@@ -231,7 +241,7 @@ main() {
     assertNotSuggested('==');
   }
 
-  test_PrefixedIdentifier_library_typesOnly2() async {
+  Future<void> test_PrefixedIdentifier_library_typesOnly2() async {
     // SimpleIdentifier  PrefixedIdentifier  TypeName
     addSource('/home/test/lib/b.dart', '''
         lib B;
@@ -256,7 +266,7 @@ main() {
     assertNotSuggested('==');
   }
 
-  test_PrefixedIdentifier_parameter() async {
+  Future<void> test_PrefixedIdentifier_parameter() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addSource('/home/test/lib/b.dart', '''
         lib B;
@@ -270,7 +280,7 @@ main() {
     assertNoSuggestions();
   }
 
-  test_PrefixedIdentifier_prefix() async {
+  Future<void> test_PrefixedIdentifier_prefix() async {
     // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
     addSource('/home/test/lib/a.dart', '''
         class A {static int bar = 10;}
@@ -280,32 +290,5 @@ main() {
         class X {foo(){A^.bar}}''');
     await computeSuggestions();
     assertNoSuggestions();
-  }
-}
-
-@reflectiveTest
-class LibraryMemberContributorWithExtensionMethodsTest
-    extends DartCompletionContributorTest {
-  @override
-  DartCompletionContributor createContributor() {
-    return LibraryMemberContributor();
-  }
-
-  @override
-  void setupResourceProvider() {
-    super.setupResourceProvider();
-    createAnalysisOptionsFile(experiments: [EnableString.extension_methods]);
-  }
-
-  test_extension() async {
-    // SimpleIdentifier  PrefixedIdentifier  ExpressionStatement
-    addSource('/home/test/lib/b.dart', '''
-extension MyExt on int {}
-''');
-    addTestSource('''
-        import "b.dart" as b;
-        main() {b.^}''');
-    await computeSuggestions();
-    assertSuggest('MyExt');
   }
 }

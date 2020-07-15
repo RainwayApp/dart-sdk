@@ -3,35 +3,65 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analysis_server/src/services/correction/fix.dart';
-import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer_plugin/utilities/fixes/fixes.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ImportLibraryProject1Test);
-    defineReflectiveTests(ImportLibraryProject1WithExtensionMethodsTest);
     defineReflectiveTests(ImportLibraryProject2Test);
-    defineReflectiveTests(ImportLibraryProject2WithExtensionMethodsTest);
     defineReflectiveTests(ImportLibraryProject3Test);
-    defineReflectiveTests(ImportLibraryProject3WithExtensionMethodsTest);
   });
 }
 
 @reflectiveTest
-class ImportLibraryProject1WithExtensionMethodsTest extends FixProcessorTest {
+class ImportLibraryProject1Test extends FixProcessorTest {
   @override
   FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT1;
 
-  @override
-  void setUp() {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
-    super.setUp();
+  Future<void> test_alreadyImported_package() async {
+    addSource('/home/test/lib/lib.dart', '''
+class A {}
+class B {}
+''');
+    await resolveTestUnit('''
+import 'lib.dart' show A;
+main() {
+  A a;
+  B b;
+  print('\$a \$b');
+}
+''');
+    await assertNoFix();
   }
 
-  test_lib() async {
+  Future<void> test_lib() async {
+    addPackageFile('my_pkg', 'a.dart', 'class Test {}');
+    newFile('/home/test/pubspec.yaml', content: r'''
+dependencies:
+  my_pkg: any
+''');
+
+    await resolveTestUnit('''
+main() {
+  Test test = null;
+  print(test);
+}
+''');
+
+    await assertHasFix('''
+import 'package:my_pkg/a.dart';
+
+main() {
+  Test test = null;
+  print(test);
+}
+''', expectedNumberOfFixesForKind: 1);
+  }
+
+  Future<void> test_lib_extension() async {
     addPackageFile('my_pkg', 'a.dart', '''
 extension E on int {
   static String m() => '';
@@ -56,54 +86,8 @@ f() {
 }
 ''', expectedNumberOfFixesForKind: 1);
   }
-}
 
-@reflectiveTest
-class ImportLibraryProject1Test extends FixProcessorTest {
-  @override
-  FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT1;
-
-  test_alreadyImported_package() async {
-    addSource('/home/test/lib/lib.dart', '''
-class A {}
-class B {}
-''');
-    await resolveTestUnit('''
-import 'lib.dart' show A;
-main() {
-  A a;
-  B b;
-  print('\$a \$b');
-}
-''');
-    await assertNoFix();
-  }
-
-  test_lib() async {
-    addPackageFile('my_pkg', 'a.dart', 'class Test {}');
-    newFile('/home/test/pubspec.yaml', content: r'''
-dependencies:
-  my_pkg: any
-''');
-
-    await resolveTestUnit('''
-main() {
-  Test test = null;
-  print(test);
-}
-''');
-
-    await assertHasFix('''
-import 'package:my_pkg/a.dart';
-
-main() {
-  Test test = null;
-  print(test);
-}
-''', expectedNumberOfFixesForKind: 1);
-  }
-
-  test_lib_src() async {
+  Future<void> test_lib_src() async {
     addPackageFile('my_pkg', 'src/a.dart', 'class Test {}');
     newFile('/home/test/pubspec.yaml', content: r'''
 dependencies:
@@ -118,7 +102,7 @@ main() {
     await assertNoFix();
   }
 
-  test_notInLib() async {
+  Future<void> test_notInLib() async {
     addSource('/home/other/test/lib.dart', 'class Test {}');
     await resolveTestUnit('''
 main() {
@@ -129,7 +113,7 @@ main() {
     await assertNoFix();
   }
 
-  test_relativeDirective() async {
+  Future<void> test_relativeDirective() async {
     addSource('/home/test/lib/a.dart', '''
 class Foo {}
 ''');
@@ -145,7 +129,7 @@ main() { new Foo(); }
         matchFixMessage: "Import library 'a.dart'");
   }
 
-  test_relativeDirective_downOneDirectory() async {
+  Future<void> test_relativeDirective_downOneDirectory() async {
     addSource('/home/test/lib/dir/a.dart', '''
 class Foo {}
 ''');
@@ -161,7 +145,7 @@ main() { new Foo(); }
         matchFixMessage: "Import library 'dir/a.dart'");
   }
 
-  test_relativeDirective_upOneDirectory() async {
+  Future<void> test_relativeDirective_upOneDirectory() async {
     addSource('/home/test/lib/a.dart', '''
 class Foo {}
 ''');
@@ -178,7 +162,7 @@ main() { new Foo(); }
         matchFixMessage: "Import library '../a.dart'");
   }
 
-  test_withClass_annotation() async {
+  Future<void> test_withClass_annotation() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 class Test {
@@ -199,7 +183,33 @@ main() {
 ''');
   }
 
-  test_withClass_hasOtherLibraryWithPrefix() async {
+  Future<void> test_withClass_catchClause() async {
+    addSource('/home/test/lib/lib.dart', '''
+class Test {}
+''');
+    await resolveTestUnit('''
+void f() {
+  try {
+    print(1);
+  } on Test {
+    print(2);
+  }
+}
+''');
+    await assertHasFix('''
+import 'package:test/lib.dart';
+
+void f() {
+  try {
+    print(1);
+  } on Test {
+    print(2);
+  }
+}
+''');
+  }
+
+  Future<void> test_withClass_hasOtherLibraryWithPrefix() async {
     addSource('/home/test/lib/a.dart', '''
 library a;
 class One {}
@@ -226,7 +236,7 @@ main () {
 ''');
   }
 
-  test_withClass_inParentFolder() async {
+  Future<void> test_withClass_inParentFolder() async {
     testFile = convertPath('/home/test/bin/aaa/test.dart');
     addSource('/home/test/bin/lib.dart', '''
 library lib;
@@ -248,7 +258,7 @@ main() {
 ''');
   }
 
-  test_withClass_inRelativeFolder() async {
+  Future<void> test_withClass_inRelativeFolder() async {
     testFile = convertPath('/home/test/bin/test.dart');
     addSource('/home/test/tool/sub/folder/lib.dart', '''
 library lib;
@@ -270,7 +280,7 @@ main() {
 ''');
   }
 
-  test_withClass_inSameFolder() async {
+  Future<void> test_withClass_inSameFolder() async {
     testFile = convertPath('/home/test/bin/test.dart');
     addSource('/home/test/bin/lib.dart', '''
 library lib;
@@ -292,7 +302,7 @@ main() {
 ''');
   }
 
-  test_withClass_instanceCreation_const() async {
+  Future<void> test_withClass_instanceCreation_const() async {
     addSource('/home/test/lib/lib.dart', '''
 class Test {
   const Test();
@@ -312,7 +322,7 @@ main() {
 ''');
   }
 
-  test_withClass_instanceCreation_const_namedConstructor() async {
+  Future<void> test_withClass_instanceCreation_const_namedConstructor() async {
     addSource('/home/test/lib/lib.dart', '''
 class Test {
   const Test.named();
@@ -332,7 +342,7 @@ main() {
 ''');
   }
 
-  test_withClass_instanceCreation_implicit() async {
+  Future<void> test_withClass_instanceCreation_implicit() async {
     addSource('/home/test/lib/lib.dart', '''
 class Test {
   const Test();
@@ -352,7 +362,7 @@ main() {
 ''');
   }
 
-  test_withClass_instanceCreation_new() async {
+  Future<void> test_withClass_instanceCreation_new() async {
     addSource('/home/test/lib/lib.dart', '''
 class Test {
   const Test();
@@ -372,7 +382,7 @@ main() {
 ''');
   }
 
-  test_withClass_instanceCreation_new_namedConstructor() async {
+  Future<void> test_withClass_instanceCreation_new_namedConstructor() async {
     addSource('/home/test/lib/lib.dart', '''
 class Test {
   Test.named();
@@ -392,7 +402,7 @@ main() {
 ''');
   }
 
-  test_withFunction() async {
+  Future<void> test_withFunction() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 myFunction() {}
@@ -411,7 +421,7 @@ main() {
 ''');
   }
 
-  test_withFunction_functionTopLevelVariable() async {
+  Future<void> test_withFunction_functionTopLevelVariable() async {
     addSource('/home/test/lib/lib.dart', 'var myFunction = () {};');
     await resolveTestUnit('''
 main() {
@@ -427,7 +437,7 @@ main() {
 ''');
   }
 
-  test_withFunction_functionTopLevelVariableIdentifier() async {
+  Future<void> test_withFunction_functionTopLevelVariableIdentifier() async {
     addSource('/home/test/lib/lib.dart', 'var myFunction = () {};');
     await resolveTestUnit('''
 main() {
@@ -443,7 +453,7 @@ main() {
 ''');
   }
 
-  test_withFunction_identifier() async {
+  Future<void> test_withFunction_identifier() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 myFunction() {}
@@ -463,7 +473,7 @@ main() {
   }
 
   @failingTest
-  test_withFunction_nonFunctionType() async {
+  Future<void> test_withFunction_nonFunctionType() async {
     addSource('/home/test/lib/lib.dart', 'int zero = 0;');
     await resolveTestUnit('''
 main() {
@@ -473,7 +483,7 @@ main() {
     await assertNoFix();
   }
 
-  test_withFunction_unresolvedMethod() async {
+  Future<void> test_withFunction_unresolvedMethod() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 myFunction() {}
@@ -496,7 +506,7 @@ class A {
 ''');
   }
 
-  test_withFunctionTypeAlias() async {
+  Future<void> test_withFunctionTypeAlias() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 typedef MyFunction();
@@ -517,7 +527,7 @@ main() {
 ''');
   }
 
-  test_withMixin() async {
+  Future<void> test_withMixin() async {
     addSource('/home/test/lib/lib.dart', '''
 mixin Test {}
 ''');
@@ -528,12 +538,10 @@ class X = Object with Test;
 import 'package:test/lib.dart';
 
 class X = Object with Test;
-''', errorFilter: (error) {
-      return error.errorCode == CompileTimeErrorCode.UNDEFINED_CLASS;
-    });
+''');
   }
 
-  test_withTopLevelVariable() async {
+  Future<void> test_withTopLevelVariable() async {
     addSource('/home/test/lib/lib.dart', '''
 library lib;
 int MY_VAR = 42;
@@ -554,17 +562,57 @@ main() {
 }
 
 @reflectiveTest
-class ImportLibraryProject2WithExtensionMethodsTest extends FixProcessorTest {
+class ImportLibraryProject2Test extends FixProcessorTest {
   @override
   FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT2;
 
-  @override
-  void setUp() {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
-    super.setUp();
+  Future<void> test_lib() async {
+    addPackageFile('my_pkg', 'a.dart', "export 'b.dart';");
+    addPackageFile('my_pkg', 'b.dart', 'class Test {}');
+    newFile('/home/test/pubspec.yaml', content: r'''
+dependencies:
+  my_pkg: any
+''');
+    await resolveTestUnit('''
+main() {
+  Test test = null;
+  print(test);
+}
+''');
+    await assertHasFix('''
+import 'package:my_pkg/a.dart';
+
+main() {
+  Test test = null;
+  print(test);
+}
+''');
   }
 
-  test_lib_src() async {
+  Future<void> test_lib_src() async {
+    addPackageFile('my_pkg', 'a.dart', "export 'src/b.dart';");
+    addPackageFile('my_pkg', 'src/b.dart', 'class Test {}');
+    newFile('/home/test/pubspec.yaml', content: r'''
+dependencies:
+  my_pkg: any
+''');
+    await resolveTestUnit('''
+main() {
+  Test test = null;
+  print(test);
+}
+''');
+    await assertHasFix('''
+import 'package:my_pkg/a.dart';
+
+main() {
+  Test test = null;
+  print(test);
+}
+''');
+  }
+
+  Future<void> test_lib_src_extension() async {
     addPackageFile('my_pkg', 'a.dart', "export 'src/b.dart';");
     addPackageFile('my_pkg', 'src/b.dart', '''
 extension E on int {
@@ -591,95 +639,11 @@ f() {
 }
 
 @reflectiveTest
-class ImportLibraryProject2Test extends FixProcessorTest {
-  @override
-  FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT2;
-
-  test_lib() async {
-    addPackageFile('my_pkg', 'a.dart', "export 'b.dart';");
-    addPackageFile('my_pkg', 'b.dart', 'class Test {}');
-    newFile('/home/test/pubspec.yaml', content: r'''
-dependencies:
-  my_pkg: any
-''');
-    await resolveTestUnit('''
-main() {
-  Test test = null;
-  print(test);
-}
-''');
-    await assertHasFix('''
-import 'package:my_pkg/a.dart';
-
-main() {
-  Test test = null;
-  print(test);
-}
-''');
-  }
-
-  test_lib_src() async {
-    addPackageFile('my_pkg', 'a.dart', "export 'src/b.dart';");
-    addPackageFile('my_pkg', 'src/b.dart', 'class Test {}');
-    newFile('/home/test/pubspec.yaml', content: r'''
-dependencies:
-  my_pkg: any
-''');
-    await resolveTestUnit('''
-main() {
-  Test test = null;
-  print(test);
-}
-''');
-    await assertHasFix('''
-import 'package:my_pkg/a.dart';
-
-main() {
-  Test test = null;
-  print(test);
-}
-''');
-  }
-}
-
-@reflectiveTest
-class ImportLibraryProject3WithExtensionMethodsTest extends FixProcessorTest {
-  @override
-  FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT3;
-
-  @override
-  void setUp() {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
-    super.setUp();
-  }
-
-  test_inLibSrc_thisContextRoot() async {
-    addSource('/home/test/lib/src/lib.dart', '''
-extension E on int {
-  static String m() => '';
-}
-''');
-    await resolveTestUnit('''
-f() {
-  print(E.m());
-}
-''');
-    await assertHasFix('''
-import 'package:test/src/lib.dart';
-
-f() {
-  print(E.m());
-}
-''');
-  }
-}
-
-@reflectiveTest
 class ImportLibraryProject3Test extends FixProcessorTest {
   @override
   FixKind get kind => DartFixKind.IMPORT_LIBRARY_PROJECT3;
 
-  test_inLibSrc_differentContextRoot() async {
+  Future<void> test_inLibSrc_differentContextRoot() async {
     addPackageFile('bbb', 'b1.dart', r'''
 import 'src/b2.dart';
 class A {}
@@ -696,7 +660,7 @@ main() {
     await assertNoFix();
   }
 
-  test_inLibSrc_thisContextRoot() async {
+  Future<void> test_inLibSrc_thisContextRoot() async {
     addSource('/home/test/lib/src/lib.dart', 'class Test {}');
     await resolveTestUnit('''
 main() {
@@ -710,6 +674,26 @@ import 'package:test/src/lib.dart';
 main() {
   Test t;
   print(t);
+}
+''');
+  }
+
+  Future<void> test_inLibSrc_thisContextRoot_extension() async {
+    addSource('/home/test/lib/src/lib.dart', '''
+extension E on int {
+  static String m() => '';
+}
+''');
+    await resolveTestUnit('''
+f() {
+  print(E.m());
+}
+''');
+    await assertHasFix('''
+import 'package:test/src/lib.dart';
+
+f() {
+  print(E.m());
 }
 ''');
   }

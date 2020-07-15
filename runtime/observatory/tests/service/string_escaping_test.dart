@@ -6,7 +6,7 @@ library string_escaping_test;
 
 import 'dart:async';
 import 'package:observatory/service_io.dart';
-import 'package:unittest/unittest.dart';
+import 'package:test/test.dart';
 import 'test_helper.dart';
 
 var ascii;
@@ -65,7 +65,6 @@ Future testStrings(Isolate isolate) async {
   expectTruncatedString(String varName, String varValueAsString) {
     Field field = lib.variables.singleWhere((v) => v.name == varName);
     Instance value = field.staticValue;
-    print(value.valueAsString);
     expect(varValueAsString, startsWith(value.valueAsString));
     expect(value.valueAsStringIsTruncated, isTrue);
   }

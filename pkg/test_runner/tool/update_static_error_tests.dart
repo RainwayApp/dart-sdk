@@ -59,6 +59,11 @@ Future<void> main(List<String> args) async {
   parser.addFlag("update-cfe",
       help: "Replace CFE error expectations.", negatable: false);
 
+  parser.addSeparator("Other flags:");
+  parser.addFlag("nnbd",
+      help: "Analyze with the 'non-nullable' experiment enabled.",
+      negatable: false);
+
   var results = parser.parse(args);
 
   if (results["help"] as bool) {
@@ -91,6 +96,8 @@ Future<void> main(List<String> args) async {
       results["update-cfe"] as bool ||
       results["update"] as bool;
 
+  var nnbd = results["nnbd"] as bool;
+
   if (!removeAnalyzer && !removeCfe && !insertAnalyzer && !insertCfe) {
     _usageError(
         parser, "Must provide at least one flag for an operation to perform.");
@@ -120,7 +127,8 @@ Future<void> main(List<String> args) async {
           removeAnalyzer: removeAnalyzer,
           removeCfe: removeCfe,
           insertAnalyzer: insertAnalyzer,
-          insertCfe: insertCfe);
+          insertCfe: insertCfe,
+          nnbd: nnbd);
     }
   }
 }
@@ -138,27 +146,43 @@ Future<void> _processFile(File file,
     bool removeAnalyzer,
     bool removeCfe,
     bool insertAnalyzer,
-    bool insertCfe}) async {
+    bool insertCfe,
+    bool nnbd}) async {
   stdout.write("${file.path}...");
   var source = file.readAsStringSync();
   var testFile = TestFile.parse(Path("."), file.absolute.path, source);
 
-  var options = testFile.sharedOptions.toList();
-  if (testFile.experiments.isNotEmpty) {
-    options.add("--enable-experiment=${testFile.experiments.join(',')}");
-  }
+  var experiments = [
+    if (nnbd) "non-nullable",
+    if (testFile.experiments.isNotEmpty) ...testFile.experiments
+  ];
+
+  var options = [
+    ...testFile.sharedOptions,
+    if (experiments.isNotEmpty) "--enable-experiment=${experiments.join(',')}"
+  ];
 
   var errors = <StaticError>[];
   if (insertAnalyzer) {
     stdout.write("\r${file.path} (Running analyzer...)");
-    errors.addAll(await runAnalyzer(file.absolute.path, options));
+    var fileErrors = await runAnalyzer(file.absolute.path, options);
+    if (fileErrors == null) {
+      print("Error: failed to update ${file.path}");
+    } else {
+      errors.addAll(fileErrors);
+    }
   }
 
   if (insertCfe) {
     // Clear the previous line.
     stdout.write("\r${file.path}                      ");
     stdout.write("\r${file.path} (Running CFE...)");
-    errors.addAll(await runCfe(file.absolute.path, options));
+    var fileErrors = await runCfe(file.absolute.path, options);
+    if (fileErrors == null) {
+      print("Error: failed to update ${file.path}");
+    } else {
+      errors.addAll(fileErrors);
+    }
   }
 
   errors = StaticError.simplify(errors);
@@ -189,9 +213,19 @@ Future<List<StaticError>> runAnalyzer(String path, List<String> options) async {
         "--format=machine",
         path,
       ]);
+
+  // Analyzer returns 3 when it detects errors, 2 when it detects
+  // warnings and --fatal-warnings is enabled, 1 when it detects
+  // hints and --fatal-hints or --fatal-infos are enabled.
+  if (result.exitCode < 0 || result.exitCode > 3) {
+    print("Analyzer run failed: ${result.stdout}\n${result.stderr}");
+    return null;
+  }
+
   var errors = <StaticError>[];
-  AnalysisCommandOutput.parseErrors(result.stderr as String, errors);
-  return errors;
+  var warnings = <StaticError>[];
+  AnalysisCommandOutput.parseErrors(result.stderr as String, errors, warnings);
+  return [...errors, ...warnings];
 }
 
 /// Invoke CFE on [path] and gather all static errors it reports.
@@ -209,9 +243,16 @@ Future<List<StaticError>> runCfe(String path, List<String> options) async {
     path,
   ]);
 
-  // TODO(karlklose): handle exit codes != 0. This can happen if the dart
-  // executable is not compatible with the kernel package version.
-
+  // Running the above command may generate a dill file next to the test, which
+  // we don't want, so delete it if present.
+  var file = File("$path.dill");
+  if (await file.exists()) {
+    await file.delete();
+  }
+  if (result.exitCode != 0) {
+    print("CFE run failed: ${result.stdout}\n${result.stderr}");
+    return null;
+  }
   var errors = <StaticError>[];
   FastaCommandOutput.parseErrors(result.stdout as String, errors);
   return errors;

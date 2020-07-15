@@ -16,20 +16,18 @@ import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/inheritance_manager3.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/error/codes.dart' show StrongModeCode;
-import 'package:analyzer/src/generated/element_type_provider.dart';
-import 'package:analyzer/src/generated/type_system.dart';
 import 'package:analyzer/src/summary/idl.dart';
 
 /// Given an [expression] and a corresponding [typeSystem] and [typeProvider],
 /// gets the known static type of the expression.
 DartType getExpressionType(
     Expression expression, TypeSystemImpl typeSystem, TypeProvider typeProvider,
-    {bool read = false,
-    ElementTypeProvider elementTypeProvider = const ElementTypeProvider()}) {
+    {bool read = false}) {
   DartType type;
   if (read) {
-    type = getReadType(expression, elementTypeProvider: elementTypeProvider);
+    type = getReadType(expression);
   } else {
     type = expression.staticType;
   }
@@ -37,13 +35,16 @@ DartType getExpressionType(
   return type;
 }
 
-DartType getReadType(Expression expression,
-    {ElementTypeProvider elementTypeProvider = const ElementTypeProvider()}) {
+DartType getReadType(Expression expression) {
   if (expression is IndexExpression) {
-    var staticElement = expression.auxiliaryElements?.staticElement;
-    return staticElement == null
-        ? DynamicTypeImpl.instance
-        : elementTypeProvider.getExecutableReturnType(staticElement);
+    var aux = expression.auxiliaryElements;
+    if (aux != null) {
+      var staticElement = aux.staticElement;
+      return staticElement == null
+          ? DynamicTypeImpl.instance
+          : staticElement.returnType;
+    }
+    return expression.staticType;
   }
   {
     Element setter;
@@ -57,7 +58,7 @@ DartType getReadType(Expression expression,
     if (setter is PropertyAccessorElement && setter.isSetter) {
       var getter = setter.variable.getter;
       if (getter != null) {
-        var type = elementTypeProvider.getExecutableReturnType(getter);
+        var type = getter.returnType;
         // The return type might be `null` when we perform top-level inference.
         // The first stage collects references to build the dependency graph.
         // TODO(scheglov) Maybe preliminary set types to `dynamic`?
@@ -71,7 +72,7 @@ DartType getReadType(Expression expression,
       var staticElement = aux.staticElement;
       return staticElement == null
           ? DynamicTypeImpl.instance
-          : elementTypeProvider.getExecutableReturnType(staticElement);
+          : staticElement.returnType;
     }
   }
   return expression.staticType;
@@ -173,7 +174,7 @@ class CodeChecker extends RecursiveAstVisitor {
       checkAssignment(element.expression, expressionCastType);
 
       var exprType = element.expression.staticType;
-      var asIterableType = exprType is InterfaceTypeImpl
+      var asIterableType = exprType is InterfaceType
           ? exprType.asInstanceOf(typeProvider.iterableElement)
           : null;
       var elementType =
@@ -212,7 +213,7 @@ class CodeChecker extends RecursiveAstVisitor {
       checkAssignment(element.expression, expressionCastType);
 
       var exprType = element.expression.staticType;
-      var asMapType = exprType is InterfaceTypeImpl
+      var asMapType = exprType is InterfaceType
           ? exprType.asInstanceOf(typeProvider.mapElement)
           : null;
 
@@ -270,7 +271,8 @@ class CodeChecker extends RecursiveAstVisitor {
           checkBoolean(node.rightOperand);
           break;
         case TokenType.BANG_EQ:
-          break;
+        case TokenType.BANG_EQ_EQ:
+        case TokenType.EQ_EQ_EQ:
         case TokenType.QUESTION_QUESTION:
           break;
         default:
@@ -357,7 +359,7 @@ class CodeChecker extends RecursiveAstVisitor {
       var fieldElement =
           node.identifier.staticElement as FieldFormalParameterElement;
       var fieldType = _elementType(fieldElement.field);
-      if (!rules.isSubtypeOf(type, fieldType)) {
+      if (!rules.isSubtypeOf2(type, fieldType)) {
         _recordMessage(node, StrongModeCode.INVALID_PARAMETER_DECLARATION,
             [node, fieldType]);
       }
@@ -424,9 +426,9 @@ class CodeChecker extends RecursiveAstVisitor {
   @override
   void visitInstanceCreationExpression(InstanceCreationExpression node) {
     var arguments = node.argumentList;
-    var element = node.staticElement;
+    var element = node.constructorName.staticElement;
     if (element != null) {
-      var type = _elementType(node.staticElement);
+      var type = _elementType(element);
       checkArgumentList(arguments, type);
     }
     node.visitChildren(this);
@@ -685,13 +687,13 @@ class CodeChecker extends RecursiveAstVisitor {
       return null; // unrelated
     }
 
-    if (rules.isSubtypeOf(from, to)) {
+    if (rules.isSubtypeOf2(from, to)) {
       // Sound subtype.
       // However we may still need cast if we have a call tearoff.
       return callTearoff;
     }
 
-    if (rules.isSubtypeOf(to, from)) {
+    if (rules.isSubtypeOf2(to, from)) {
       // Assignable, but needs cast.
       return true;
     }
@@ -712,6 +714,10 @@ class CodeChecker extends RecursiveAstVisitor {
       bool forSpread = false,
       bool forSpreadKey = false,
       bool forSpreadValue = false}) {
+    if (_isNonNullableByDefault) {
+      return;
+    }
+
     from ??= _getExpressionType(expr);
 
     if (_needsImplicitCast(expr, to, from: from) == true) {
@@ -839,7 +845,7 @@ class CodeChecker extends RecursiveAstVisitor {
 
   DartType _getInstanceTypeArgument(
       DartType expressionType, ClassElement instanceType) {
-    if (expressionType is InterfaceTypeImpl) {
+    if (expressionType is InterfaceType) {
       var asInstanceType = expressionType.asInstanceOf(instanceType);
       if (asInstanceType != null) {
         return asInstanceType.typeArguments[0];
@@ -881,12 +887,12 @@ class CodeChecker extends RecursiveAstVisitor {
     }
 
     // fromT <: toT, no coercion needed.
-    if (rules.isSubtypeOf(from, to)) {
+    if (rules.isSubtypeOf2(from, to)) {
       return false;
     }
 
     // Down cast or legal sideways cast, coercion needed.
-    if (rules.isAssignableTo(from, to)) {
+    if (rules.isAssignableTo2(from, to)) {
       return true;
     }
 
@@ -919,7 +925,7 @@ class CodeChecker extends RecursiveAstVisitor {
     // want to warn if it's a legal subtype.
     if (from is InterfaceType && rules.acceptsFunctionType(to)) {
       var type = rules.getCallMethodType(from);
-      if (type != null && rules.isSubtypeOf(type, to)) {
+      if (type != null && rules.isSubtypeOf2(type, to)) {
         return;
       }
     }
@@ -960,7 +966,7 @@ class CodeChecker extends RecursiveAstVisitor {
       }
 
       if (expr is InstanceCreationExpression) {
-        ConstructorElement e = expr.staticElement;
+        ConstructorElement e = expr.constructorName.staticElement;
         if (e == null || !e.isFactory) {
           // fromT should be an exact type - this will almost certainly fail at
           // runtime.
@@ -1041,7 +1047,7 @@ class CodeChecker extends RecursiveAstVisitor {
         nullabilitySuffix: _noneOrStarSuffix,
       );
 
-      if (rules.isSubtypeOf(sequenceType, iterableType)) {
+      if (rules.isSubtypeOf2(sequenceType, iterableType)) {
         _recordImplicitCast(node.iterable, sequenceType, from: iterableType);
         elementType = DynamicTypeImpl.instance;
       }
@@ -1076,7 +1082,7 @@ class _TopLevelInitializerValidator extends RecursiveAstVisitor<void> {
 
   void validateHasType(AstNode n, PropertyAccessorElement e) {
     if (e.hasImplicitReturnType) {
-      var variable = e.variable as VariableElementImpl;
+      var variable = e.declaration.variable as NonParameterVariableElementImpl;
       TopLevelInferenceError error = variable.typeInferenceError;
       if (error != null) {
         if (error.kind == TopLevelInferenceErrorKind.dependencyCycle) {
@@ -1187,7 +1193,7 @@ class _TopLevelInitializerValidator extends RecursiveAstVisitor<void> {
 
   @override
   visitInstanceCreationExpression(InstanceCreationExpression node) {
-    var constructor = node.staticElement;
+    var constructor = node.constructorName.staticElement;
     ClassElement class_ = constructor?.enclosingElement;
     if (node.constructorName.type.typeArguments == null &&
         class_ != null &&

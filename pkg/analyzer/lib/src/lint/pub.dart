@@ -77,6 +77,7 @@ abstract class PSDependency {
   PSGitRepo get git;
   PSHost get host;
   PSNode get name;
+  PSEntry get path;
   PSEntry get version;
 }
 
@@ -127,7 +128,7 @@ abstract class Pubspec {
   PSEntry get homepage;
   PSEntry get name;
   PSEntry get version;
-  accept(PubspecVisitor visitor);
+  void accept(PubspecVisitor visitor);
 }
 
 abstract class PubspecVisitor<T> {
@@ -149,6 +150,8 @@ abstract class PubspecVisitor<T> {
 class _PSDependency extends PSDependency {
   @override
   PSNode name;
+  @override
+  PSEntry path;
   @override
   PSEntry version;
   @override
@@ -181,6 +184,9 @@ class _PSDependency extends PSDependency {
         }
         YamlScalar key = k;
         switch (key.toString()) {
+          case 'path':
+            dep.path = _processScalar(key, v);
+            break;
           case 'version':
             dep.version = _processScalar(key, v);
             break;
@@ -232,7 +238,7 @@ class _PSDependencyList extends PSDependencyList {
   @override
   Iterator<PSDependency> get iterator => dependencies.iterator;
 
-  add(PSDependency dependency) {
+  void add(PSDependency dependency) {
     if (dependency != null) {
       dependencies.add(dependency);
     }
@@ -382,7 +388,7 @@ class _Pubspec implements Pubspec {
     return sb.toString();
   }
 
-  _parse(String src, {Uri sourceUrl}) {
+  void _parse(String src, {Uri sourceUrl}) {
     var yaml = loadYamlNode(src, sourceUrl: sourceUrl);
     if (yaml is! YamlMap) {
       return;
@@ -433,7 +439,7 @@ class _StringBuilder {
   StringBuffer buffer = StringBuffer();
   @override
   String toString() => buffer.toString();
-  writelin(Object value) {
+  void writelin(Object value) {
     if (value != null) {
       buffer.writeln(value);
     }

@@ -8,136 +8,71 @@ import 'package:analysis_server/src/provisional/completion/dart/completion_dart.
 import 'package:analysis_server/src/services/completion/dart/suggestion_builder.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
-import 'package:analyzer/dart/element/visitor.dart';
 
-import '../../../protocol_server.dart' show CompletionSuggestion;
-
-/**
- * A contributor for calculating static member invocation / access suggestions
- * `completion.getSuggestions` request results.
- */
+/// A contributor that produces suggestions based on the static members of a
+/// given class, enum, or extension. More concretely, this class produces
+/// suggestions for expressions of the form `C.^`, where `C` is the name of a
+/// class, enum, or extension.
 class StaticMemberContributor extends DartCompletionContributor {
   @override
-  Future<List<CompletionSuggestion>> computeSuggestions(
-      DartCompletionRequest request) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
-    Expression targetId = request.dotTarget;
-    if (targetId is Identifier && !request.target.isCascade) {
-      Element elem = targetId.staticElement;
-      if (elem is ClassElement || elem is ExtensionElement) {
-        LibraryElement containingLibrary = request.libraryElement;
-        // Gracefully degrade if the library could not be determined
-        // e.g. detached part file or source change
-        if (containingLibrary == null) {
-          return const <CompletionSuggestion>[];
-        }
-
-        _SuggestionBuilder builder = _SuggestionBuilder(containingLibrary);
-        elem.accept(builder);
-        return builder.suggestions;
-      }
-    }
-    return const <CompletionSuggestion>[];
-  }
-}
-
-/**
- * This class visits elements in a class and provides suggestions based upon
- * the visible static members in that class.
- */
-class _SuggestionBuilder extends GeneralizingElementVisitor {
-  /**
-   * The library containing the unit in which the completion is requested.
-   */
-  final LibraryElement containingLibrary;
-
-  /**
-   * A collection of completion suggestions.
-   */
-  final List<CompletionSuggestion> suggestions = <CompletionSuggestion>[];
-
-  _SuggestionBuilder(this.containingLibrary);
-
-  @override
-  visitClassElement(ClassElement element) {
-    element.visitChildren(this);
-  }
-
-  @override
-  visitConstructorElement(ConstructorElement element) {
-    _addSuggestion(element);
-  }
-
-  @override
-  visitElement(Element element) {
-    // ignored
-  }
-
-  @override
-  visitExtensionElement(ExtensionElement element) {
-    element.visitChildren(this);
-  }
-
-  @override
-  visitFieldElement(FieldElement element) {
-    if (element.isStatic) {
-      _addSuggestion(element);
-    }
-  }
-
-  @override
-  visitMethodElement(MethodElement element) {
-    if (element.isStatic && !element.isOperator) {
-      _addSuggestion(element);
-    }
-  }
-
-  @override
-  visitPropertyAccessorElement(PropertyAccessorElement element) {
-    if (element.isStatic) {
-      _addSuggestion(element);
-    }
-  }
-
-  /**
-     * Add a suggestion based upon the given element.
-     */
-  void _addSuggestion(Element element) {
-    if (element.isPrivate) {
-      if (element.library != containingLibrary) {
-        // Do not suggest private members for imported libraries
-        return;
-      }
-    }
-    if (element.isSynthetic) {
-      if ((element is PropertyAccessorElement) ||
-          element is FieldElement && !_isSpecialEnumField(element)) {
-        return;
-      }
-    }
-    String completion = element.displayName;
-    if (completion == null || completion.isEmpty) {
+  Future<void> computeSuggestions(
+      DartCompletionRequest request, SuggestionBuilder builder) async {
+    var library = request.libraryElement;
+    if (library == null) {
+      // Gracefully degrade if the library could not be determined, such as a
+      // detached part file or source change.
+      // TODO(brianwilkerson) Consider testing for this before invoking _any_ of
+      //  the contributors.
       return;
     }
-    CompletionSuggestion suggestion =
-        createSuggestion(element, completion: completion);
-    if (suggestion != null) {
-      suggestions.add(suggestion);
-    }
-  }
-
-  /**
-     * Determine if the given element is one of the synthetic enum accessors
-     * for which we should generate a suggestion.
-     */
-  bool _isSpecialEnumField(FieldElement element) {
-    Element parent = element.enclosingElement;
-    if (parent is ClassElement && parent.isEnum) {
-      if (element.name == 'values') {
-        return true;
+    bool isVisible(Element element) => element.isAccessibleIn(library);
+    var targetId = request.dotTarget;
+    if (targetId is Identifier && !request.target.isCascade) {
+      var element = targetId.staticElement;
+      if (element is ClassElement) {
+        for (var accessor in element.accessors) {
+          if (accessor.isStatic &&
+              !accessor.isSynthetic &&
+              isVisible(accessor)) {
+            builder.suggestAccessor(accessor, inheritanceDistance: -1.0);
+          }
+        }
+        for (var constructor in element.constructors) {
+          if (isVisible(constructor)) {
+            builder.suggestConstructor(constructor, hasClassName: true);
+          }
+        }
+        for (var field in element.fields) {
+          if (field.isStatic &&
+              (!field.isSynthetic || element.isEnum) &&
+              isVisible(field)) {
+            builder.suggestField(field, inheritanceDistance: -1.0);
+          }
+        }
+        for (var method in element.methods) {
+          if (method.isStatic && isVisible(method)) {
+            builder.suggestMethod(method, inheritanceDistance: -1.0);
+          }
+        }
+      } else if (element is ExtensionElement) {
+        for (var accessor in element.accessors) {
+          if (accessor.isStatic &&
+              !accessor.isSynthetic &&
+              isVisible(accessor)) {
+            builder.suggestAccessor(accessor, inheritanceDistance: -1.0);
+          }
+        }
+        for (var field in element.fields) {
+          if (field.isStatic && !field.isSynthetic && isVisible(field)) {
+            builder.suggestField(field, inheritanceDistance: -1.0);
+          }
+        }
+        for (var method in element.methods) {
+          if (method.isStatic && isVisible(method)) {
+            builder.suggestMethod(method, inheritanceDistance: -1.0);
+          }
+        }
       }
     }
-    return false;
   }
 }

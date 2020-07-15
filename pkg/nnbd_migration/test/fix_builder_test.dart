@@ -7,9 +7,15 @@ import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/src/dart/element/type_provider.dart';
+import 'package:analyzer/src/dart/error/hint_codes.dart';
+import 'package:analyzer/src/generated/element_type_provider.dart';
 import 'package:analyzer/src/task/strong/checker.dart';
+import 'package:nnbd_migration/fix_reason_target.dart';
+import 'package:nnbd_migration/nnbd_migration.dart';
+import 'package:nnbd_migration/src/edit_plan.dart';
 import 'package:nnbd_migration/src/fix_aggregator.dart';
 import 'package:nnbd_migration/src/fix_builder.dart';
+import 'package:nnbd_migration/src/nullability_node.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -37,11 +43,56 @@ class AssignmentTargetInfo {
 
 @reflectiveTest
 class FixBuilderTest extends EdgeBuilderTestBase {
-  static const isNullCheck = TypeMatcher<NullCheck>();
+  static final isAddRequiredKeyword =
+      TypeMatcher<NodeChangeForDefaultFormalParameter>()
+          .having((c) => c.addRequiredKeyword, 'addRequiredKeyword', true);
 
-  static const isAddRequiredKeyword = TypeMatcher<AddRequiredKeyword>();
+  static final isMakeNullable = TypeMatcher<NodeChangeForTypeAnnotation>()
+      .having((c) => c.makeNullable, 'makeNullable', true)
+      .having((c) => c.nullabilityHint, 'nullabilityHint', isNull);
 
-  static const isMakeNullable = TypeMatcher<MakeNullable>();
+  static final isMakeNullableDueToHint =
+      TypeMatcher<NodeChangeForTypeAnnotation>()
+          .having((c) => c.makeNullable, 'makeNullable', true)
+          .having((c) => c.nullabilityHint, 'nullabilityHint', isNotNull);
+
+  static const isEdge = TypeMatcher<NullabilityEdge>();
+
+  static final isExplainNonNullable = TypeMatcher<NodeChangeForTypeAnnotation>()
+      .having((c) => c.makeNullable, 'makeNullable', false);
+
+  static final isBadCombinedType = TypeMatcher<NodeChangeForAssignmentLike>()
+      .having((c) => c.hasBadCombinedType, 'hasBadCombinedType', true);
+
+  static final isNullableSource = TypeMatcher<NodeChangeForAssignmentLike>()
+      .having((c) => c.hasNullableSource, 'hasNullableSource', true);
+
+  static final isNodeChangeForExpression =
+      TypeMatcher<NodeChangeForExpression>();
+
+  static final isNullCheck =
+      isNodeChangeForExpression.havingNullCheckWithInfo(anything);
+
+  static final isRemoveLanguageVersion =
+      TypeMatcher<NodeChangeForCompilationUnit>().having(
+          (c) => c.removeLanguageVersionComment,
+          'removeLanguageVersionComment',
+          true);
+
+  static final isRemoveNullAwareness =
+      TypeMatcher<NodeChangeForPropertyAccess>()
+          .having((c) => c.removeNullAwareness, 'removeNullAwareness', true);
+
+  static final isRemoveAs = TypeMatcher<NodeChangeForAsExpression>()
+      .having((c) => c.removeAs, 'removeAs', true);
+
+  static final isRequiredAnnotationToRequiredKeyword =
+      TypeMatcher<NodeChangeForAnnotation>().having(
+          (c) => c.changeToRequiredKeyword, 'changeToRequiredKeyword', true);
+
+  static final isWeakNullAwareAssignment =
+      TypeMatcher<NodeChangeForAssignment>()
+          .having((c) => c.isWeakNullAware, 'isWeakNullAware', true);
 
   DartType get dynamicType => postMigrationTypeProvider.dynamicType;
 
@@ -53,15 +104,29 @@ class FixBuilderTest extends EdgeBuilderTestBase {
   @override
   Future<CompilationUnit> analyze(String code) async {
     var unit = await super.analyze(code);
-    graph.propagate();
+    graph.propagate(null);
     return unit;
   }
+
+  TypeMatcher<AtomicEditInfo> isInfo(description, fixReasons) =>
+      TypeMatcher<AtomicEditInfo>()
+          .having((i) => i.description, 'description', description)
+          .having((i) => i.fixReasons, 'fixReasons', fixReasons);
 
   Map<AstNode, NodeChange> scopedChanges(
           FixBuilder fixBuilder, AstNode scope) =>
       {
         for (var entry in fixBuilder.changes.entries)
-          if (_isInScope(entry.key, scope)) entry.key: entry.value
+          if (_isInScope(entry.key, scope) && !entry.value.isInformative)
+            entry.key: entry.value
+      };
+
+  Map<AstNode, NodeChange> scopedInformative(
+          FixBuilder fixBuilder, AstNode scope) =>
+      {
+        for (var entry in fixBuilder.changes.entries)
+          if (_isInScope(entry.key, scope) && entry.value.isInformative)
+            entry.key: entry.value
       };
 
   Map<AstNode, Set<Problem>> scopedProblems(
@@ -70,6 +135,41 @@ class FixBuilderTest extends EdgeBuilderTestBase {
         for (var entry in fixBuilder.problems.entries)
           if (_isInScope(entry.key, scope)) entry.key: entry.value
       };
+
+  Future<void> test_asExpression_keep() async {
+    await analyze('''
+_f(Object x) {
+  print((x as int) + 1);
+}
+''');
+    var asExpression = findNode.simple('x as').parent as Expression;
+    visitSubexpression(asExpression, 'int');
+  }
+
+  Future<void> test_asExpression_keep_previously_unnecessary() async {
+    verifyNoTestUnitErrors = false;
+    await analyze('''
+f(int i) {
+  print((i as int) + 1);
+}
+''');
+    expect(
+        testAnalysisResult.errors.single.errorCode, HintCode.UNNECESSARY_CAST);
+    var asExpression = findNode.simple('i as').parent as Expression;
+    visitSubexpression(asExpression, 'int');
+  }
+
+  Future<void> test_asExpression_remove() async {
+    await analyze('''
+_f(Object x) {
+  if (x is! int) return;
+  print((x as int) + 1);
+}
+''');
+    var asExpression = findNode.simple('x as').parent as Expression;
+    visitSubexpression(asExpression, 'int',
+        changes: {asExpression: isRemoveAs});
+  }
 
   Future<void>
       test_assignmentExpression_compound_combined_nullable_noProblem() async {
@@ -252,6 +352,17 @@ abstract class _F {
     visitSubexpression(findNode.assignment('??='), '_C?');
   }
 
+  Future<void> test_assignmentExpression_null_aware_simple_promoted() async {
+    await analyze('''
+_f(bool/*?*/ x, bool/*?*/ y) => x != null && (x ??= y) != null;
+''');
+    // On the RHS of the `&&`, `x` is promoted to non-nullable, but it is still
+    // considered to be a nullable assignment target, so no null check is
+    // generated for `y`.
+    visitSubexpression(findNode.binary('&&'), 'bool',
+        changes: {findNode.assignment('??='): isWeakNullAwareAssignment});
+  }
+
   Future<void>
       test_assignmentExpression_simple_nonNullable_to_nonNullable() async {
     await analyze('''
@@ -284,7 +395,6 @@ _f(int/*?*/ x, int/*?*/ y) => x = y;
     visitSubexpression(findNode.assignment('= '), 'int?');
   }
 
-  @FailingTest(issue: 'https://github.com/dart-lang/sdk/issues/39641')
   Future<void> test_assignmentExpression_simple_promoted() async {
     await analyze('''
 _f(bool/*?*/ x, bool/*?*/ y) => x != null && (x = y) != null;
@@ -797,7 +907,7 @@ _f(bool/*?*/ x) {
 
   Future<void> test_binaryExpression_bar_bar_nullChecked() async {
     await analyze('''
-_f(Object/*?*/ x, Object/*?*/ y) {
+_f(bool/*?*/ x, bool/*?*/ y) {
   return x || y;
 }
 ''');
@@ -836,7 +946,6 @@ _f(int/*?*/ x, int/*?*/ y) =>
         changes: {findNode.simple('y +'): isNullCheck});
   }
 
-  @FailingTest(issue: 'https://github.com/dart-lang/sdk/issues/39642')
   Future<void> test_binaryExpression_question_question_nullChecked() async {
     await analyze('''
 Object/*!*/ _f(int/*?*/ x, double/*?*/ y) {
@@ -949,6 +1058,127 @@ f() => true;
     visitSubexpression(findNode.booleanLiteral('true'), 'bool');
   }
 
+  Future<void> test_compound_assignment_null_shorted_ok() async {
+    await analyze('''
+class C {
+  int/*!*/ x;
+}
+_f(C/*?*/ c) {
+  c?.x += 1;
+}
+''');
+    // Even though c?.x is nullable, it should not be a problem to use it as the
+    // LHS of a compound assignment, because null shorting will ensure that the
+    // assignment only happens if c is non-null.
+    var assignment = findNode.assignment('+=');
+    visitSubexpression(assignment, 'int?');
+  }
+
+  Future<void> test_compound_assignment_nullable_result_bad() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C c) {
+  c += 1;
+}
+''');
+    var assignment = findNode.assignment('+=');
+    visitSubexpression(assignment, 'C?',
+        changes: {assignment: isBadCombinedType});
+  }
+
+  Future<void> test_compound_assignment_nullable_result_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+abstract class D {
+  void set x(C/*?*/ value);
+  C/*!*/ get x;
+  f() {
+    x += 1;
+  }
+}
+''');
+    var assignment = findNode.assignment('+=');
+    visitSubexpression(assignment, 'C?');
+  }
+
+  Future<void> test_compound_assignment_nullable_source() async {
+    await analyze('''
+_f(int/*?*/ x) {
+  x += 1;
+}
+''');
+    var assignment = findNode.assignment('+=');
+    visitSubexpression(assignment, 'int',
+        changes: {assignment: isNullableSource});
+  }
+
+  Future<void> test_compound_assignment_potentially_nullable_source() async {
+    await analyze('''
+class C<T extends num/*?*/> {
+  _f(T/*!*/ x) {
+    x += 1;
+  }
+}
+''');
+    var assignment = findNode.assignment('+=');
+    visitSubexpression(assignment, 'T',
+        changes: {assignment: isNullableSource});
+  }
+
+  Future<void> test_compound_assignment_promoted_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C/*?*/ x) {
+  if (x != null) {
+    x += 1;
+  }
+}
+''');
+    // The compound assignment is ok, because:
+    // - prior to the assignment, x's value is promoted to non-nullable
+    // - the nullable return value of operator+ is ok to assign to x, because it
+    //   un-does the promotion.
+    visitSubexpression(findNode.assignment('+='), 'C?');
+  }
+
+  Future<void> test_conditionalExpression_dead_else_remove() async {
+    await analyze('_f(int x, int/*?*/ y) => x != null ? x + 1 : y + 1.0;');
+    var expression = findNode.conditionalExpression('x != null');
+    visitSubexpression(expression, 'int',
+        changes: {expression: isConditionalWithKnownValue(true)});
+  }
+
+  Future<void> test_conditionalExpression_dead_else_warn() async {
+    await analyze('_f(int x, int/*?*/ y) => x != null ? x + 1 : y + 1.0;');
+    var expression = findNode.conditionalExpression('x != null');
+    visitSubexpression(expression, 'num', warnOnWeakCode: true, changes: {
+      expression: isConditionalWithKnownValue(true),
+      findNode.simple('y +'): isNullCheck
+    });
+  }
+
+  Future<void> test_conditionalExpression_dead_then_remove() async {
+    await analyze('_f(int x, int/*?*/ y) => x == null ? y + 1.0 : x + 1;');
+    var expression = findNode.conditionalExpression('x == null');
+    visitSubexpression(expression, 'int',
+        changes: {expression: isConditionalWithKnownValue(false)});
+  }
+
+  Future<void> test_conditionalExpression_dead_then_warn() async {
+    await analyze('_f(int x, int/*?*/ y) => x == null ? y + 1.0 : x + 1;');
+    var expression = findNode.conditionalExpression('x == null');
+    visitSubexpression(expression, 'num', warnOnWeakCode: true, changes: {
+      expression: isConditionalWithKnownValue(false),
+      findNode.simple('y +'): isNullCheck
+    });
+  }
+
   Future<void> test_conditionalExpression_flow_as_condition() async {
     await analyze('''
 _f(bool x, int/*?*/ y) => (x ? y != null : y != null) ? y + 1 : 0;
@@ -999,6 +1229,16 @@ _f(int/*?*/ x) =>
   }
 
   Future<void>
+      test_defaultFormalParameter_add_required_ignore_decoy_annotation() async {
+    await analyze('''
+const foo = Object();
+int _f({@foo int x}) => x + 1;
+''');
+    visitAll(
+        changes: {findNode.defaultParameter('int x'): isAddRequiredKeyword});
+  }
+
+  Future<void>
       test_defaultFormalParameter_add_required_no_because_default() async {
     await analyze('''
 int _f({int x = 0}) => x + 1;
@@ -1011,7 +1251,8 @@ int _f({int x = 0}) => x + 1;
     await analyze('''
 int _f({int/*?*/ x}) => 1;
 ''');
-    visitAll(changes: {findNode.typeName('int/*?*/ x'): isMakeNullable});
+    visitAll(
+        changes: {findNode.typeName('int/*?*/ x'): isMakeNullableDueToHint});
   }
 
   Future<void>
@@ -1023,6 +1264,35 @@ int _f([int/*!*/ x]) => x + 1;
       findNode.defaultParameter('int/*!*/ x'): {
         const NonNullableUnnamedOptionalParameter()
       }
+    });
+  }
+
+  Future<void>
+      test_defaultFormalParameter_add_required_replace_annotation() async {
+    // TODO(paulberry): it would be nice to remove the import of `meta` if it's
+    // no longer needed after the change.
+    addMetaPackage();
+    await analyze('''
+import 'package:meta/meta.dart';
+int _f({@required int x}) => x + 1;
+''');
+    visitAll(changes: {
+      findNode.annotation('required'): isRequiredAnnotationToRequiredKeyword
+    });
+  }
+
+  Future<void>
+      test_defaultFormalParameter_add_required_replace_annotation_nullable() async {
+    // TODO(paulberry): it would be nice to remove the import of `meta` if it's
+    // no longer needed after the change.
+    addMetaPackage();
+    await analyze('''
+import 'package:meta/meta.dart';
+void _f({@required int/*?*/ x}) {}
+''');
+    visitAll(changes: {
+      findNode.annotation('required'): isRequiredAnnotationToRequiredKeyword,
+      findNode.typeName('int'): isMakeNullableDueToHint,
     });
   }
 
@@ -1039,6 +1309,30 @@ int _f({int x}) => x + 1;
 f() => 1.0;
 ''');
     visitSubexpression(findNode.doubleLiteral('1.0'), 'double');
+  }
+
+  Future<void> test_enum_ref_index() async {
+    await analyze('''
+enum E { V }
+_f(E e) => e.index;
+''');
+    visitSubexpression(findNode.prefixed('e.index'), 'int');
+  }
+
+  Future<void> test_enum_ref_value() async {
+    await analyze('''
+enum E { V }
+_f() => E.V;
+''');
+    visitSubexpression(findNode.prefixed('E.V'), 'E');
+  }
+
+  Future<void> test_enum_ref_values() async {
+    await analyze('''
+enum E { V }
+_f() => E.values;
+''');
+    visitSubexpression(findNode.prefixed('E.values'), 'List<E>');
   }
 
   Future<void> test_expressionStatement() async {
@@ -1111,6 +1405,97 @@ _f(_C c) => c.f();
         changes: {findNode.propertyAccess('c.f'): isNullCheck});
   }
 
+  Future<void> test_genericFunctionType_nonNullable() async {
+    await analyze('''
+void _f() {
+  void Function() x = _f;
+}
+''');
+    var genericFunctionType = findNode.genericFunctionType('Function');
+    visitTypeAnnotation(genericFunctionType, 'void Function()',
+        informative: {genericFunctionType: isExplainNonNullable});
+  }
+
+  Future<void> test_genericFunctionType_nonNullable_by_context() async {
+    await analyze('''
+typedef F = void Function();
+''');
+    var genericFunctionType = findNode.genericFunctionType('Function');
+    visitTypeAnnotation(genericFunctionType, 'void Function()',
+        informative: isEmpty);
+  }
+
+  Future<void> test_genericFunctionType_nullable() async {
+    await analyze('''
+void _f() {
+  void Function() x = null;
+}
+''');
+    var genericFunctionTypeAnnotation =
+        findNode.genericFunctionType('Function');
+    visitTypeAnnotation(genericFunctionTypeAnnotation, 'void Function()?',
+        changes: {genericFunctionTypeAnnotation: isMakeNullable});
+  }
+
+  Future<void> test_genericFunctionType_nullable_arg() async {
+    await analyze('''
+void Function(int/*?*/) _f() {
+  void Function(int) x = _g;
+  return x;
+}
+void _g(int/*?*/ x) {}
+''');
+    var intTypeAnnotation = findNode.typeName('int)');
+    var genericFunctionTypeAnnotation =
+        findNode.genericFunctionType('Function(int)');
+    visitTypeAnnotation(genericFunctionTypeAnnotation, 'void Function(int?)',
+        changes: {intTypeAnnotation: isMakeNullable});
+  }
+
+  Future<void> test_genericFunctionType_nullable_return() async {
+    await analyze('''
+void _f() {
+  int Function() x = _g;
+}
+int/*?*/ _g() => null;
+''');
+    var intTypeAnnotation = findNode.typeName('int Function');
+    var genericFunctionTypeAnnotation =
+        findNode.genericFunctionType('Function');
+    visitTypeAnnotation(genericFunctionTypeAnnotation, 'int? Function()',
+        changes: {intTypeAnnotation: isMakeNullable});
+  }
+
+  Future<void> test_ifStatement_dead_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) {
+  if (x != null) {
+    print(x + 1);
+  } else {
+    print(y + 1);
+  }
+}
+''');
+    var ifStatement = findNode.statement('if');
+    visitStatement(ifStatement,
+        changes: {ifStatement: isConditionalWithKnownValue(true)});
+  }
+
+  Future<void> test_ifStatement_dead_then() async {
+    await analyze('''
+_f(int x, int/*?*/ y) {
+  if (x == null) {
+    print(y + 1);
+  } else {
+    print(x + 1);
+  }
+}
+''');
+    var ifStatement = findNode.statement('if');
+    visitStatement(ifStatement,
+        changes: {ifStatement: isConditionalWithKnownValue(false)});
+  }
+
   Future<void> test_ifStatement_flow_promote_in_else() async {
     await analyze('''
 _f(int/*?*/ x) {
@@ -1148,6 +1533,17 @@ _f(int/*?*/ x) {
 }
 ''');
     visitStatement(findNode.statement('if'));
+  }
+
+  Future<void> test_implicit_downcast() async {
+    await analyze('int f(num x) => x;');
+    var xRef = findNode.simple('x;');
+    visitSubexpression(xRef, 'int', changes: {
+      xRef: isNodeChangeForExpression.havingIndroduceAsWithInfo(
+          'int',
+          isInfo(NullabilityFixDescription.downcastExpression,
+              {FixReasonTarget.root: isEdge}))
+    });
   }
 
   Future<void> test_indexExpression_dynamic() async {
@@ -1227,6 +1623,91 @@ f() => 1;
     visitSubexpression(findNode.integerLiteral('1'), 'int');
   }
 
+  Future<void> test_list_ifElement_alive() async {
+    await analyze('''
+_f(int x, bool b, int/*?*/ y) => [if (b) h(y) else g(y)];
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<num>', changes: {
+      findNode.simple('y) else'): isNullCheck,
+      findNode.simple('y)]'): isNullCheck
+    });
+  }
+
+  Future<void> test_list_ifElement_alive_with_null_check() async {
+    await analyze('''
+_f(int x, bool/*?*/ b, int/*?*/ y) => [if (b == null) h(y) else g(y)];
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<num>', changes: {
+      findNode.simple('y) else'): isNullCheck,
+      findNode.simple('y)]'): isNullCheck
+    });
+  }
+
+  Future<void> test_list_ifElement_dead_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => [if (x != null) g(y) else h(y)];
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(true),
+      findNode.simple('y) else'): isNullCheck
+    });
+  }
+
+  Future<void> test_list_ifElement_dead_else_no_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => [if (x != null) g(y)];
+int/*!*/ g(int/*!*/ y) => y;
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(true),
+      findNode.simple('y)]'): isNullCheck
+    });
+  }
+
+  Future<void> test_list_ifElement_dead_then() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => [if (x == null) h(y) else g(y)];
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(false),
+      findNode.simple('y)]'): isNullCheck
+    });
+  }
+
+  Future<void> test_list_ifElement_dead_then_no_else() async {
+    // TODO(paulberry): rather than infer the type to be List<dynamic>,
+    // FixBuilder should add an explicit type argument to ensure that it is
+    // still List<int>.
+    await analyze('''
+_f(int x, int/*?*/ y) => [if (x == null) h(y)];
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.listLiteral('['), 'List<dynamic>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(false)
+    });
+  }
+
+  Future<void> test_list_make_explicit_type_nullable() async {
+    await analyze('_f() => <int>[null];');
+    // The `null` should be analyzed with a context type of `int?`, so it should
+    // not be null-checked.
+    visitSubexpression(findNode.listLiteral('['), 'List<int?>',
+        changes: {findNode.typeAnnotation('int'): isMakeNullable});
+  }
+
+  Future<void> test_list_unchanged() async {
+    await analyze('_f(int x) => [x];');
+    visitSubexpression(findNode.listLiteral('['), 'List<int>');
+  }
+
   Future<void> test_listLiteral_typed() async {
     await analyze('''
 _f() => <int>[];
@@ -1240,6 +1721,100 @@ _f(int/*?*/ x) => <int/*!*/>[x];
 ''');
     visitSubexpression(findNode.listLiteral('['), 'List<int>',
         changes: {findNode.simple('x]'): isNullCheck});
+  }
+
+  Future<void> test_map_ifElement_alive() async {
+    await analyze('''
+_f(int x, bool b, int/*?*/ y) => {if (b) 0: h(y) else 0: g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int, num>',
+        changes: {
+          findNode.simple('y) else'): isNullCheck,
+          findNode.simple('y)}'): isNullCheck
+        });
+  }
+
+  Future<void> test_map_ifElement_alive_with_null_check() async {
+    await analyze('''
+_f(int x, bool/*?*/ b, int/*?*/ y) => {if (b == null) 0: h(y) else 0: g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int, num>',
+        changes: {
+          findNode.simple('y) else'): isNullCheck,
+          findNode.simple('y)}'): isNullCheck
+        });
+  }
+
+  Future<void> test_map_ifElement_dead_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x != null) 0: g(y) else 0: h(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int, int>',
+        changes: {
+          findNode.ifElement('null'): isConditionalWithKnownValue(true),
+          findNode.simple('y) else'): isNullCheck
+        });
+  }
+
+  Future<void> test_map_ifElement_dead_else_no_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x != null) 0: g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int, int>',
+        changes: {
+          findNode.ifElement('null'): isConditionalWithKnownValue(true),
+          findNode.simple('y)}'): isNullCheck
+        });
+  }
+
+  Future<void> test_map_ifElement_dead_then() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x == null) 0: h(y) else 0: g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int, int>',
+        changes: {
+          findNode.ifElement('null'): isConditionalWithKnownValue(false),
+          findNode.simple('y)}'): isNullCheck
+        });
+  }
+
+  Future<void> test_map_ifElement_dead_then_no_else() async {
+    // TODO(paulberry): rather than infer the type to be Map<dynamic, dynamic>,
+    // FixBuilder should add an explicit type argument to ensure that it is
+    // still Map<int, int>.
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x == null) 0: h(y)};
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<dynamic, dynamic>',
+        changes: {
+          findNode.ifElement('null'): isConditionalWithKnownValue(false)
+        });
+  }
+
+  Future<void> test_map_make_explicit_key_type_nullable() async {
+    await analyze('_f() => <int, double>{null: 0.0};');
+    // The `null` should be analyzed with a context type of `int?`, so it should
+    // not be null-checked.
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<int?, double>',
+        changes: {findNode.typeAnnotation('int'): isMakeNullable});
+  }
+
+  Future<void> test_map_make_explicit_value_type_nullable() async {
+    await analyze('_f() => <double, int>{0.0: null};');
+    // The `null` should be analyzed with a context type of `int?`, so it should
+    // not be null-checked.
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<double, int?>',
+        changes: {findNode.typeAnnotation('int'): isMakeNullable});
   }
 
   Future<void> test_methodInvocation_dynamic() async {
@@ -1330,13 +1905,55 @@ int _g() => 1;
     visitSubexpression(findNode.methodInvocation('_g();'), 'int');
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_methodInvocation_toString() async {
     await analyze('''
 abstract class _C {}
 _f(_C/*?*/ c) => c.toString();
 ''');
     visitSubexpression(findNode.methodInvocation('c.toString'), 'String');
+  }
+
+  Future<void> test_null_aware_assignment_non_nullable_source() async {
+    await analyze('''
+abstract class C {
+  int/*!*/ f();
+  g(int/*!*/ x) {
+    x ??= f();
+  }
+}
+''');
+    var assignment = findNode.assignment('??=');
+    visitSubexpression(assignment, 'int',
+        changes: {assignment: isWeakNullAwareAssignment});
+  }
+
+  Future<void> test_null_aware_assignment_nullable_rhs_needs_check() async {
+    await analyze('''
+abstract class C {
+  void set x(int/*!*/ value);
+  int/*?*/ get x;
+  int/*?*/ f();
+  g() {
+    x ??= f();
+  }
+}
+''');
+    var assignment = findNode.assignment('??=');
+    visitSubexpression(assignment, 'int',
+        changes: {assignment.rightHandSide: isNullCheck});
+  }
+
+  Future<void> test_null_aware_assignment_nullable_rhs_ok() async {
+    await analyze('''
+abstract class C {
+  int/*?*/ f();
+  g(int/*?*/ x) {
+    x ??= f();
+  }
+}
+''');
+    var assignment = findNode.assignment('??=');
+    visitSubexpression(assignment, 'int?');
   }
 
   Future<void> test_nullAssertion_promotes() async {
@@ -1370,6 +1987,113 @@ _f(bool/*?*/ x) => ((x) != (null)) && x;
     visitSubexpression(findNode.binary('&&'), 'bool');
   }
 
+  Future<void> test_post_decrement_int_behavior() async {
+    await analyze('''
+_f(int x) => x--;
+''');
+    // It's not a problem that int.operator- returns `num` (which is not
+    // assignable to `int`) because the value implicitly passed to operator- has
+    // type `int`, so the static type of the result is `int`.
+    visitSubexpression(findNode.postfix('--'), 'int');
+  }
+
+  Future<void> test_post_increment_int_behavior() async {
+    await analyze('''
+_f(int x) => x++;
+''');
+    // It's not a problem that int.operator+ returns `num` (which is not
+    // assignable to `int`) because the value implicitly passed to operator- has
+    // type `int`, so the static type of the result is `int`.
+    visitSubexpression(findNode.postfix('++'), 'int');
+  }
+
+  Future<void> test_post_increment_null_shorted_ok() async {
+    await analyze('''
+class C {
+  int/*!*/ x;
+}
+_f(C/*?*/ c) {
+  c?.x++;
+}
+''');
+    // Even though c?.x is nullable, it should not be a problem to use it as the
+    // target of a post-increment, because null shorting will ensure that the
+    // increment only happens if c is non-null.
+    var increment = findNode.postfix('++');
+    visitSubexpression(increment, 'int?');
+  }
+
+  Future<void> test_post_increment_nullable_result_bad() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C c) {
+  c++;
+}
+''');
+    var increment = findNode.postfix('++');
+    visitSubexpression(increment, 'C', changes: {increment: isBadCombinedType});
+  }
+
+  Future<void> test_post_increment_nullable_result_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+abstract class D {
+  void set x(C/*?*/ value);
+  C/*!*/ get x;
+  f() {
+    x++;
+  }
+}
+''');
+    var increment = findNode.postfix('++');
+    visitSubexpression(increment, 'C');
+  }
+
+  Future<void> test_post_increment_nullable_source() async {
+    await analyze('''
+_f(int/*?*/ x) {
+  x++;
+}
+''');
+    var increment = findNode.postfix('++');
+    visitSubexpression(increment, 'int?',
+        changes: {increment: isNullableSource});
+  }
+
+  Future<void> test_post_increment_potentially_nullable_source() async {
+    await analyze('''
+class C<T extends num/*?*/> {
+  _f(T/*!*/ x) {
+    x++;
+  }
+}
+''');
+    var increment = findNode.postfix('++');
+    visitSubexpression(increment, 'T', changes: {increment: isNullableSource});
+  }
+
+  Future<void> test_post_increment_promoted_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C/*?*/ x) {
+  if (x != null) {
+    x++;
+  }
+}
+''');
+    // The increment is ok, because:
+    // - prior to the increment, x's value is promoted to non-nullable
+    // - the nullable return value of operator+ is ok to assign to x, because it
+    //   un-does the promotion.
+    visitSubexpression(findNode.postfix('++'), 'C');
+  }
+
   Future<void> test_postfixExpression_combined_nullable_noProblem() async {
     await analyze('''
 abstract class _C {
@@ -1385,7 +2109,6 @@ abstract class _E {
     visitSubexpression(findNode.postfix('++'), '_C');
   }
 
-  @FailingTest(issue: 'https://github.com/dart-lang/sdk/issues/38833')
   Future<void>
       test_postfixExpression_combined_nullable_noProblem_dynamic() async {
     await analyze('''
@@ -1488,6 +2211,115 @@ _f(_C/*!*/ x) => x++;
     visitSubexpression(findNode.postfix('++'), '_C');
   }
 
+  Future<void> test_pre_decrement_int_behavior() async {
+    await analyze('''
+_f(int x) => --x;
+''');
+    // It's not a problem that int.operator- returns `num` (which is not
+    // assignable to `int`) because the value implicitly passed to operator- has
+    // type `int`, so the static type of the result is `int`.
+    visitSubexpression(findNode.prefix('--'), 'int');
+  }
+
+  Future<void> test_pre_increment_int_behavior() async {
+    await analyze('''
+_f(int x) => ++x;
+''');
+    // It's not a problem that int.operator+ returns `num` (which is not
+    // assignable to `int`) because the value implicitly passed to operator- has
+    // type `int`, so the static type of the result is `int`.
+    visitSubexpression(findNode.prefix('++'), 'int');
+  }
+
+  Future<void> test_pre_increment_null_shorted_ok() async {
+    await analyze('''
+class C {
+  int/*!*/ x;
+}
+_f(C/*?*/ c) {
+  ++c?.x;
+}
+''');
+    // Even though c?.x is nullable, it should not be a problem to use it as the
+    // target of a pre-increment, because null shorting will ensure that the
+    // increment only happens if c is non-null.
+    var increment = findNode.prefix('++');
+    visitSubexpression(increment, 'int?');
+  }
+
+  Future<void> test_pre_increment_nullable_result_bad() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C c) {
+  ++c;
+}
+''');
+    var increment = findNode.prefix('++');
+    visitSubexpression(increment, 'C?',
+        changes: {increment: isBadCombinedType});
+  }
+
+  Future<void> test_pre_increment_nullable_result_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+abstract class D {
+  void set x(C/*?*/ value);
+  C/*!*/ get x;
+  f() {
+    ++x;
+  }
+}
+''');
+    var increment = findNode.prefix('++');
+    visitSubexpression(increment, 'C?');
+  }
+
+  Future<void> test_pre_increment_nullable_source() async {
+    await analyze('''
+_f(int/*?*/ x) {
+  ++x;
+}
+''');
+    var increment = findNode.prefix('++');
+    visitSubexpression(increment, 'int',
+        changes: {increment: isNullableSource});
+  }
+
+  Future<void> test_pre_increment_potentially_nullable_source() async {
+    await analyze('''
+class C<T extends num/*?*/> {
+  _f(T/*!*/ x) {
+    ++x;
+  }
+}
+''');
+    var increment = findNode.prefix('++');
+    visitSubexpression(increment, 'num',
+        changes: {increment: isNullableSource});
+  }
+
+  Future<void> test_pre_increment_promoted_ok() async {
+    await analyze('''
+abstract class C {
+  C/*?*/ operator+(int i);
+}
+f(C/*?*/ x) {
+  if (x != null) {
+    ++x;
+  }
+}
+''');
+    // The increment is ok, because:
+    // - prior to the increment, x's value is promoted to non-nullable
+    // - the nullable return value of operator+ is ok to assign to x, because it
+    //   un-does the promotion.
+    visitSubexpression(findNode.prefix('++'), 'C?');
+  }
+
   Future<void> test_prefixedIdentifier_dynamic() async {
     await analyze('''
 Object/*!*/ _f(dynamic d) => d.x;
@@ -1546,7 +2378,6 @@ _f(_C c) => c.x;
     visitSubexpression(findNode.prefixed('c.x'), 'int?');
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_prefixedIdentifier_object_getter() async {
     await analyze('''
 class _C {}
@@ -1555,7 +2386,6 @@ _f(_C/*?*/ c) => c.hashCode;
     visitSubexpression(findNode.prefixed('c.hashCode'), 'int');
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_prefixedIdentifier_object_tearoff() async {
     await analyze('''
 class _C {}
@@ -1602,7 +2432,6 @@ _f(bool/*?*/ x) => !x;
         changes: {findNode.simple('x;'): isNullCheck});
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_prefixExpression_combined_nullable_noProblem() async {
     await analyze('''
 abstract class _C {
@@ -1907,6 +2736,41 @@ _f(_C/*?*/ c) => c?.toString;
         findNode.propertyAccess('c?.toString'), 'String Function()?');
   }
 
+  Future<void> test_propertyAccess_nullAware_potentiallyNullable() async {
+    // In the code example below, the `?.` is not changed to `.` because `T`
+    // might be instantiated to `int?`, in which case the null check is still
+    // needed.
+    await analyze('''
+class C<T extends int/*?*/> {
+  f(T t) => t?.isEven;
+}
+''');
+    visitSubexpression(findNode.propertyAccess('?.'), 'bool?');
+  }
+
+  Future<void> test_propertyAccess_nullAware_removeNullAwareness() async {
+    await analyze('_f(int/*!*/ i) => i?.isEven;');
+    var propertyAccess = findNode.propertyAccess('?.');
+    visitSubexpression(propertyAccess, 'bool',
+        changes: {propertyAccess: isRemoveNullAwareness});
+  }
+
+  Future<void>
+      test_propertyAccess_nullAware_removeNullAwareness_nullCheck() async {
+    await analyze('''
+class C {
+  int/*?*/ i;
+}
+int/*!*/ f(C/*!*/ c) => c?.i;
+''');
+    var propertyAccess = findNode.propertyAccess('?.');
+    visitSubexpression(propertyAccess, 'int', changes: {
+      propertyAccess: TypeMatcher<NodeChangeForPropertyAccess>()
+          .having((c) => c.addsNullCheck, 'addsNullCheck', true)
+          .having((c) => c.removeNullAwareness, 'removeNullAwareness', true)
+    });
+  }
+
   Future<void> test_propertyAccess_nullAware_substituted() async {
     await analyze('''
 abstract class _C<T> {
@@ -1917,7 +2781,6 @@ _f(_C<int>/*?*/ c) => c?.x;
     visitSubexpression(findNode.propertyAccess('c?.x'), 'List<int>?');
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_propertyAccess_object_getter() async {
     await analyze('''
 class _C {}
@@ -1926,7 +2789,6 @@ _f(_C/*?*/ c) => (c).hashCode;
     visitSubexpression(findNode.propertyAccess('(c).hashCode'), 'int');
   }
 
-  @FailingTest(reason: 'TODO(paulberry)')
   Future<void> test_propertyAccess_object_tearoff() async {
     await analyze('''
 class _C {}
@@ -1944,6 +2806,104 @@ abstract class _C<T> {
 _f(_C<int> c) => (c).x;
 ''');
     visitSubexpression(findNode.propertyAccess('(c).x'), 'List<int>');
+  }
+
+  Future<void> test_removeLanguageVersionComment() async {
+    await analyze('''
+// @dart = 2.6
+void main() {}
+''');
+    visitAll(changes: {findNode.unit: isRemoveLanguageVersion});
+  }
+
+  Future<void> test_removeLanguageVersionComment_withCopyright() async {
+    await analyze('''
+// Some copyright notice here...
+// @dart = 2.6
+void main() {}
+''');
+    visitAll(changes: {findNode.unit: isRemoveLanguageVersion});
+  }
+
+  Future<void> test_set_ifElement_alive() async {
+    await analyze('''
+_f(int x, bool b, int/*?*/ y) => {if (b) h(y) else g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<num>', changes: {
+      findNode.simple('y) else'): isNullCheck,
+      findNode.simple('y)}'): isNullCheck
+    });
+  }
+
+  Future<void> test_set_ifElement_alive_with_null_check() async {
+    await analyze('''
+_f(int x, bool/*?*/ b, int/*?*/ y) => {if (b == null) h(y) else g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<num>', changes: {
+      findNode.simple('y) else'): isNullCheck,
+      findNode.simple('y)}'): isNullCheck
+    });
+  }
+
+  Future<void> test_set_ifElement_dead_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x != null) g(y) else h(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(true),
+      findNode.simple('y) else'): isNullCheck
+    });
+  }
+
+  Future<void> test_set_ifElement_dead_else_no_else() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x != null) g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(true),
+      findNode.simple('y)}'): isNullCheck
+    });
+  }
+
+  Future<void> test_set_ifElement_dead_then() async {
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x == null) h(y) else g(y)};
+int/*!*/ g(int/*!*/ y) => y;
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<int>', changes: {
+      findNode.ifElement('null'): isConditionalWithKnownValue(false),
+      findNode.simple('y)}'): isNullCheck
+    });
+  }
+
+  Future<void> test_set_ifElement_dead_then_no_else() async {
+    // TODO(paulberry): rather than infer the type to be Map<dynamic, dynamic>,
+    // FixBuilder should add an explicit type argument to ensure that it is
+    // still Set<int>.
+    await analyze('''
+_f(int x, int/*?*/ y) => {if (x == null) h(y)};
+double/*!*/ h(int/*!*/ y) => y.toDouble();
+''');
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Map<dynamic, dynamic>',
+        changes: {
+          findNode.ifElement('null'): isConditionalWithKnownValue(false)
+        });
+  }
+
+  Future<void> test_set_make_explicit_type_nullable() async {
+    await analyze('_f() => <int>{null};');
+    // The `null` should be analyzed with a context type of `int?`, so it should
+    // not be null-checked.
+    visitSubexpression(findNode.setOrMapLiteral('{'), 'Set<int?>',
+        changes: {findNode.typeAnnotation('int'): isMakeNullable});
   }
 
   Future<void> test_simpleIdentifier_className() async {
@@ -2021,11 +2981,37 @@ _f(int/*?*/ x) {
     visitSubexpression(findNode.simple('x;'), 'int?');
   }
 
+  Future<void> test_simpleIdentifier_null_check_hint() async {
+    await analyze('int/*?*/ _f(int/*?*/ x) => x/*!*/;');
+    var xRef = findNode.simple('x/*!*/');
+    visitSubexpression(xRef, 'int', changes: {
+      xRef: isNodeChangeForExpression.havingNullCheckWithInfo(isInfo(
+          NullabilityFixDescription.checkExpressionDueToHint,
+          {FixReasonTarget.root: TypeMatcher<FixReason_NullCheckHint>()}))
+    });
+  }
+
   Future<void> test_stringLiteral() async {
     await analyze('''
 f() => 'foo';
 ''');
     visitSubexpression(findNode.stringLiteral("'foo'"), 'String');
+  }
+
+  Future<void> test_suspicious_cast() async {
+    await analyze('''
+int f(Object o) {
+  if (o is! String) return 0;
+  return o;
+}
+''');
+    var xRef = findNode.simple('o;');
+    visitSubexpression(xRef, 'int', changes: {
+      xRef: isNodeChangeForExpression.havingIndroduceAsWithInfo(
+          'int',
+          isInfo(NullabilityFixDescription.otherCastExpression,
+              {FixReasonTarget.root: isEdge}))
+    });
   }
 
   Future<void> test_symbolLiteral() async {
@@ -2105,7 +3091,17 @@ void _f() {
   int i = 0;
 }
 ''');
-    visitTypeAnnotation(findNode.typeAnnotation('int'), 'int');
+    var typeAnnotation = findNode.typeAnnotation('int');
+    visitTypeAnnotation(typeAnnotation, 'int',
+        informative: {typeAnnotation: isExplainNonNullable});
+  }
+
+  Future<void> test_typeName_simple_nonNullable_by_context() async {
+    await analyze('''
+class C extends Object {}
+''');
+    visitTypeAnnotation(findNode.typeAnnotation('Object'), 'Object',
+        informative: isEmpty);
   }
 
   Future<void> test_typeName_simple_nullable() async {
@@ -2199,7 +3195,7 @@ void _f(bool/*?*/ x, bool/*?*/ y) {
       {Map<AstNode, Matcher> changes = const <Expression, Matcher>{},
       Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{}}) {
     var fixBuilder = _createFixBuilder(testUnit);
-    fixBuilder.visitAll(testUnit);
+    fixBuilder.visitAll();
     expect(scopedChanges(fixBuilder, testUnit), changes);
     expect(scopedProblems(fixBuilder, testUnit), problems);
   }
@@ -2209,7 +3205,7 @@ void _f(bool/*?*/ x, bool/*?*/ y) {
       {Map<AstNode, Matcher> changes = const <Expression, Matcher>{},
       Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{}}) {
     var fixBuilder = _createFixBuilder(node);
-    fixBuilder.visitAll(node.thisOrAncestorOfType<CompilationUnit>());
+    fixBuilder.visitAll();
     var targetInfo = _computeAssignmentTargetInfo(node, fixBuilder);
     if (expectedReadType == null) {
       expect(targetInfo.readType, null);
@@ -2227,16 +3223,17 @@ void _f(bool/*?*/ x, bool/*?*/ y) {
       {Map<AstNode, Matcher> changes = const <Expression, Matcher>{},
       Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{}}) {
     var fixBuilder = _createFixBuilder(node);
-    fixBuilder.visitAll(node.thisOrAncestorOfType<CompilationUnit>());
+    fixBuilder.visitAll();
     expect(scopedChanges(fixBuilder, node), changes);
     expect(scopedProblems(fixBuilder, node), problems);
   }
 
   void visitSubexpression(Expression node, String expectedType,
       {Map<AstNode, Matcher> changes = const <Expression, Matcher>{},
-      Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{}}) {
-    var fixBuilder = _createFixBuilder(node);
-    fixBuilder.visitAll(node.thisOrAncestorOfType<CompilationUnit>());
+      Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{},
+      bool warnOnWeakCode = false}) {
+    var fixBuilder = _createFixBuilder(node, warnOnWeakCode: warnOnWeakCode);
+    fixBuilder.visitAll();
     var type = node.staticType;
     expect(type.getDisplayString(withNullability: true), expectedType);
     expect(scopedChanges(fixBuilder, node), changes);
@@ -2245,34 +3242,48 @@ void _f(bool/*?*/ x, bool/*?*/ y) {
 
   void visitTypeAnnotation(TypeAnnotation node, String expectedType,
       {Map<AstNode, Matcher> changes = const <AstNode, Matcher>{},
-      Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{}}) {
+      Map<AstNode, Set<Problem>> problems = const <AstNode, Set<Problem>>{},
+      dynamic informative = anything}) {
     var fixBuilder = _createFixBuilder(node);
-    fixBuilder.visitAll(node.thisOrAncestorOfType<CompilationUnit>());
+    fixBuilder.visitAll();
     var type = node.type;
     expect(type.getDisplayString(withNullability: true), expectedType);
     expect(scopedChanges(fixBuilder, node), changes);
     expect(scopedProblems(fixBuilder, node), problems);
+    expect(scopedInformative(fixBuilder, node), informative);
   }
 
   AssignmentTargetInfo _computeAssignmentTargetInfo(
       Expression node, FixBuilder fixBuilder) {
-    var assignment = node.thisOrAncestorOfType<AssignmentExpression>();
-    var isReadWrite = assignment.operator.type != TokenType.EQ;
-    var readType = isReadWrite
-        ? getReadType(node,
-                elementTypeProvider:
-                    MigrationResolutionHooksImpl(fixBuilder)) ??
-            typeProvider.dynamicType
-        : null;
-    var writeType = node.staticType;
-    return AssignmentTargetInfo(readType, writeType);
+    try {
+      assert(
+          identical(ElementTypeProvider.current, const ElementTypeProvider()));
+      ElementTypeProvider.current = fixBuilder.migrationResolutionHooks;
+      var assignment = node.thisOrAncestorOfType<AssignmentExpression>();
+      var isReadWrite = assignment.operator.type != TokenType.EQ;
+      var readType =
+          isReadWrite ? getReadType(node) ?? typeProvider.dynamicType : null;
+      var writeType = node.staticType;
+      return AssignmentTargetInfo(readType, writeType);
+    } finally {
+      ElementTypeProvider.current = const ElementTypeProvider();
+    }
   }
 
-  FixBuilder _createFixBuilder(AstNode scope) {
+  FixBuilder _createFixBuilder(AstNode scope, {bool warnOnWeakCode = false}) {
     var unit = scope.thisOrAncestorOfType<CompilationUnit>();
     var definingLibrary = unit.declaredElement.library;
-    return FixBuilder(testSource, decoratedClassHierarchy, typeProvider,
-        typeSystem, variables, definingLibrary);
+    return FixBuilder(
+        testSource,
+        decoratedClassHierarchy,
+        typeProvider,
+        typeSystem,
+        variables,
+        definingLibrary,
+        null,
+        scope.thisOrAncestorOfType<CompilationUnit>(),
+        warnOnWeakCode,
+        graph);
   }
 
   bool _isInScope(AstNode node, AstNode scope) {
@@ -2280,4 +3291,21 @@ void _f(bool/*?*/ x, bool/*?*/ y) {
             .thisOrAncestorMatching((ancestor) => identical(ancestor, scope)) !=
         null;
   }
+
+  static Matcher isConditionalWithKnownValue(bool knownValue) =>
+      TypeMatcher<NodeChangeForConditional>()
+          .having((c) => c.conditionValue, 'conditionValue', knownValue);
+}
+
+extension on TypeMatcher<NodeChangeForExpression> {
+  TypeMatcher<NodeChangeForExpression> havingNullCheckWithInfo(
+          dynamic matcher) =>
+      having((c) => c.addsNullCheck, 'addsNullCheck', true)
+          .having((c) => c.addNullCheckInfo, 'addNullCheckInfo', matcher);
+
+  TypeMatcher<NodeChangeForExpression> havingIndroduceAsWithInfo(
+          dynamic typeStringMatcher, dynamic infoMatcher) =>
+      having((c) => c.introducesAsType.toString(), 'introducesAsType (string)',
+              typeStringMatcher)
+          .having((c) => c.introducesAsInfo, 'introducesAsInfo', infoMatcher);
 }

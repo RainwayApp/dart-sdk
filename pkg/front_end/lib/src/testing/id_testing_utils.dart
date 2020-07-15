@@ -243,8 +243,9 @@ String constantToText(Constant node,
 enum TypeRepresentation {
   legacy,
   explicit,
-  implicitUndetermined,
-  nonNullableByDefault,
+  // The type representation is made match the non-nullable-by-default type
+  // display string from the analyzer.
+  analyzerNonNullableByDefault,
 }
 
 /// Returns a textual representation of the type [node] to be used in
@@ -421,6 +422,14 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
 
   DartTypeToTextVisitor(this.sb, this.typeRepresentation);
 
+  String get commaText {
+    if (typeRepresentation == TypeRepresentation.analyzerNonNullableByDefault) {
+      return ', ';
+    } else {
+      return ',';
+    }
+  }
+
   void visit(DartType node) => node.accept(this);
 
   void visitList(Iterable<DartType> nodes) {
@@ -428,7 +437,7 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
     for (DartType node in nodes) {
       sb.write(comma);
       visit(node);
-      comma = ',';
+      comma = commaText;
     }
   }
 
@@ -453,6 +462,9 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
 
   void visitNeverType(NeverType node) {
     sb.write('Never');
+    if (node.nullability != Nullability.nonNullable) {
+      sb.write(nullabilityToText(node.nullability, typeRepresentation));
+    }
   }
 
   void visitInterfaceType(InterfaceType node) {
@@ -467,6 +479,13 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
     }
   }
 
+  void visitFutureOrType(FutureOrType node) {
+    sb.write('FutureOr<');
+    visit(node.typeArgument);
+    sb.write('>');
+    sb.write(nullabilityToText(node.declaredNullability, typeRepresentation));
+  }
+
   void visitFunctionType(FunctionType node) {
     visit(node.returnType);
     sb.write(' Function');
@@ -475,6 +494,10 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
       for (int i = 0; i < node.typeParameters.length; i++) {
         if (i > 0) {
           sb.write(',');
+          if (typeRepresentation ==
+              TypeRepresentation.analyzerNonNullableByDefault) {
+            sb.write(' ');
+          }
         }
         TypeParameter typeParameter = node.typeParameters[i];
         sb.write(typeParameter.name);
@@ -490,14 +513,14 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
     String comma = '';
     visitList(node.positionalParameters.take(node.requiredParameterCount));
     if (node.requiredParameterCount > 0) {
-      comma = ',';
+      comma = commaText;
     }
     if (node.requiredParameterCount < node.positionalParameters.length) {
       sb.write(comma);
       sb.write('[');
       visitList(node.positionalParameters.skip(node.requiredParameterCount));
       sb.write(']');
-      comma = ',';
+      comma = commaText;
     }
     if (node.namedParameters.isNotEmpty) {
       sb.write(comma);
@@ -505,10 +528,13 @@ class DartTypeToTextVisitor implements DartTypeVisitor<void> {
       comma = '';
       for (NamedType namedParameter in node.namedParameters) {
         sb.write(comma);
+        if (namedParameter.isRequired) {
+          sb.write('required ');
+        }
         visit(namedParameter.type);
         sb.write(' ');
         sb.write(namedParameter.name);
-        comma = ',';
+        comma = commaText;
       }
       sb.write('}');
     }
@@ -653,9 +679,8 @@ String nullabilityToText(
       switch (typeRepresentation) {
         case TypeRepresentation.explicit:
         case TypeRepresentation.legacy:
-        case TypeRepresentation.implicitUndetermined:
           return '!';
-        case TypeRepresentation.nonNullableByDefault:
+        case TypeRepresentation.analyzerNonNullableByDefault:
           return '';
       }
       break;
@@ -663,7 +688,7 @@ String nullabilityToText(
       return '?';
     case Nullability.undetermined:
       switch (typeRepresentation) {
-        case TypeRepresentation.implicitUndetermined:
+        case TypeRepresentation.analyzerNonNullableByDefault:
           return '';
         default:
           return '%';
@@ -674,8 +699,7 @@ String nullabilityToText(
         case TypeRepresentation.legacy:
           return '';
         case TypeRepresentation.explicit:
-        case TypeRepresentation.nonNullableByDefault:
-        case TypeRepresentation.implicitUndetermined:
+        case TypeRepresentation.analyzerNonNullableByDefault:
           return '*';
       }
       break;

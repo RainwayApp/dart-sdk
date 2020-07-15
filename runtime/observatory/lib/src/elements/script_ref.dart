@@ -8,13 +8,11 @@ import 'dart:html';
 import 'dart:async';
 import 'package:observatory/models.dart' as M show IsolateRef, ScriptRef;
 import 'package:observatory/src/elements/helpers/rendering_scheduler.dart';
-import 'package:observatory/src/elements/helpers/tag.dart';
+import 'package:observatory/src/elements/helpers/custom_element.dart';
 import 'package:observatory/src/elements/helpers/uris.dart';
 
 class ScriptRefElement extends CustomElement implements Renderable {
-  static const tag = const Tag<ScriptRefElement>('script-ref');
-
-  RenderingScheduler _r;
+  RenderingScheduler<ScriptRefElement> _r;
 
   Stream<RenderedEvent<ScriptRefElement>> get onRendered => _r.onRendered;
 
@@ -35,7 +33,7 @@ class ScriptRefElement extends CustomElement implements Renderable {
     return e;
   }
 
-  ScriptRefElement.created() : super.created(tag);
+  ScriptRefElement.created() : super.created('script-ref');
 
   @override
   void attached() {
@@ -51,10 +49,15 @@ class ScriptRefElement extends CustomElement implements Renderable {
   }
 
   void render() {
+    var displayUri = script.uri.split('/').last;
+    if (displayUri.isEmpty) {
+      displayUri = 'N/A';
+    }
+
     children = <Element>[
       new AnchorElement(href: Uris.inspect(isolate, object: script))
         ..title = script.uri
-        ..text = script.uri.split('/').last
+        ..text = displayUri
     ];
   }
 }

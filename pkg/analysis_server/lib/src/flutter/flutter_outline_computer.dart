@@ -9,24 +9,22 @@ import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
-import 'package:analyzer/dart/element/type.dart';
 
 /// Computer for Flutter specific outlines.
 class FlutterOutlineComputer {
   final ResolvedUnitResult resolvedUnit;
-  Flutter flutter;
 
   final List<protocol.FlutterOutline> _depthFirstOrder = [];
 
   FlutterOutlineComputer(this.resolvedUnit);
 
+  Flutter get _flutter => Flutter.instance;
+
   protocol.FlutterOutline compute() {
-    protocol.Outline dartOutline = DartUnitOutlineComputer(
+    var dartOutline = DartUnitOutlineComputer(
       resolvedUnit,
       withBasicFlutter: false,
     ).compute();
-
-    flutter = Flutter.of(resolvedUnit);
 
     // Convert Dart outlines into Flutter outlines.
     var flutterDartOutline = _convert(dartOutline);
@@ -67,7 +65,7 @@ class FlutterOutlineComputer {
 
     var valueLocation = protocol.newLocation_fromNode(argument);
 
-    String name = parameter.displayName;
+    var name = parameter.displayName;
 
     var label = resolvedUnit.content.substring(argument.offset, argument.end);
     if (label.contains('\n')) {
@@ -85,7 +83,7 @@ class FlutterOutlineComputer {
       literalValueString = argument.stringValue;
     } else {
       if (argument is FunctionExpression) {
-        bool hasParameters = argument.parameters != null &&
+        var hasParameters = argument.parameters != null &&
             argument.parameters.parameters.isNotEmpty;
         if (argument.body is ExpressionFunctionBody) {
           label = hasParameters ? '(…) => …' : '() => …';
@@ -111,7 +109,7 @@ class FlutterOutlineComputer {
   }
 
   protocol.FlutterOutline _convert(protocol.Outline dartOutline) {
-    protocol.FlutterOutline flutterOutline = protocol.FlutterOutline(
+    var flutterOutline = protocol.FlutterOutline(
         protocol.FlutterOutlineKind.DART_ELEMENT,
         dartOutline.offset,
         dartOutline.length,
@@ -131,19 +129,19 @@ class FlutterOutlineComputer {
   /// is a Flutter Widget class subtype, and [withGeneric] is `true`, return
   /// a widget reference outline item.
   protocol.FlutterOutline _createOutline(Expression node, bool withGeneric) {
-    DartType type = node.staticType;
-    if (!flutter.isWidgetType(type)) {
+    var type = node.staticType;
+    if (!_flutter.isWidgetType(type)) {
       return null;
     }
-    String className = type.element.displayName;
+    var className = type.element.displayName;
 
     if (node is InstanceCreationExpression) {
       var attributes = <protocol.FlutterOutlineAttribute>[];
       var children = <protocol.FlutterOutline>[];
       for (var argument in node.argumentList.arguments) {
-        bool isWidgetArgument = flutter.isWidgetType(argument.staticType);
-        bool isWidgetListArgument =
-            flutter.isListOfWidgetsType(argument.staticType);
+        var isWidgetArgument = _flutter.isWidgetType(argument.staticType);
+        var isWidgetListArgument =
+            _flutter.isListOfWidgetsType(argument.staticType);
 
         String parentAssociationLabel;
         Expression childrenExpression;
@@ -191,7 +189,7 @@ class FlutterOutlineComputer {
           if (visitor.outlines.isNotEmpty) {
             children.addAll(visitor.outlines);
           } else {
-            ParameterElement parameter = argument.staticParameterElement;
+            var parameter = argument.staticParameterElement;
             _addAttribute(attributes, argument, parameter);
           }
         }

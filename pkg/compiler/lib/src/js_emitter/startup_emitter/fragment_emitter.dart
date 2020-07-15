@@ -13,17 +13,7 @@ part of dart2js.js_emitter.startup_emitter.model_emitter;
 /// name of the static function, but not the name of the function's getter. We
 /// store the getter-function on the static function itself, which allows us to
 /// find it easily.
-const String tearOffPropertyName = r'$tearOff';
-
-/// The name of the property that stores the list of fields on a constructor.
-///
-/// This property is only used when isolates are used.
-///
-/// When serializing objects we extract all fields from any given object.
-/// We extract the names of all fields from a fresh empty object. This list
-/// is cached on the constructor in this property to to avoid too many
-/// allocations.
-const String cachedClassFieldNames = r'$cachedFieldNames';
+const String _tearOffPropertyName = r'$tearOff';
 
 /// The fast startup emitter's goal is to minimize the amount of work that the
 /// JavaScript engine has to do before it can start running user code.
@@ -54,7 +44,7 @@ const String cachedClassFieldNames = r'$cachedFieldNames';
 // JavaScript variables (like `Array`) we are free to chose whatever variable
 // names we want. Furthermore, the pretty-printer minifies local variables, thus
 // reducing their size.
-const String mainBoilerplate = '''
+const String _mainBoilerplate = '''
 (function dartProgram() {
 // Copies the own properties from [from] to [to].
 function copyProperties(from, to) {
@@ -243,7 +233,7 @@ function installTearOff(
       tearOff(funs, applyIndex || 0, reflectionInfo, isStatic, name, isIntercepted);
   container[getterName] = getterFunction;
   if (isStatic) {
-    fun.$tearOffPropertyName = getterFunction;
+    fun.$_tearOffPropertyName = getterFunction;
   }
 }
 
@@ -442,6 +432,9 @@ var #staticStateDeclaration = {};
 // Adds the variance table for the new RTI.
 #variances;
 
+// Shared strings need to be initialized before constants.
+#sharedStrings;
+
 // Shared types need to be initialized before constants.
 #sharedTypeRtis;
 
@@ -449,7 +442,7 @@ var #staticStateDeclaration = {};
 #constants;
 
 // Adds to the embedded globals. A few globals refer to constants.
-#embeddedGlobalsPart2; 
+#embeddedGlobalsPart2;
 
 // Initializes the static non-final fields (with their constant values).
 #staticNonFinalFields;
@@ -474,7 +467,7 @@ convertToFastObject(#staticState);
 
 /// An expression that returns `true` if `__proto__` can be assigned to stitch
 /// together a prototype chain, and the performance is good.
-const String directAccessTestExpression = r'''
+const String _directAccessTestExpression = r'''
   (function () {
     var cls = function () {};
     cls.prototype = {'p': {}};
@@ -511,7 +504,7 @@ const String directAccessTestExpression = r'''
 /// the main holders.
 ///
 /// This template is used for Dart 2.
-const String deferredBoilerplateDart2 = '''
+const String _deferredBoilerplate = '''
 function(hunkHelpers, #embeddedGlobalsObject, holdersList, #staticState) {
 
 // Builds the holders. They only contain the data for new holders.
@@ -546,6 +539,8 @@ var #typesOffset = hunkHelpers.updateTypes(#types);
 // Adds the variance table for the new RTI.
 #variances;
 
+#sharedStrings;
+
 #sharedTypeRtis;
 // Instantiates all constants of this deferred fragment.
 // Note that the constant-holder has been updated earlier and storing the
@@ -564,7 +559,7 @@ var #typesOffset = hunkHelpers.updateTypes(#types);
 /// However, they don't contribute anything to global namespace, but just
 /// initialize existing classes. For example, they update the inheritance
 /// hierarchy, and add methods the prototypes.
-const String softDeferredBoilerplate = '''
+const String _softDeferredBoilerplate = '''
 #deferredGlobal[#softId] =
   function(holdersList, #embeddedGlobalsObject, #staticState,
            hunkHelpers) {
@@ -605,7 +600,6 @@ class FragmentEmitter {
   DartTypes get _dartTypes => _closedWorld.dartTypes;
   JElementEnvironment get _elementEnvironment =>
       _closedWorld.elementEnvironment;
-  NativeData get _nativeData => _closedWorld.nativeData;
   RuntimeTypesNeed get _rtiNeed => _closedWorld.rtiNeed;
 
   js.Name _call0Name, _call1Name, _call2Name;
@@ -626,19 +620,15 @@ class FragmentEmitter {
       this._nativeEmitter,
       this._closedWorld,
       this._codegenWorld) {
-    if (_options.useNewRti) {
-      _recipeEncoder = RecipeEncoderImpl(
-          _closedWorld,
-          _options.disableRtiOptimization
-              ? TrivialRuntimeTypesSubstitutions(_closedWorld)
-              : RuntimeTypesImpl(_closedWorld),
-          _closedWorld.nativeData,
-          _closedWorld.elementEnvironment,
-          _closedWorld.commonElements,
-          _closedWorld.rtiNeed);
-      _rulesetEncoder =
-          RulesetEncoder(_closedWorld.dartTypes, _emitter, _recipeEncoder);
-    }
+    _recipeEncoder = RecipeEncoderImpl(
+        _closedWorld,
+        _options.disableRtiOptimization
+            ? TrivialRuntimeTypesSubstitutions(_closedWorld)
+            : RuntimeTypesImpl(_closedWorld),
+        _closedWorld.nativeData,
+        _closedWorld.commonElements);
+    _rulesetEncoder =
+        RulesetEncoder(_closedWorld.dartTypes, _emitter, _recipeEncoder);
   }
 
   js.Expression generateEmbeddedGlobalAccess(String global) =>
@@ -670,10 +660,10 @@ class FragmentEmitter {
     HolderCode holderCode =
         emitHolders(program.holders, fragment, initializeEmptyHolders: true);
 
-    js.Statement mainCode = js.js.statement(mainBoilerplate, {
+    js.Statement mainCode = js.js.statement(_mainBoilerplate, {
       // TODO(29455): 'hunkHelpers' displaces other names, so don't minify it.
       'hunkHelpers': js.VariableDeclaration('hunkHelpers', allowRename: false),
-      'directAccessTestExpression': js.js(directAccessTestExpression),
+      'directAccessTestExpression': js.js(_directAccessTestExpression),
       'cyclicThrow': _emitter
           .staticFunctionAccess(_closedWorld.commonElements.cyclicThrowHelper),
       'operatorIsPrefix': js.string(_namer.fixedNames.operatorIsPrefix),
@@ -710,8 +700,9 @@ class FragmentEmitter {
       'embeddedGlobalsPart2':
           emitEmbeddedGlobalsPart2(program, deferredLoadingState),
       'typeRules': emitTypeRules(fragment),
+      'sharedStrings': StringReferenceResource(),
       'variances': emitVariances(fragment),
-      'sharedTypeRtis': _options.useNewRti ? TypeReferenceResource() : [],
+      'sharedTypeRtis': TypeReferenceResource(),
       'nativeSupport': emitNativeSupport(fragment),
       'jsInteropSupport': jsInteropAnalysis.buildJsInteropBootstrap(
               _codegenWorld, _closedWorld.nativeData, _namer) ??
@@ -724,7 +715,7 @@ class FragmentEmitter {
     });
     if (program.hasSoftDeferredClasses) {
       mainCode = js.Block([
-        js.js.statement(softDeferredBoilerplate, {
+        js.js.statement(_softDeferredBoilerplate, {
           'deferredGlobal': ModelEmitter.deferredInitializersGlobal,
           'softId': js.string(softDeferredId),
           // TODO(floitsch): don't just reference 'init'.
@@ -740,7 +731,7 @@ class FragmentEmitter {
         mainCode
       ]);
     }
-    finalizeTypeReferences(mainCode);
+    finalizeStringAndTypeReferences(mainCode);
     return mainCode;
   }
 
@@ -820,7 +811,7 @@ class FragmentEmitter {
       return null;
     }
 
-    js.Expression code = js.js(deferredBoilerplateDart2, {
+    js.Expression code = js.js(_deferredBoilerplate, {
       // TODO(floitsch): don't just reference 'init'.
       'embeddedGlobalsObject': new js.Parameter('init'),
       'staticState': new js.Parameter(_namer.staticStateHolder),
@@ -842,19 +833,22 @@ class FragmentEmitter {
       'types': deferredTypes,
       'nativeSupport': nativeSupport,
       'typesOffset': _namer.typesOffsetName,
-      'sharedTypeRtis': _options.useNewRti ? TypeReferenceResource() : [],
+      'sharedStrings': StringReferenceResource(),
+      'sharedTypeRtis': TypeReferenceResource(),
     });
 
     if (_options.experimentStartupFunctions) {
       code = js.Parentheses(code);
     }
-    finalizeTypeReferences(code);
+    finalizeStringAndTypeReferences(code);
     return code;
   }
 
-  void finalizeTypeReferences(js.Node code) {
-    if (!_options.useNewRti) return;
-
+  void finalizeStringAndTypeReferences(js.Node code) {
+    StringReferenceFinalizer stringFinalizer =
+        StringReferenceFinalizerImpl(_options.enableMinification);
+    stringFinalizer.addCode(code);
+    stringFinalizer.finalize();
     TypeReferenceFinalizer finalizer = TypeReferenceFinalizerImpl(
         _emitter, _commonElements, _recipeEncoder, _options.enableMinification);
     finalizer.addCode(code);
@@ -1842,12 +1836,12 @@ class FragmentEmitter {
         }
         indexes.add(js.number(index));
       }
-      libraryPartsMapEntries.add(
-          new js.Property(js.string(loadId), new js.ArrayInitializer(indexes)));
+      libraryPartsMapEntries
+          .add(js.Property(js.string(loadId), js.ArrayInitializer(indexes)));
     });
 
-    deferredLoadingState.deferredLibraryParts
-        .setValue(new js.ObjectInitializer(libraryPartsMapEntries));
+    deferredLoadingState.deferredLibraryParts.setValue(
+        js.ObjectInitializer(libraryPartsMapEntries, isOneLiner: false));
     deferredLoadingState.deferredPartUris
         .setValue(js.stringArray(fragmentUris));
     deferredLoadingState.deferredPartHashes
@@ -1925,13 +1919,11 @@ class FragmentEmitter {
     if (program.typeToInterceptorMap != null) {
       // This property is assigned later.
       // Initialize property to avoid map transitions.
-      globals.add(new js.Property(
-          js.string(TYPE_TO_INTERCEPTOR_MAP), js.LiteralNull()));
+      globals.add(
+          js.Property(js.string(TYPE_TO_INTERCEPTOR_MAP), js.LiteralNull()));
     }
 
-    if (_options.useNewRti) {
-      globals.add(js.Property(js.string(RTI_UNIVERSE), createRtiUniverse()));
-    }
+    globals.add(js.Property(js.string(RTI_UNIVERSE), createRtiUniverse()));
 
     globals.add(emitMangledGlobalNames());
 
@@ -1940,20 +1932,30 @@ class FragmentEmitter {
     // therefore unused in this emitter.
     // TODO(johnniwinther): Remove the need for adding an empty list of
     // mangled names.
-    globals.add(new js.Property(
-        js.string(MANGLED_NAMES), new js.ObjectInitializer(<js.Property>[])));
+    globals.add(js.Property(
+        js.string(MANGLED_NAMES), js.ObjectInitializer(<js.Property>[])));
 
     globals.add(emitGetTypeFromName());
 
     globals.addAll(emitMetadata(program));
 
     if (program.needsNativeSupport) {
-      globals.add(new js.Property(
-          js.string(INTERCEPTORS_BY_TAG), new js.LiteralNull()));
-      globals.add(new js.Property(js.string(LEAF_TAGS), new js.LiteralNull()));
+      globals
+          .add(js.Property(js.string(INTERCEPTORS_BY_TAG), js.LiteralNull()));
+      globals.add(js.Property(js.string(LEAF_TAGS), js.LiteralNull()));
     }
 
-    js.ObjectInitializer globalsObject = new js.ObjectInitializer(globals);
+    globals.add(js.Property(
+        js.string(ARRAY_RTI_PROPERTY),
+        _options.legacyJavaScript
+            ? js.js(
+                r'typeof Symbol == "function" && typeof Symbol() == "symbol"'
+                r'    ? Symbol("$ti")'
+                r'    : "$ti"')
+            : js.js(r'Symbol("$ti")')));
+
+    js.ObjectInitializer globalsObject =
+        js.ObjectInitializer(globals, isOneLiner: false);
 
     return js.js.statement('var init = #;', globalsObject);
   }
@@ -1970,9 +1972,8 @@ class FragmentEmitter {
   }
 
   js.Block emitTypeRules(Fragment fragment) {
-    if (!_options.useNewRti) return js.Block.empty();
-
     List<js.Statement> statements = [];
+
     bool addJsObjectRedirections = false;
     ClassEntity jsObjectClass = _commonElements.jsJavaScriptObjectClass;
     InterfaceType jsObjectType = _elementEnvironment.getThisType(jsObjectClass);
@@ -1993,7 +1994,7 @@ class FragmentEmitter {
         erasedTypes[element] = targetType.typeArguments.length;
       }
 
-      bool isInterop = _nativeData.isJsInteropClass(element);
+      bool isInterop = _classHierarchy.isSubclassOf(element, jsObjectClass);
 
       Iterable<TypeCheck> checks = cls.classChecksNewRti?.checks ?? [];
       Iterable<InterfaceType> supertypes = isInterop
@@ -2026,9 +2027,9 @@ class FragmentEmitter {
 
     if (addJsObjectRedirections) {
       _classHierarchy
-          .strictSubtypesOf(jsObjectClass)
-          .forEach((ClassEntity subtype) {
-        ruleset.addRedirection(subtype, jsObjectClass);
+          .strictSubclassesOf(jsObjectClass)
+          .forEach((ClassEntity subclass) {
+        ruleset.addRedirection(subclass, jsObjectClass);
       });
     }
 
@@ -2061,7 +2062,7 @@ class FragmentEmitter {
   }
 
   js.Statement emitVariances(Fragment fragment) {
-    if (!_options.enableVariance || !_options.useNewRti) {
+    if (!_options.enableVariance) {
       return js.EmptyStatement();
     }
 

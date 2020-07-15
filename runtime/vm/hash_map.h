@@ -478,6 +478,7 @@ class RawPointerKeyValueTrait {
     Pair() : key(NULL), value() {}
     Pair(const Key key, const Value& value) : key(key), value(value) {}
     Pair(const Pair& other) : key(other.key), value(other.value) {}
+    Pair& operator=(const Pair&) = default;
   };
 
   static Key KeyOf(Pair kv) { return kv.key; }
@@ -527,9 +528,10 @@ class IntKeyRawPointerValueTrait {
   struct Pair {
     Key key;
     Value value;
-    Pair() : key(NULL), value() {}
+    Pair() : key(0), value() {}
     Pair(const Key key, const Value& value) : key(key), value(value) {}
     Pair(const Pair& other) : key(other.key), value(other.value) {}
+    Pair& operator=(const Pair&) = default;
   };
 
   static Key KeyOf(Pair kv) { return kv.key; }

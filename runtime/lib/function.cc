@@ -20,8 +20,8 @@ DEFINE_NATIVE_ENTRY(Function_apply, 0, 2) {
   const Array& fun_arg_names =
       Array::CheckedHandle(zone, arguments->NativeArgAt(1));
   const Array& fun_args_desc = Array::Handle(
-      zone, ArgumentsDescriptor::New(kTypeArgsLen, fun_arguments.Length(),
-                                     fun_arg_names));
+      zone, ArgumentsDescriptor::NewBoxed(kTypeArgsLen, fun_arguments.Length(),
+                                          fun_arg_names));
   const Object& result = Object::Handle(
       zone, DartEntry::InvokeClosure(fun_arguments, fun_args_desc));
   if (result.IsError()) {
@@ -51,8 +51,8 @@ DEFINE_NATIVE_ENTRY(Closure_equals, 0, 2) {
         const Context& context_a = Context::Handle(zone, receiver.context());
         const Context& context_b =
             Context::Handle(zone, other_closure.context());
-        RawObject* receiver_a = context_a.At(0);
-        RawObject* receiver_b = context_b.At(0);
+        ObjectPtr receiver_a = context_a.At(0);
+        ObjectPtr receiver_b = context_b.At(0);
         if ((receiver_a == receiver_b) &&
             ((func_a.raw() == func_b.raw()) ||
              ((func_a.name() == func_b.name()) &&

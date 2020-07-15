@@ -367,9 +367,7 @@ class Dart2xCompilerConfiguration extends CompilerConfiguration {
       : super._subclass(configuration);
 
   String computeCompilerPath() {
-    var prefix =
-        // TODO(38701): Cleanup after merging the forked SDK into mainline.
-        _configuration.nnbdMode == NnbdMode.legacy ? 'sdk/bin' : 'sdk_nnbd/bin';
+    var prefix = 'sdk/bin';
     var suffix = shellScriptExtension;
 
     if (_isHostChecked) {
@@ -421,8 +419,12 @@ class Dart2jsCompilerConfiguration extends Dart2xCompilerConfiguration {
 
   List<String> computeCompilerArguments(
       TestFile testFile, List<String> vmOptions, List<String> args) {
+    // TODO(#42403) Handle this option if dart2js supports non-nullable asserts
+    // on non-nullable method arguments.
+    var options = testFile.sharedOptions.toList();
+    options.remove('--null-assertions');
     return [
-      ...testFile.sharedOptions,
+      ...options,
       ..._configuration.sharedOptions,
       ..._experimentsArgument(_configuration, testFile),
       ...testFile.dart2jsOptions,
@@ -461,9 +463,7 @@ class Dart2jsCompilerConfiguration extends Dart2xCompilerConfiguration {
       CommandArtifact artifact) {
     var sdk = _useSdk
         ? Uri.directory(_configuration.buildDirectory).resolve('dart-sdk/')
-        : Uri.directory(Repository.dir.toNativePath()).resolve(
-            // TODO(38701): Cleanup after merging the forked SDK into mainline.
-            _configuration.nnbdMode == NnbdMode.legacy ? 'sdk/' : 'sdk_nnbd/');
+        : Uri.directory(Repository.dir.toNativePath()).resolve('sdk/');
     var preambleDir = sdk.resolve('lib/_internal/js_runtime/lib/preambles/');
     return runtimeConfiguration.dart2jsPreambles(preambleDir)
       ..add(artifact.filename);
@@ -494,10 +494,7 @@ class DevCompilerConfiguration extends CompilerConfiguration {
   bool get useKernel => _configuration.compiler == Compiler.dartdevk;
 
   String computeCompilerPath() {
-    var dir = _useSdk
-        ? "${_configuration.buildDirectory}/dart-sdk"
-        // TODO(38701): Cleanup after merging the forked SDK into mainline.
-        : _configuration.nnbdMode == NnbdMode.legacy ? "sdk" : "sdk_nnbd";
+    var dir = _useSdk ? "${_configuration.buildDirectory}/dart-sdk" : "sdk";
     return "$dir/bin/dartdevc$shellScriptExtension";
   }
 
@@ -508,6 +505,7 @@ class DevCompilerConfiguration extends CompilerConfiguration {
       ..._configuration.sharedOptions,
       ..._experimentsArgument(_configuration, testFile),
       ...testFile.ddcOptions,
+      if (_configuration.nnbdMode == NnbdMode.strong) '--sound-null-safety',
       // The file being compiled is the last argument.
       args.last
     ];
@@ -516,25 +514,31 @@ class DevCompilerConfiguration extends CompilerConfiguration {
   Command _createCommand(String inputFile, String outputFile,
       List<String> sharedOptions, Map<String, String> environment) {
     var args = <String>[];
+    // Remove option for generating non-null assertions for non-nullable
+    // method parameters in weak mode. DDC treats this as a runtime flag for
+    // the bootstrapping code, instead of a compiler option.
+    var options = sharedOptions.toList();
+    options.remove('--null-assertions');
     if (!_useSdk) {
       // If we're testing a built SDK, DDC will find its own summary.
       //
       // For local development we don't have a built SDK yet, so point directly
       // at the built summary file location.
-      var sdkSummaryFile = 'ddc_sdk.dill';
+      var sdkSummaryFile = _configuration.nnbdMode == NnbdMode.strong
+          ? 'ddc_outline_sound.dill'
+          : 'ddc_outline.dill';
       var sdkSummary = Path(_configuration.buildDirectory)
           .append(sdkSummaryFile)
           .absolute
           .toNativePath();
       args.addAll(["--dart-sdk-summary", sdkSummary]);
     }
-    args.addAll(sharedOptions);
+    args.addAll(options);
     args.addAll(_configuration.sharedOptions);
 
     args.addAll([
       "--ignore-unrecognized-flags",
       "--no-summarize",
-      "--no-source-map",
       "-o",
       outputFile,
       inputFile,
@@ -542,17 +546,16 @@ class DevCompilerConfiguration extends CompilerConfiguration {
 
     // Link to the summaries for the available packages, so that they don't
     // get recompiled into the test's own module.
-    var packages = _configuration.nnbdMode == NnbdMode.legacy
-        ? testPackages
-        : testPackagesNnbd;
-    for (var package in packages) {
+    var packageSummaryDir =
+        _configuration.nnbdMode == NnbdMode.strong ? 'pkg_sound' : 'pkg_kernel';
+    for (var package in testPackages) {
       args.add("-s");
 
       // Since the summaries for the packages are not near the tests, we give
       // dartdevc explicit module paths for each one. When the test is run, we
       // will tell require.js where to find each package's compiled JS.
       var summary = Path(_configuration.buildDirectory)
-          .append("/gen/utils/dartdevc/pkg_kernel/$package.dill")
+          .append("/gen/utils/dartdevc/$packageSummaryDir/$package.dill")
           .absolute
           .toNativePath();
       args.add("$summary=$package");
@@ -592,6 +595,8 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
 
   bool get _isSimArm => _configuration.architecture == Architecture.simarm;
 
+  bool get _isSimArm64 => _configuration.architecture == Architecture.simarm64;
+
   bool get _isArmX64 => _configuration.architecture == Architecture.arm_x64;
 
   bool get _isArm64 => _configuration.architecture == Architecture.arm64;
@@ -627,7 +632,7 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
           tempDir, arguments, environmentOverrides));
     }
 
-    if (!_configuration.useBlobs && !_configuration.useElf) {
+    if (!_configuration.useElf) {
       commands.add(
           computeAssembleCommand(tempDir, arguments, environmentOverrides));
       if (!_configuration.keepGeneratedFiles) {
@@ -689,16 +694,19 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
         }
       } else if (_configuration.builderTag == "crossword") {
         exec = "${buildDir}_X64/gen_snapshot";
+      } else if (_isArm && _configuration.useQemu) {
+        // DebugXARM --> DebugSIMARM_X64
+        final simBuildDir = buildDir.replaceAll("XARM", "SIMARM_X64");
+        exec = "$simBuildDir/gen_snapshot";
+      } else if (_isArm64 && _configuration.useQemu) {
+        exec = "$buildDir/clang_x64/gen_snapshot";
       } else {
         exec = "$buildDir/gen_snapshot";
       }
     }
 
     var args = [
-      if (_configuration.useBlobs) ...[
-        "--snapshot-kind=app-aot-blobs",
-        "--blobs_container_filename=$tempDir/out.aotsnapshot"
-      ] else if (_configuration.useElf) ...[
+      if (_configuration.useElf) ...[
         "--snapshot-kind=app-aot-elf",
         "--elf=$tempDir/out.aotsnapshot"
       ] else ...[
@@ -707,7 +715,10 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
       ],
       if (_isAndroid && _isArm) '--no-sim-use-hardfp',
       if (_configuration.isMinified) '--obfuscate',
-      ..._replaceDartFiles(arguments, tempKernelFile(tempDir))
+      // The SIMARM precompiler assumes support for integer division, but the
+      // Qemu arm cpus do not support integer division.
+      if (_configuration.useQemu) '--no-use-integer-division',
+      ..._replaceDartFiles(arguments, tempKernelFile(tempDir)),
     ];
 
     return CompilationCommand('precompiler', tempDir, bootstrapDependencies(),
@@ -730,8 +741,10 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
           "$host-x86_64/bin/$abiTriple-gcc";
       shared = '-shared';
     } else if (Platform.isLinux) {
-      if (_isSimArm) {
+      if (_isSimArm || (_isArm && _configuration.useQemu)) {
         cc = 'arm-linux-gnueabihf-gcc';
+      } else if (_isSimArm64 || (_isArm64 && _configuration.useQemu)) {
+        cc = 'aarch64-linux-gnu-gcc';
       } else {
         cc = 'gcc';
       }
@@ -748,9 +761,9 @@ class PrecompilerCompilerConfiguration extends CompilerConfiguration
     String ccFlags;
     switch (_configuration.architecture) {
       case Architecture.x64:
-      case Architecture.simarm64:
         ccFlags = "-m64";
         break;
+      case Architecture.simarm64:
       case Architecture.ia32:
       case Architecture.simarm:
       case Architecture.arm:
@@ -921,9 +934,7 @@ class AnalyzerCompilerConfiguration extends CompilerConfiguration {
   int get timeoutMultiplier => 4;
 
   String computeCompilerPath() {
-    var prefix =
-        // TODO(38701): Cleanup after merging the forked SDK into mainline.
-        _configuration.nnbdMode == NnbdMode.legacy ? 'sdk/bin' : 'sdk_nnbd/bin';
+    var prefix = 'sdk/bin';
     if (_isHostChecked) {
       if (_useSdk) {
         throw "--host-checked and --use-sdk cannot be used together";
@@ -941,10 +952,27 @@ class AnalyzerCompilerConfiguration extends CompilerConfiguration {
 
   CommandArtifact computeCompilationArtifact(String tempDir,
       List<String> arguments, Map<String, String> environmentOverrides) {
+    const legacyTestDirectories = {
+      "co19_2",
+      "corelib_2",
+      "ffi_2",
+      "language_2",
+      "lib_2",
+      "service",
+      "standalone_2"
+    };
+
+    // If we are running a legacy test with NNBD enabled, tell analyzer to use
+    // a pre-NNBD language version for the test.
+    var testPath = arguments.last;
+    var segments = Path(testPath).relativeTo(Repository.dir).segments();
+    var setLegacyVersion = segments.any(legacyTestDirectories.contains);
+
     var args = [
       ...arguments,
       if (_configuration.useAnalyzerCfe) '--use-cfe',
       if (_configuration.useAnalyzerFastaParser) '--use-fasta-parser',
+      if (setLegacyVersion) '--default-language-version=2.7',
     ];
 
     // Since this is not a real compilation, no artifacts are produced.
@@ -1063,6 +1091,8 @@ abstract class VMKernelCompilerMixin {
 
     var dillFile = tempKernelFile(tempDir);
 
+    var isProductMode = _configuration.configuration.mode == Mode.product;
+
     var causalAsyncStacks = !arguments.any(noCausalAsyncStacksRegExp.hasMatch);
 
     var args = [
@@ -1075,6 +1105,7 @@ abstract class VMKernelCompilerMixin {
           name.startsWith('-D') ||
           name.startsWith('--packages=') ||
           name.startsWith('--enable-experiment=')),
+      '-Ddart.vm.product=$isProductMode',
       '-Ddart.developer.causal_async_stacks=$causalAsyncStacks',
       if (_enableAsserts ||
           arguments.contains('--enable-asserts') ||
@@ -1157,10 +1188,17 @@ class FastaCompilerConfiguration extends CompilerConfiguration {
   @override
   List<String> computeCompilerArguments(
       TestFile testFile, List<String> vmOptions, List<String> args) {
+    // Remove shared option for generating non-null assertions for non-nullable
+    // method parameters in weak mode. It's currently unused by the front end.
+    var options = testFile.sharedOptions.toList();
+    options.remove('--null-assertions');
     var arguments = [
-      ...testFile.sharedOptions,
+      ...options,
       ..._configuration.sharedOptions,
-      ..._experimentsArgument(_configuration, testFile)
+      ..._experimentsArgument(_configuration, testFile),
+      if (_configuration.configuration.nnbdMode == NnbdMode.strong) ...[
+        "--nnbd-strong"
+      ]
     ];
     for (var argument in args) {
       if (argument == "--ignore-unrecognized-flags") continue;

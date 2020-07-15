@@ -10,9 +10,8 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/element/type.dart';
-import 'package:analyzer/src/generated/element_type_provider.dart';
+import 'package:analyzer/src/dart/element/type_system.dart' show TypeSystemImpl;
 import 'package:analyzer/src/generated/migration.dart';
-import 'package:analyzer/src/generated/type_system.dart' show TypeSystemImpl;
 import 'package:analyzer/src/generated/variable_type_provider.dart';
 
 /// Data gathered by flow analysis, retained for testing purposes.
@@ -27,7 +26,11 @@ class FlowAnalysisDataForTesting {
 
   /// The list of [Expression]s representing variable accesses that occur before
   /// the corresponding variable has been definitely assigned.
-  final List<AstNode> unassignedNodes = [];
+  final List<AstNode> potentiallyUnassignedNodes = [];
+
+  /// The list of [SimpleIdentifier]s representing variable accesses that occur
+  /// when the corresponding variable has been definitely unassigned.
+  final List<AstNode> definitelyUnassignedNodes = [];
 
   /// For each top level or class level declaration, the assigned variables
   /// information that was computed for it.
@@ -126,14 +129,14 @@ class FlowAnalysisHelper {
   }
 
   void executableDeclaration_enter(
-      Declaration node, FormalParameterList parameters, bool isClosure) {
+      AstNode node, FormalParameterList parameters, bool isClosure) {
     if (isClosure) {
       flow.functionExpression_begin(node);
     }
 
     if (parameters != null) {
       for (var parameter in parameters.parameters) {
-        flow.initialize(parameter.declaredElement);
+        flow.declare(parameter.declaredElement, true);
       }
     }
   }
@@ -151,7 +154,7 @@ class FlowAnalysisHelper {
     flow.for_bodyBegin(node is Statement ? node : null, condition);
   }
 
-  void for_conditionBegin(AstNode node, Expression condition) {
+  void for_conditionBegin(AstNode node) {
     flow.for_conditionBegin(node);
   }
 
@@ -178,11 +181,11 @@ class FlowAnalysisHelper {
     var element = node.staticElement;
     if (element is LocalVariableElement) {
       var typeSystem = _typeOperations.typeSystem;
+      var isUnassigned = !flow.isAssigned(element);
+      if (isUnassigned) {
+        dataForTesting?.potentiallyUnassignedNodes?.add(node);
+      }
       if (typeSystem.isPotentiallyNonNullable(element.type)) {
-        var isUnassigned = !flow.isAssigned(element);
-        if (isUnassigned) {
-          dataForTesting?.unassignedNodes?.add(node);
-        }
         // Note: in principle we could make this slightly more performant by
         // checking element.isLate earlier, but we would lose the ability to
         // test the flow analysis mechanism using late variables.  And it seems
@@ -194,6 +197,33 @@ class FlowAnalysisHelper {
     }
 
     return false;
+  }
+
+  bool isReadOfDefinitelyUnassignedLateLocal(SimpleIdentifier node) {
+    if (flow == null) return false;
+
+    if (node.inDeclarationContext()) return false;
+    if (!node.inGetterContext()) return false;
+
+    var element = node.staticElement;
+    if (element is LocalVariableElement) {
+      if (flow.isUnassigned(element)) {
+        dataForTesting?.definitelyUnassignedNodes?.add(node);
+        if (element.isLate) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  void labeledStatement_enter(LabeledStatement node) {
+    flow.labeledStatement_begin(node);
+  }
+
+  void labeledStatement_exit(LabeledStatement node) {
+    flow.labeledStatement_end();
   }
 
   void topLevelDeclaration_enter(
@@ -225,9 +255,7 @@ class FlowAnalysisHelper {
       var variables = node.variables;
       for (var i = 0; i < variables.length; ++i) {
         var variable = variables[i];
-        if (variable.initializer != null) {
-          flow.initialize(variable.declaredElement);
-        }
+        flow.declare(variable.declaredElement, variable.initializer != null);
       }
     }
   }
@@ -250,28 +278,30 @@ class FlowAnalysisHelper {
   /// Return the target of the `break` or `continue` statement with the
   /// [element] label. The [element] might be `null` (when the statement does
   /// not specify a label), so the default enclosing target is returned.
-  static Statement getLabelTarget(AstNode node, LabelElement element) {
+  static Statement getLabelTarget(AstNode node, Element element) {
     for (; node != null; node = node.parent) {
-      if (node is DoStatement ||
-          node is ForStatement ||
-          node is SwitchStatement ||
-          node is WhileStatement) {
-        if (element == null) {
+      if (element == null) {
+        if (node is DoStatement ||
+            node is ForStatement ||
+            node is SwitchStatement ||
+            node is WhileStatement) {
           return node;
         }
-        var parent = node.parent;
-        if (parent is LabeledStatement) {
-          for (var nodeLabel in parent.labels) {
-            if (identical(nodeLabel.label.staticElement, element)) {
+      } else {
+        if (node is LabeledStatement) {
+          if (_hasLabel(node.labels, element)) {
+            var statement = node.statement;
+            if (statement is Block ||
+                statement is IfStatement ||
+                statement is TryStatement) {
               return node;
             }
+            return statement;
           }
         }
-      }
-      if (element != null && node is SwitchStatement) {
-        for (var member in node.members) {
-          for (var nodeLabel in member.labels) {
-            if (identical(nodeLabel.label.staticElement, element)) {
+        if (node is SwitchStatement) {
+          for (var member in node.members) {
+            if (_hasLabel(member.labels, element)) {
               return node;
             }
           }
@@ -279,6 +309,15 @@ class FlowAnalysisHelper {
       }
     }
     return null;
+  }
+
+  static bool _hasLabel(List<Label> labels, Element element) {
+    for (var nodeLabel in labels) {
+      if (identical(nodeLabel.label.staticElement, element)) {
+        return true;
+      }
+    }
+    return false;
   }
 }
 
@@ -290,12 +329,6 @@ class FlowAnalysisHelperForMigration extends FlowAnalysisHelper {
   FlowAnalysisHelperForMigration(
       TypeSystem typeSystem, this.migrationResolutionHooks)
       : super(typeSystem, false);
-
-  @override
-  LocalVariableTypeProvider get localVariableTypeProvider {
-    return _LocalVariableTypeProvider(this,
-        elementTypeProvider: migrationResolutionHooks);
-  }
 
   @override
   void topLevelDeclaration_enter(
@@ -312,10 +345,22 @@ class FlowAnalysisHelperForMigration extends FlowAnalysisHelper {
 }
 
 class TypeSystemTypeOperations
-    implements TypeOperations<PromotableElement, DartType> {
+    extends TypeOperations<PromotableElement, DartType> {
   final TypeSystemImpl typeSystem;
 
   TypeSystemTypeOperations(this.typeSystem);
+
+  @override
+  DartType factor(DartType from, DartType what) {
+    return typeSystem.factor(from, what);
+  }
+
+  @override
+  bool isLocalVariableWithoutDeclaredType(PromotableElement variable) {
+    return variable is LocalVariableElement &&
+        variable.hasImplicitType &&
+        variable.initializer == null;
+  }
 
   @override
   bool isSameType(covariant TypeImpl type1, covariant TypeImpl type2) {
@@ -324,7 +369,7 @@ class TypeSystemTypeOperations
 
   @override
   bool isSubtypeOf(DartType leftType, DartType rightType) {
-    return typeSystem.isSubtypeOf(leftType, rightType);
+    return typeSystem.isSubtypeOf2(leftType, rightType);
   }
 
   @override
@@ -346,7 +391,7 @@ class TypeSystemTypeOperations
 /// The visitor that gathers local variables that are potentially assigned
 /// in corresponding statements, such as loops, `switch` and `try`.
 class _AssignedVariablesVisitor extends RecursiveAstVisitor<void> {
-  final AssignedVariables assignedVariables;
+  final AssignedVariables<AstNode, PromotableElement> assignedVariables;
 
   _AssignedVariablesVisitor(this.assignedVariables);
 
@@ -558,11 +603,7 @@ class _AssignedVariablesVisitor extends RecursiveAstVisitor<void> {
 class _LocalVariableTypeProvider implements LocalVariableTypeProvider {
   final FlowAnalysisHelper _manager;
 
-  final ElementTypeProvider _elementTypeProvider;
-
-  _LocalVariableTypeProvider(this._manager,
-      {ElementTypeProvider elementTypeProvider = const ElementTypeProvider()})
-      : _elementTypeProvider = elementTypeProvider;
+  _LocalVariableTypeProvider(this._manager);
 
   @override
   DartType getType(SimpleIdentifier node) {
@@ -571,6 +612,6 @@ class _LocalVariableTypeProvider implements LocalVariableTypeProvider {
       var promotedType = _manager.flow?.variableRead(node, variable);
       if (promotedType != null) return promotedType;
     }
-    return _elementTypeProvider.getVariableType(variable);
+    return variable.type;
   }
 }

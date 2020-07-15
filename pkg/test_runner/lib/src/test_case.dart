@@ -12,6 +12,7 @@ import "package:status_file/expectation.dart";
 import 'command.dart';
 import 'command_output.dart';
 import 'configuration.dart';
+import 'options.dart';
 import 'output_log.dart';
 import 'process_queue.dart';
 import 'test_file.dart';
@@ -330,7 +331,6 @@ class RunningProcess {
                 "$maxStdioDelayPassedMessage (command: $command)");
             await stdout.cancel();
             await stderr.cancel();
-            _commandComplete(exitCode);
             return null;
           }).then((_) {
             if (stdout is FileOutputLog) {
@@ -381,8 +381,8 @@ class RunningProcess {
   }
 
   Map<String, String> _createProcessEnvironment() {
-    var environment = Map<String, String>.from(io.Platform.environment);
-
+    final environment = Map<String, String>.from(io.Platform.environment);
+    environment.addAll(sanitizerEnvironmentVariables);
     if (command.environmentOverrides != null) {
       for (var key in command.environmentOverrides.keys) {
         environment[key] = command.environmentOverrides[key];

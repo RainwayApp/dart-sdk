@@ -6,6 +6,16 @@ class I<X extends core::Object* = dynamic> extends core::Object {
   synthetic constructor •() → self::I<self::I::X*>*
     : super core::Object::•()
     ;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class M0<T extends core::Object* = dynamic> extends self::I<core::List<self::M0::T*>*> {
   synthetic constructor •() → self::M0<self::M0::T*>*
@@ -22,7 +32,7 @@ class M2<T extends core::Object* = dynamic> extends self::M1<core::Map<self::M2:
     : super self::M1::•()
     ;
 }
-abstract class _A&M2&M0 = self::M2<core::int*> with self::M0<core::Map<core::int*, core::int*>*> {
+abstract class _A&M2&M0 = self::M2<core::int*> with self::M0<core::Map<core::int*, core::int*>*> /*isAnonymousMixin*/  {
   synthetic constructor •() → self::_A&M2&M0*
     : super self::M2::•()
     ;

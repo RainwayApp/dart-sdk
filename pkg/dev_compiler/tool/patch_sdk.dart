@@ -106,6 +106,12 @@ void main(List<String> argv) {
       outLibRoot.resolve('_internal/sdk_library_metadata/lib/libraries.dart');
   _writeSync(outLibrariesDart,
       _generateLibrariesDart(libRoot, specification, useNnbd));
+
+  var experimentsPath = '_internal/allowed_experiments.json';
+  _writeSync(
+    outLibRoot.resolve(experimentsPath),
+    File.fromUri(libRoot.resolve(experimentsPath)).readAsStringSync(),
+  );
 }
 
 /// Writes a file, creating the directory if needed.
@@ -166,7 +172,7 @@ List<String> _patchLibrary(List<String> partsContents, String patchContents,
   var patchFinder = PatchFinder.parseAndVisit(patchContents, useNnbd: useNnbd);
 
   // Merge `external` declarations with the corresponding `@patch` code.
-  bool failed = false;
+  var failed = false;
   for (var partContent in partsContents) {
     var partEdits = StringEditBuffer(partContent);
     var partUnit = _parseString(partContent, useNnbd: useNnbd).unit;
@@ -180,7 +186,7 @@ List<String> _patchLibrary(List<String> partsContents, String patchContents,
 }
 
 /// Merge `@patch` declarations into `external` declarations.
-class PatchApplier extends GeneralizingAstVisitor {
+class PatchApplier extends GeneralizingAstVisitor<void> {
   final StringEditBuffer edits;
   final PatchFinder patch;
 
@@ -190,7 +196,7 @@ class PatchApplier extends GeneralizingAstVisitor {
   PatchApplier(this.edits, this.patch);
 
   @override
-  visitCompilationUnit(CompilationUnit node) {
+  void visitCompilationUnit(CompilationUnit node) {
     super.visitCompilationUnit(node);
     if (_isLibrary) _mergeUnpatched(node);
   }
@@ -207,38 +213,38 @@ class PatchApplier extends GeneralizingAstVisitor {
 
     // To patch a library, we must have a library directive
     var libDir = unit.directives.first as LibraryDirective;
-    int importPos = unit.directives
+    var importPos = unit.directives
         .lastWhere((d) => d is ImportDirective, orElse: () => libDir)
         .end;
     for (var d in patch.unit.directives.whereType<ImportDirective>()) {
       _merge(d, importPos);
     }
 
-    int partPos = unit.directives.last.end;
+    var partPos = unit.directives.last.end;
     for (var d in patch.unit.directives.whereType<PartDirective>()) {
       _merge(d, partPos);
     }
 
     // Merge declarations from the patch
-    int declPos = edits.original.length;
+    var declPos = edits.original.length;
     for (var d in patch.mergeDeclarations) {
       _merge(d, declPos);
     }
   }
 
   @override
-  visitPartOfDirective(PartOfDirective node) {
+  void visitPartOfDirective(PartOfDirective node) {
     _isLibrary = false;
   }
 
   @override
-  visitFunctionDeclaration(FunctionDeclaration node) {
+  void visitFunctionDeclaration(FunctionDeclaration node) {
     _maybePatch(node);
   }
 
   /// Merge patches and extensions into the class
   @override
-  visitClassDeclaration(ClassDeclaration node) {
+  void visitClassDeclaration(ClassDeclaration node) {
     node.members.forEach(_maybePatch);
 
     var mergeMembers = patch.mergeMembers[_qualifiedName(node)];
@@ -261,13 +267,21 @@ class PatchApplier extends GeneralizingAstVisitor {
     var name = _qualifiedName(node);
     var patchNode = patch.patches[name];
     if (patchNode == null) {
-      print('warning: patch not found for $name: $node');
-      patchWasMissing = true;
+      // *.fromEnvironment are left unpatched by dart2js and are handled via
+      // codegen.
+      if (name != 'bool.fromEnvironment' &&
+          name != 'int.fromEnvironment' &&
+          name != 'String.fromEnvironment') {
+        print('warning: patch not found for $name: $node');
+        // TODO(sigmund): delete this fail logic? Rather than emit an empty
+        // file, it's more useful to emit a file with missing patches.
+        // patchWasMissing = true;
+      }
       return;
     }
 
-    Annotation patchMeta = patchNode.metadata.lastWhere(_isPatchAnnotation);
-    int start = patchMeta.endToken.next.offset;
+    var patchMeta = patchNode.metadata.lastWhere(_isPatchAnnotation);
+    var start = patchMeta.endToken.next.offset;
     var code = patch.contents.substring(start, patchNode.end);
 
     // Const factory constructors can't be legally parsed from the patch file,
@@ -286,7 +300,7 @@ class PatchApplier extends GeneralizingAstVisitor {
   }
 }
 
-class PatchFinder extends GeneralizingAstVisitor {
+class PatchFinder extends GeneralizingAstVisitor<void> {
   final String contents;
   final CompilationUnit unit;
 
@@ -301,12 +315,12 @@ class PatchFinder extends GeneralizingAstVisitor {
   }
 
   @override
-  visitCompilationUnitMember(CompilationUnitMember node) {
+  void visitCompilationUnitMember(CompilationUnitMember node) {
     mergeDeclarations.add(node);
   }
 
   @override
-  visitClassDeclaration(ClassDeclaration node) {
+  void visitClassDeclaration(ClassDeclaration node) {
     if (_isPatch(node)) {
       var members = <ClassMember>[];
       for (var member in node.members) {
@@ -325,7 +339,7 @@ class PatchFinder extends GeneralizingAstVisitor {
   }
 
   @override
-  visitFunctionDeclaration(FunctionDeclaration node) {
+  void visitFunctionDeclaration(FunctionDeclaration node) {
     if (_isPatch(node)) {
       patches[_qualifiedName(node)] = node;
     } else {
@@ -334,7 +348,7 @@ class PatchFinder extends GeneralizingAstVisitor {
   }
 
   @override
-  visitFunctionBody(node) {} // skip method bodies
+  void visitFunctionBody(node) {} // skip method bodies
 }
 
 String _qualifiedName(Declaration node) {
@@ -408,7 +422,7 @@ class StringEditBuffer {
     // Sort edits by start location.
     _edits.sort();
 
-    int consumed = 0;
+    var consumed = 0;
     for (var edit in _edits) {
       if (consumed > edit.begin) {
         sb = StringBuffer();
@@ -452,7 +466,7 @@ class _StringEdit implements Comparable<_StringEdit> {
 
   @override
   int compareTo(_StringEdit other) {
-    int diff = begin - other.begin;
+    var diff = begin - other.begin;
     if (diff != 0) return diff;
     return end - other.end;
   }
@@ -481,7 +495,7 @@ String _generateLibrariesDart(
 }
 
 String relativizeLibraryUri(Uri libRoot, Uri uri, bool useNnbd) {
-  String relativePath = relativizeUri(libRoot, uri, isWindows);
+  var relativePath = relativizeUri(libRoot, uri, isWindows);
   // During the nnbd-migration we may have paths that reach out into the
   // non-nnbd directory.
   if (relativePath.startsWith('..')) {

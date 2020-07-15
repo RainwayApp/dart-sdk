@@ -13,7 +13,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../analysis_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AnalysisNotificationNavigationTest);
   });
@@ -29,12 +29,10 @@ class AbstractNavigationTest extends AbstractAnalysisTest {
   List<NavigationTarget> testTargets;
   NavigationTarget testTarget;
 
-  /**
-   * Validates that there is a target in [testTargetIndexes] with [file],
-   * at [offset] and with the given [length].
-   */
+  /// Validates that there is a target in [testTargetIndexes] with [file],
+  /// at [offset] and with the given [length].
   void assertHasFileTarget(String file, int offset, int length) {
-    for (NavigationTarget target in testTargets) {
+    for (var target in testTargets) {
       if (targetFiles[target.fileIndex] == file &&
           target.offset == offset &&
           target.length == length) {
@@ -54,91 +52,75 @@ class AbstractNavigationTest extends AbstractAnalysisTest {
     assertHasTarget(targetSearch, targetLength);
   }
 
-  /**
-   * Validates that there is a region at the offset of [search] in [testFile].
-   * If [length] is not specified explicitly, then length of an identifier
-   * from [search] is used.
-   */
+  /// Validates that there is a region at the offset of [search] in [testFile].
+  /// If [length] is not specified explicitly, then length of an identifier
+  /// from [search] is used.
   void assertHasRegion(String search, [int length = -1]) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     if (length == -1) {
       length = findIdentifierLength(search);
     }
     findRegion(offset, length, true);
   }
 
-  /**
-   * Validates that there is a region at the offset of [search] in [testFile]
-   * with the given [length] or the length of [search].
-   */
+  /// Validates that there is a region at the offset of [search] in [testFile]
+  /// with the given [length] or the length of [search].
   void assertHasRegionString(String search, [int length = -1]) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     if (length == -1) {
       length = search.length;
     }
     findRegion(offset, length, true);
   }
 
-  /**
-   * Validates that there is an identifier region at [regionSearch] with target
-   * at [targetSearch].
-   */
+  /// Validates that there is an identifier region at [regionSearch] with target
+  /// at [targetSearch].
   void assertHasRegionTarget(String regionSearch, String targetSearch) {
     assertHasRegion(regionSearch);
     assertHasTarget(targetSearch);
   }
 
-  /**
-   * Validates that there is a target in [testTargets]  with [testFile], at the
-   * offset of [search] in [testFile], and with the given [length] or the length
-   * of an leading identifier in [search].
-   */
+  /// Validates that there is a target in [testTargets]  with [testFile], at the
+  /// offset of [search] in [testFile], and with the given [length] or the
+  /// length of an leading identifier in [search].
   void assertHasTarget(String search, [int length = -1]) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     if (length == -1) {
       length = findIdentifierLength(search);
     }
     assertHasFileTarget(testFile, offset, length);
   }
 
-  /**
-   * Validates that there is a target in [testTargets]  with [testFile], at the
-   * offset of [str] in [testFile], and with the length of  [str].
-   */
+  /// Validates that there is a target in [testTargets]  with [testFile], at the
+  /// offset of [str] in [testFile], and with the length of  [str].
   void assertHasTargetString(String str) {
     assertHasTarget(str, str.length);
   }
 
-  /**
-   * Validates that there is no a region at [search] and with the given
-   * [length].
-   */
+  /// Validates that there is no a region at [search] and with the given
+  /// [length].
   void assertNoRegion(String search, int length) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     findRegion(offset, length, false);
   }
 
-  /**
-   * Validates that there is no a region at [search] with any length.
-   */
+  /// Validates that there is no a region at [search] with any length.
   void assertNoRegionAt(String search) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     findRegion(offset, -1, false);
   }
 
-  /**
-   * Validates that there is no a region for [search] string.
-   */
+  /// Validates that there is no a region for [search] string.
   void assertNoRegionString(String search) {
-    int offset = findOffset(search);
-    int length = search.length;
+    var offset = findOffset(search);
+    var length = search.length;
     findRegion(offset, length, false);
   }
 
   void assertRegionsSorted() {
-    int lastEnd = -1;
-    for (NavigationRegion region in regions) {
-      int offset = region.offset;
+    var lastEnd = -1;
+    for (var region in regions) {
+      var offset = region.offset;
       if (offset < lastEnd) {
         fail('$lastEnd was expected to be > $offset in\n' + regions.join('\n'));
       }
@@ -146,18 +128,16 @@ class AbstractNavigationTest extends AbstractAnalysisTest {
     }
   }
 
-  /**
-   * Finds the navigation region with the given [offset] and [length].
-   * If [length] is `-1`, then it is ignored.
-   *
-   * If [exists] is `true`, then fails if such region does not exist.
-   * Otherwise remembers this it into [testRegion].
-   * Also fills [testTargets] with its targets.
-   *
-   * If [exists] is `false`, then fails if such region exists.
-   */
+  /// Finds the navigation region with the given [offset] and [length].
+  /// If [length] is `-1`, then it is ignored.
+  ///
+  /// If [exists] is `true`, then fails if such region does not exist.
+  /// Otherwise remembers this it into [testRegion].
+  /// Also fills [testTargets] with its targets.
+  ///
+  /// If [exists] is `false`, then fails if such region exists.
   void findRegion(int offset, int length, bool exists) {
-    for (NavigationRegion region in regions) {
+    for (var region in regions) {
       if (region.offset == offset &&
           (length == -1 || region.length == length)) {
         if (exists == false) {
@@ -206,7 +186,7 @@ class AnalysisNotificationNavigationTest extends AbstractNavigationTest {
     createProject();
   }
 
-  test_afterAnalysis() async {
+  Future<void> test_afterAnalysis() async {
     addTestFile('''
 class AAA {}
 AAA aaa;
@@ -216,7 +196,7 @@ AAA aaa;
     assertHasRegionTarget('AAA aaa;', 'AAA {}');
   }
 
-  test_annotationConstructor_implicit() async {
+  Future<void> test_annotationConstructor_implicit() async {
     addTestFile('''
 class A {
 }
@@ -229,7 +209,7 @@ main() {
     assertHasTarget('A {');
   }
 
-  test_annotationConstructor_importPrefix() async {
+  Future<void> test_annotationConstructor_importPrefix() async {
     newFile(join(testFolder, 'my_annotation.dart'), content: r'''
 library an;
 class MyAnnotation {
@@ -258,7 +238,7 @@ main() {
     }
   }
 
-  test_annotationConstructor_named() async {
+  Future<void> test_annotationConstructor_named() async {
     addTestFile('''
 class A {
   const A.named(p);
@@ -278,7 +258,7 @@ main() {
     }
   }
 
-  test_annotationConstructor_unnamed() async {
+  Future<void> test_annotationConstructor_unnamed() async {
     addTestFile('''
 class A {
   const A();
@@ -292,7 +272,7 @@ main() {
     assertHasTarget('A();', 0);
   }
 
-  test_annotationField() async {
+  Future<void> test_annotationField() async {
     addTestFile('''
 const myan = new Object();
 @myan // ref
@@ -304,7 +284,7 @@ main() {
     assertHasTarget('myan = new Object();');
   }
 
-  test_annotationField_importPrefix() async {
+  Future<void> test_annotationField_importPrefix() async {
     newFile(join(testFolder, 'mayn.dart'), content: r'''
 library an;
 const myan = new Object();
@@ -319,19 +299,19 @@ main() {
     assertHasRegion('myan // ref');
   }
 
-  test_class_fromSDK() async {
+  Future<void> test_class_fromSDK() async {
     addTestFile('''
 int V = 42;
 ''');
     await prepareNavigation();
     assertHasRegion('int V');
-    int targetIndex = testTargetIndexes[0];
-    NavigationTarget target = targets[targetIndex];
+    var targetIndex = testTargetIndexes[0];
+    var target = targets[targetIndex];
     expect(target.startLine, greaterThan(0));
     expect(target.startColumn, greaterThan(0));
   }
 
-  test_constructor_named() async {
+  Future<void> test_constructor_named() async {
     addTestFile('''
 class A {
   A.named(BBB p) {}
@@ -349,7 +329,7 @@ class BBB {}
     assertHasRegionTarget('BBB p', 'BBB {}');
   }
 
-  test_constructor_unnamed() async {
+  Future<void> test_constructor_unnamed() async {
     addTestFile('''
 class A {
   A(BBB p) {}
@@ -358,14 +338,13 @@ class BBB {}
 ''');
     await prepareNavigation();
     // has region for complete "A.named"
-    assertHasRegion("A(BBB");
-    assertHasTarget("A(BBB", 0);
+    assertHasRegion('A(BBB');
+    assertHasTarget('A(BBB', 0);
     // validate that we don't forget to resolve parameters
     assertHasRegionTarget('BBB p', 'BBB {}');
   }
 
-  test_extension_on() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_extension_on() async {
     addTestFile('''
 class C //1
 {}
@@ -377,7 +356,7 @@ extension E on C //2
     assertHasTarget('C //1');
   }
 
-  test_factoryRedirectingConstructor_implicit() async {
+  Future<void> test_factoryRedirectingConstructor_implicit() async {
     addTestFile('''
 class A {
   factory A() = B;
@@ -390,7 +369,8 @@ class B {
     assertHasTarget('B {');
   }
 
-  test_factoryRedirectingConstructor_implicit_withTypeArgument() async {
+  Future<void>
+      test_factoryRedirectingConstructor_implicit_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B {
@@ -409,7 +389,7 @@ class C<T> {}
     }
   }
 
-  test_factoryRedirectingConstructor_named() async {
+  Future<void> test_factoryRedirectingConstructor_named() async {
     addTestFile('''
 class A {
   factory A() = B.named;
@@ -429,7 +409,8 @@ class B {
     }
   }
 
-  test_factoryRedirectingConstructor_named_withTypeArgument() async {
+  Future<void>
+      test_factoryRedirectingConstructor_named_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B {
@@ -454,7 +435,7 @@ class C<T> {
     }
   }
 
-  test_factoryRedirectingConstructor_unnamed() async {
+  Future<void> test_factoryRedirectingConstructor_unnamed() async {
     addTestFile('''
 class A {
   factory A() = B;
@@ -468,7 +449,8 @@ class B {
     assertHasTarget('B() {}', 0);
   }
 
-  test_factoryRedirectingConstructor_unnamed_withTypeArgument() async {
+  Future<void>
+      test_factoryRedirectingConstructor_unnamed_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B {
@@ -489,7 +471,7 @@ class C<T> {
     }
   }
 
-  test_factoryRedirectingConstructor_unresolved() async {
+  Future<void> test_factoryRedirectingConstructor_unresolved() async {
     addTestFile('''
 class A {
   factory A() = B;
@@ -499,7 +481,7 @@ class A {
     // don't check regions, but there should be no exceptions
   }
 
-  test_fieldFormalParameter() async {
+  Future<void> test_fieldFormalParameter() async {
     addTestFile('''
 class AAA {
   int fff = 123;
@@ -510,7 +492,7 @@ class AAA {
     assertHasRegionTarget('fff);', 'fff = 123');
   }
 
-  test_fieldFormalParameter_unresolved() async {
+  Future<void> test_fieldFormalParameter_unresolved() async {
     addTestFile('''
 class AAA {
   AAA(this.fff);
@@ -520,7 +502,7 @@ class AAA {
     assertNoRegion('fff);', 3);
   }
 
-  test_identifier_resolved() async {
+  Future<void> test_identifier_resolved() async {
     addTestFile('''
 class AAA {}
 main() {
@@ -534,7 +516,7 @@ main() {
     assertHasRegionTarget('main() {', 'main() {');
   }
 
-  test_identifier_unresolved() async {
+  Future<void> test_identifier_unresolved() async {
     addTestFile('''
 main() {
   print(vvv);
@@ -544,7 +526,7 @@ main() {
     assertNoRegionString('vvv');
   }
 
-  test_identifier_whenStrayImportDirective() async {
+  Future<void> test_identifier_whenStrayImportDirective() async {
     addTestFile('''
 main() {
   int aaa = 42;
@@ -556,7 +538,7 @@ import 'dart:math';
     assertHasRegionTarget('aaa);', 'aaa = 42');
   }
 
-  test_inComment() async {
+  Future<void> test_inComment() async {
     addTestFile('''
 class FirstClass {}
 class SecondClass {
@@ -573,7 +555,7 @@ class SecondClass {
     assertHasRegionTarget('FirstClass(', 'FirstClass {');
   }
 
-  test_instanceCreation_implicit() async {
+  Future<void> test_instanceCreation_implicit() async {
     addTestFile('''
 class A {
 }
@@ -586,7 +568,7 @@ main() {
     assertHasTarget('A {');
   }
 
-  test_instanceCreation_implicit_withTypeArgument() async {
+  Future<void> test_instanceCreation_implicit_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B<T> {}
@@ -605,7 +587,7 @@ main() {
     }
   }
 
-  test_instanceCreation_named() async {
+  Future<void> test_instanceCreation_named() async {
     addTestFile('''
 class A {
   A.named() {}
@@ -625,7 +607,7 @@ main() {
     }
   }
 
-  test_instanceCreation_named_withTypeArgument() async {
+  Future<void> test_instanceCreation_named_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B<T> {
@@ -650,7 +632,7 @@ main() {
     }
   }
 
-  test_instanceCreation_unnamed() async {
+  Future<void> test_instanceCreation_unnamed() async {
     addTestFile('''
 class A {
   A() {}
@@ -664,7 +646,7 @@ main() {
     assertHasTarget('A() {}', 0);
   }
 
-  test_instanceCreation_unnamed_withTypeArgument() async {
+  Future<void> test_instanceCreation_unnamed_withTypeArgument() async {
     addTestFile('''
 class A {}
 class B<T> {
@@ -685,7 +667,7 @@ main() {
     }
   }
 
-  test_instanceCreation_withImportPrefix_named() async {
+  Future<void> test_instanceCreation_withImportPrefix_named() async {
     addTestFile('''
 import 'dart:async' as ppp;
 main() {
@@ -701,7 +683,7 @@ main() {
     assertHasRegion('value(42)');
   }
 
-  test_library() async {
+  Future<void> test_library() async {
     addTestFile('''
 library my.lib;
 ''');
@@ -724,7 +706,7 @@ main() {
     assertNoRegionAt('TEST');
   }
 
-  test_operator_arithmetic() async {
+  Future<void> test_operator_arithmetic() async {
     addTestFile('''
 class A {
   A operator +(other) => null;
@@ -762,7 +744,7 @@ main() {
     assertHasOperatorRegion('/= 6', 2, '/(other) => null', 1);
   }
 
-  test_operator_index() async {
+  Future<void> test_operator_index() async {
     addTestFile('''
 class A {
   A operator +(other) => null;
@@ -788,7 +770,7 @@ main() {
     assertHasOperatorRegion('+= 2;', 2, '+(other)', 1);
   }
 
-  test_partOf() async {
+  Future<void> test_partOf() async {
     var libCode = 'library lib; part "test.dart";';
     var libFile = newFile('$projectPath/bin/lib.dart', content: libCode).path;
     addTestFile('part of lib;');
@@ -797,7 +779,7 @@ main() {
     assertHasFileTarget(libFile, libCode.indexOf('lib;'), 'lib'.length);
   }
 
-  test_redirectingConstructorInvocation() async {
+  Future<void> test_redirectingConstructorInvocation() async {
     addTestFile('''
 class A {
   A() {}
@@ -820,7 +802,16 @@ class A {
     }
   }
 
-  test_string_export() async {
+  Future<void> test_string_configuration() async {
+    newFile('$projectPath/bin/lib.dart', content: '').path;
+    var lib2File = newFile('$projectPath/bin/lib2.dart', content: '').path;
+    addTestFile('import "lib.dart" if (dart.library.html) "lib2.dart";');
+    await prepareNavigation();
+    assertHasRegionString('"lib2.dart"');
+    assertHasFileTarget(lib2File, 0, 0);
+  }
+
+  Future<void> test_string_export() async {
     var libCode = 'library lib;';
     var libFile = newFile('$projectPath/bin/lib.dart', content: libCode).path;
     addTestFile('export "lib.dart";');
@@ -835,7 +826,7 @@ class A {
     assertNoRegionString('"no.dart"');
   }
 
-  test_string_import() async {
+  Future<void> test_string_import() async {
     var libCode = 'library lib;';
     var libFile = newFile('$projectPath/bin/lib.dart', content: libCode).path;
     addTestFile('import "lib.dart";');
@@ -844,7 +835,7 @@ class A {
     assertHasFileTarget(libFile, libCode.indexOf('lib;'), 'lib'.length);
   }
 
-  test_string_import_noUri() async {
+  Future<void> test_string_import_noUri() async {
     addTestFile('import ;');
     await prepareNavigation();
     assertNoRegionAt('import ;');
@@ -856,7 +847,7 @@ class A {
     assertNoRegionString('"no.dart"');
   }
 
-  test_string_part() async {
+  Future<void> test_string_part() async {
     var unitCode = 'part of lib;  f() {}';
     var unitFile =
         newFile('$projectPath/bin/test_unit.dart', content: unitCode).path;
@@ -869,7 +860,7 @@ part "test_unit.dart";
     assertHasFileTarget(unitFile, 0, 0);
   }
 
-  test_string_part_invalidUri() async {
+  Future<void> test_string_part_invalidUri() async {
     addTestFile('''
 part ":[invalid]";
 ''');
@@ -886,7 +877,7 @@ part "test_unit.dart";
     assertNoRegionString('"test_unit.dart"');
   }
 
-  test_superConstructorInvocation() async {
+  Future<void> test_superConstructorInvocation() async {
     addTestFile('''
 class A {
   A() {}
@@ -912,7 +903,7 @@ class B extends A {
     }
   }
 
-  test_superConstructorInvocation_synthetic() async {
+  Future<void> test_superConstructorInvocation_synthetic() async {
     addTestFile('''
 class A {
 }
@@ -925,7 +916,7 @@ class B extends A {
     assertHasTarget('A {');
   }
 
-  test_targetElement() async {
+  Future<void> test_targetElement() async {
     addTestFile('''
 class AAA {}
 main() {
@@ -937,7 +928,7 @@ main() {
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_type_dynamic() async {
+  Future<void> test_type_dynamic() async {
     addTestFile('''
 main() {
   dynamic v = null;
@@ -947,7 +938,7 @@ main() {
     assertNoRegionAt('dynamic');
   }
 
-  test_type_void() async {
+  Future<void> test_type_void() async {
     addTestFile('''
 void main() {
 }
@@ -956,7 +947,7 @@ void main() {
     assertNoRegionAt('void');
   }
 
-  test_var_declaredVariable() async {
+  Future<void> test_var_declaredVariable() async {
     addTestFile('''
 class C {}
 f(List<C> items) {
@@ -968,7 +959,7 @@ f(List<C> items) {
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_var_localVariable_multiple_inferred_different() async {
+  Future<void> test_var_localVariable_multiple_inferred_different() async {
     addTestFile('''
 class A {}
 class B {}
@@ -980,7 +971,7 @@ void f() {
     assertNoRegionAt('var');
   }
 
-  test_var_localVariable_multiple_inferred_same() async {
+  Future<void> test_var_localVariable_multiple_inferred_same() async {
     addTestFile('''
 class C {}
 void f() {
@@ -992,7 +983,7 @@ void f() {
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_var_localVariable_single_inferred() async {
+  Future<void> test_var_localVariable_single_inferred() async {
     addTestFile('''
 class C {}
 f() {
@@ -1004,7 +995,7 @@ f() {
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_var_localVariable_single_notInferred() async {
+  Future<void> test_var_localVariable_single_notInferred() async {
     addTestFile('''
 f() {
   var x;
@@ -1014,7 +1005,7 @@ f() {
     assertNoRegionAt('var');
   }
 
-  test_var_topLevelVariable_multiple_inferred_different() async {
+  Future<void> test_var_topLevelVariable_multiple_inferred_different() async {
     addTestFile('''
 class A {}
 class B {}
@@ -1024,7 +1015,7 @@ var a = new A(), b = new B();
     assertNoRegionAt('var');
   }
 
-  test_var_topLevelVariable_multiple_inferred_same() async {
+  Future<void> test_var_topLevelVariable_multiple_inferred_same() async {
     addTestFile('''
 class C {}
 var a = new C(), b = new C();
@@ -1034,7 +1025,7 @@ var a = new C(), b = new C();
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_var_topLevelVariable_single_inferred() async {
+  Future<void> test_var_topLevelVariable_single_inferred() async {
     addTestFile('''
 class C {}
 var c = new C();
@@ -1044,7 +1035,7 @@ var c = new C();
     expect(testTarget.kind, ElementKind.CLASS);
   }
 
-  test_var_topLevelVariable_single_notInferred() async {
+  Future<void> test_var_topLevelVariable_single_notInferred() async {
     addTestFile('''
 var x;
 ''');

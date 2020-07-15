@@ -19,6 +19,8 @@ import 'package:kernel/ast.dart'
         transformList,
         visitList;
 
+import 'package:kernel/src/printer.dart';
+
 import 'package:kernel/type_environment.dart' show StaticTypeContext;
 
 import 'package:kernel/visitor.dart'
@@ -99,6 +101,20 @@ class SpreadElement extends Expression with ControlFlowElement {
       void onConvertForElement(TreeNode from, TreeNode to)) {
     return new SpreadMapEntry(expression, isNullAware)..fileOffset = fileOffset;
   }
+
+  @override
+  String toString() {
+    return "SpreadElement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('...');
+    if (isNullAware) {
+      printer.write('?');
+    }
+    printer.writeExpression(expression);
+  }
 }
 
 /// An 'if' element in a list or set literal.
@@ -155,6 +171,23 @@ class IfElement extends Expression with ControlFlowElement {
     return new IfMapEntry(condition, thenEntry, otherwiseEntry)
       ..fileOffset = fileOffset;
   }
+
+  @override
+  String toString() {
+    return "IfElement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('if (');
+    printer.writeExpression(condition);
+    printer.write(') ');
+    printer.writeExpression(then);
+    if (otherwise != null) {
+      printer.write(' else ');
+      printer.writeExpression(otherwise);
+    }
+  }
 }
 
 /// A 'for' element in a list or set literal.
@@ -206,6 +239,16 @@ class ForElement extends Expression with ControlFlowElement {
           ..fileOffset = fileOffset;
     onConvertForElement(this, result);
     return result;
+  }
+
+  @override
+  String toString() {
+    return "ForElement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -286,6 +329,16 @@ class ForInElement extends Expression with ControlFlowElement {
     onConvertForElement(this, result);
     return result;
   }
+
+  @override
+  String toString() {
+    return "ForInElement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 mixin ControlFlowMapEntry implements MapEntry {
@@ -311,6 +364,16 @@ mixin ControlFlowMapEntry implements MapEntry {
 
   @override
   R accept<R>(TreeVisitor<R> v) => v.defaultTreeNode(this);
+
+  @override
+  String toStringInternal() => toText(defaultAstTextStrategy);
+
+  @override
+  String toText(AstTextStrategy strategy) {
+    AstPrinter state = new AstPrinter(strategy);
+    toTextInternal(state);
+    return state.getText();
+  }
 }
 
 /// A spread element in a map literal.
@@ -339,6 +402,16 @@ class SpreadMapEntry extends TreeNode with ControlFlowMapEntry {
       expression = expression.accept<TreeNode>(v);
       expression?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "SpreadMapEntry(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -376,6 +449,16 @@ class IfMapEntry extends TreeNode with ControlFlowMapEntry {
       otherwise?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "IfMapEntry(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// A 'for' element in a map literal.
@@ -412,6 +495,16 @@ class ForMapEntry extends TreeNode with ControlFlowMapEntry {
       body = body.accept<TreeNode>(v);
       body?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "ForMapEntry(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -476,6 +569,16 @@ class ForInMapEntry extends TreeNode with ControlFlowMapEntry {
       problem = problem.accept<TreeNode>(v);
       problem?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "ForInMapEntry(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter state) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 

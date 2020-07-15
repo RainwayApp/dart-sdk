@@ -1,6 +1,7 @@
 // Copyright (c) 2019, the Dart project authors. Please see the AUTHORS file
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
+
 class Foo {
   int? field;
   int? bar(int? x) {}
@@ -15,5 +16,5 @@ main() {
 }
 
 int test_nullable_function_type_formal_param({int f()?: null}) {
-  return f() ?? -1;
+  return f?.call() ?? -1;
 }

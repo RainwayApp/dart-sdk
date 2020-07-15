@@ -69,8 +69,9 @@ class PreallocatedStackTraceBuilder : public StackTraceBuilder {
       : stacktrace_(StackTrace::Cast(stacktrace)),
         cur_index_(0),
         dropped_frames_(0) {
-    ASSERT(stacktrace_.raw() ==
-           Isolate::Current()->object_store()->preallocated_stack_trace());
+    ASSERT(
+        stacktrace_.raw() ==
+        Isolate::Current()->isolate_object_store()->preallocated_stack_trace());
   }
   ~PreallocatedStackTraceBuilder() {}
 
@@ -360,8 +361,8 @@ class ExceptionHandlerFinder : public StackResource {
     return reinterpret_cast<T*>(fp + frame_slot * kWordSize);
   }
 
-  static RawObject** TaggedSlotAt(uword fp, int stack_slot) {
-    return SlotAt<RawObject*>(fp, stack_slot);
+  static ObjectPtr* TaggedSlotAt(uword fp, int stack_slot) {
+    return SlotAt<ObjectPtr>(fp, stack_slot);
   }
 
   typedef ReadStream::Raw<sizeof(intptr_t), intptr_t> Reader;
@@ -389,6 +390,101 @@ void CatchEntryMove::WriteTo(WriteStream* stream) {
   Writer::Write(stream, dest_and_kind_);
 }
 #endif
+
+#if !defined(PRODUCT) || defined(FORCE_INCLUDE_DISASSEMBLER)
+const char* CatchEntryMove::ToCString() const {
+  char from[256];
+
+  switch (source_kind()) {
+    case SourceKind::kConstant:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "pp[%" Pd "]", src_slot());
+      break;
+
+    case SourceKind::kTaggedSlot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "fp[%" Pd "]", src_slot());
+      break;
+
+    case SourceKind::kDoubleSlot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "f64 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kFloat32x4Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "f32x4 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kFloat64x2Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "f64x2 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kInt32x4Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "i32x4 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kInt64PairSlot:
+      Utils::SNPrint(from, ARRAY_SIZE(from),
+                     "i64 ([fp + %" Pd "], [fp + %" Pd "])",
+                     src_lo_slot() * compiler::target::kWordSize,
+                     src_hi_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kInt64Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "i64 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kInt32Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "i32 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    case SourceKind::kUint32Slot:
+      Utils::SNPrint(from, ARRAY_SIZE(from), "u32 [fp + %" Pd "]",
+                     src_slot() * compiler::target::kWordSize);
+      break;
+
+    default:
+      UNREACHABLE();
+  }
+
+  return Thread::Current()->zone()->PrintToString("fp[%" Pd "] <- %s",
+                                                  dest_slot(), from);
+}
+
+void CatchEntryMovesMapReader::PrintEntries() {
+  NoSafepointScope no_safepoint;
+
+  using Reader = ReadStream::Raw<sizeof(intptr_t), intptr_t>;
+
+  ReadStream stream(static_cast<uint8_t*>(bytes_.DataAddr(0)), bytes_.Length());
+
+  while (stream.PendingBytes() > 0) {
+    const intptr_t stream_position = stream.Position();
+    const intptr_t target_pc_offset = Reader::Read(&stream);
+    const intptr_t prefix_length = Reader::Read(&stream);
+    const intptr_t suffix_length = Reader::Read(&stream);
+    const intptr_t length = prefix_length + suffix_length;
+    Reader::Read(&stream);  // Skip suffix_offset
+    for (intptr_t j = 0; j < prefix_length; j++) {
+      CatchEntryMove::ReadFrom(&stream);
+    }
+
+    ReadStream inner_stream(static_cast<uint8_t*>(bytes_.DataAddr(0)),
+                            bytes_.Length());
+    CatchEntryMoves* moves = ReadCompressedCatchEntryMovesSuffix(
+        &inner_stream, stream_position, length);
+    THR_Print("  [code+0x%08" Px "]: (% " Pd " moves)\n", target_pc_offset,
+              moves->count());
+    for (intptr_t i = 0; i < moves->count(); i++) {
+      THR_Print("    %s\n", moves->At(i).ToCString());
+    }
+    CatchEntryMoves::Free(moves);
+  }
+}
+#endif  // !defined(PRODUCT) || defined(FORCE_INCLUDE_DISASSEMBLER)
 
 CatchEntryMoves* CatchEntryMovesMapReader::ReadMovesForPcOffset(
     intptr_t pc_offset) {
@@ -499,6 +595,14 @@ static uword RemapExceptionPCForDeopt(Thread* thread,
         if (FLAG_trace_deoptimization) {
           THR_Print("Throwing to frame scheduled for lazy deopt fp=%" Pp "\n",
                     frame_pointer);
+
+#if defined(DEBUG)
+          // Ensure the frame references optimized code.
+          ObjectPtr pc_marker = *(reinterpret_cast<ObjectPtr*>(
+              frame_pointer + runtime_frame_layout.code_from_fp * kWordSize));
+          Code& code = Code::Handle(Code::RawCast(pc_marker));
+          ASSERT(code.is_optimized() && !code.is_force_optimized());
+#endif
         }
         break;
       }
@@ -542,7 +646,7 @@ static void ClearLazyDeopts(Thread* thread, uword frame_pointer) {
               "fp=%" Pp ", pc=%" Pp "\n",
               (*pending_deopts)[i].fp(), (*pending_deopts)[i].pc());
         }
-        pending_deopts->RemoveAt(i);
+        pending_deopts->RemoveAt(i--);
       }
     }
 
@@ -635,7 +739,7 @@ void Exceptions::JumpToFrame(Thread* thread,
   UNREACHABLE();
 }
 
-static RawField* LookupStackTraceField(const Instance& instance) {
+static FieldPtr LookupStackTraceField(const Instance& instance) {
   if (instance.GetClassId() < kNumPredefinedCids) {
     // 'class Error' is not a predefined class.
     return Field::null();
@@ -667,7 +771,7 @@ static RawField* LookupStackTraceField(const Instance& instance) {
   return Field::null();
 }
 
-RawStackTrace* Exceptions::CurrentStackTrace() {
+StackTracePtr Exceptions::CurrentStackTrace() {
   return GetStackTraceForException();
 }
 
@@ -712,11 +816,12 @@ static void ThrowExceptionHelper(Thread* thread,
       ASSERT(incoming_exception.raw() ==
              isolate->object_store()->out_of_memory());
       const UnhandledException& error = UnhandledException::Handle(
-          zone, isolate->object_store()->preallocated_unhandled_exception());
+          zone,
+          isolate->isolate_object_store()->preallocated_unhandled_exception());
       thread->long_jump_base()->Jump(1, error);
       UNREACHABLE();
     }
-    stacktrace = isolate->object_store()->preallocated_stack_trace();
+    stacktrace = isolate->isolate_object_store()->preallocated_stack_trace();
     PreallocatedStackTraceBuilder frame_builder(stacktrace);
     ASSERT(existing_stacktrace.IsNull() ||
            (existing_stacktrace.raw() == stacktrace.raw()));
@@ -786,18 +891,22 @@ static void ThrowExceptionHelper(Thread* thread,
 
 // Return the script of the Dart function that called the native entry or the
 // runtime entry. The frame iterator points to the callee.
-RawScript* Exceptions::GetCallerScript(DartFrameIterator* iterator) {
+ScriptPtr Exceptions::GetCallerScript(DartFrameIterator* iterator) {
   StackFrame* caller_frame = iterator->NextFrame();
   ASSERT(caller_frame != NULL && caller_frame->IsDartFrame());
   const Function& caller = Function::Handle(caller_frame->LookupDartFunction());
+#if defined(DART_PRECOMPILED_RUNTIME)
+  if (caller.IsNull()) return Script::null();
+#else
   ASSERT(!caller.IsNull());
+#endif
   return caller.script();
 }
 
 // Allocate a new instance of the given class name.
 // TODO(hausner): Rename this NewCoreInstance to call out the fact that
 // the class name is resolved in the core library implicitly?
-RawInstance* Exceptions::NewInstance(const char* class_name) {
+InstancePtr Exceptions::NewInstance(const char* class_name) {
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   const String& cls_name =
@@ -827,14 +936,15 @@ void Exceptions::CreateAndThrowTypeError(TokenPosition location,
   DartFrameIterator iterator(thread,
                              StackFrameIterator::kNoCrossThreadIteration);
   const Script& script = Script::Handle(zone, GetCallerScript(&iterator));
+  const String& url = String::Handle(
+      zone, script.IsNull() ? Symbols::OptimizedOut().raw() : script.url());
   intptr_t line = -1;
   intptr_t column = -1;
-  ASSERT(!script.IsNull());
-  if (location.IsReal()) {
+  if (!script.IsNull() && location.IsReal()) {
     script.GetTokenLocation(location, &line, &column);
   }
   // Initialize '_url', '_line', and '_column' arguments.
-  args.SetAt(0, String::Handle(zone, script.url()));
+  args.SetAt(0, url);
   args.SetAt(1, Smi::Handle(zone, Smi::New(line)));
   args.SetAt(2, Smi::Handle(zone, Smi::New(column)));
 
@@ -1012,7 +1122,13 @@ void Exceptions::ThrowCompileTimeError(const LanguageError& error) {
   Exceptions::ThrowByType(Exceptions::kCompileTimeError, args);
 }
 
-RawObject* Exceptions::Create(ExceptionType type, const Array& arguments) {
+void Exceptions::ThrowLateInitializationError(const String& name) {
+  const Array& args = Array::Handle(Array::New(1));
+  args.SetAt(0, name);
+  Exceptions::ThrowByType(Exceptions::kLateInitializationError, args);
+}
+
+ObjectPtr Exceptions::Create(ExceptionType type, const Array& arguments) {
   Library& library = Library::Handle();
   const String* class_name = NULL;
   const String* constructor_name = &Symbols::Dot();
@@ -1099,12 +1215,28 @@ RawObject* Exceptions::Create(ExceptionType type, const Array& arguments) {
       library = Library::CoreLibrary();
       class_name = &Symbols::_CompileTimeError();
       break;
+    case kLateInitializationError:
+      library = Library::CoreLibrary();
+      class_name = &Symbols::LateInitializationError();
+      break;
   }
 
   Thread* thread = Thread::Current();
   NoReloadScope no_reload_scope(thread->isolate(), thread);
   return DartLibraryCalls::InstanceCreate(library, *class_name,
                                           *constructor_name, arguments);
+}
+
+UnhandledExceptionPtr Exceptions::CreateUnhandledException(Zone* zone,
+                                                           ExceptionType type,
+                                                           const char* msg) {
+  const String& error_str = String::Handle(zone, String::New(msg));
+  const Array& args = Array::Handle(zone, Array::New(1));
+  args.SetAt(0, error_str);
+
+  Object& result = Object::Handle(zone, Exceptions::Create(type, args));
+  const StackTrace& stacktrace = StackTrace::Handle(zone);
+  return UnhandledException::New(Instance::Cast(result), stacktrace);
 }
 
 }  // namespace dart

@@ -2,12 +2,22 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analysis_server/src/services/correction/assist.dart';
 import 'package:analysis_server/src/services/correction/dart/abstract_producer.dart';
+import 'package:analysis_server/src/services/correction/fix.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer_plugin/utilities/assist/assist.dart';
 import 'package:analyzer_plugin/utilities/change_builder/change_builder_dart.dart';
+import 'package:analyzer_plugin/utilities/fixes/fixes.dart';
 import 'package:analyzer_plugin/utilities/range_factory.dart';
 
 class ConvertToListLiteral extends CorrectionProducer {
+  @override
+  AssistKind get assistKind => DartAssistKind.CONVERT_TO_LIST_LITERAL;
+
+  @override
+  FixKind get fixKind => DartFixKind.CONVERT_TO_LIST_LITERAL;
+
   @override
   Future<void> compute(DartChangeBuilder builder) async {
     //
@@ -24,8 +34,7 @@ class ConvertToListLiteral extends CorrectionProducer {
     //
     // Extract the information needed to build the edit.
     //
-    TypeArgumentList constructorTypeArguments =
-        creation.constructorName.type.typeArguments;
+    var constructorTypeArguments = creation.constructorName.type.typeArguments;
     //
     // Build the edit.
     //
@@ -38,4 +47,7 @@ class ConvertToListLiteral extends CorrectionProducer {
       });
     });
   }
+
+  /// Return an instance of this class. Used as a tear-off in `FixProcessor`.
+  static ConvertToListLiteral newInstance() => ConvertToListLiteral();
 }

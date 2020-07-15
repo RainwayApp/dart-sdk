@@ -80,11 +80,12 @@ Dart_Handle Loader::LoadImportExtension(const char* url_string,
   if (strncmp(lib_uri_str, "file://", 7) == 0) {
     lib_path = DartUtils::DirName(lib_uri_str + 7);
   } else {
-    lib_path = strdup(lib_uri_str);
+    lib_path = Utils::StrDup(lib_uri_str);
   }
 
   const char* path = DartUtils::RemoveScheme(url_string);
   if (!File::IsAbsolutePath(path) && PathContainsSeparator(path)) {
+    free(lib_path);
     return DartUtils::NewError(
         "Native extension path must be absolute, or simply the file name: %s",
         path);
@@ -125,7 +126,7 @@ Dart_Handle Loader::ReloadNativeExtensions() {
     if (strncmp(lib_uri, "file://", 7) == 0) {
       lib_path = DartUtils::DirName(DartUtils::RemoveScheme(lib_uri));
     } else {
-      lib_path = strdup(lib_uri);
+      lib_path = Utils::StrDup(lib_uri);
     }
 
     result = Extensions::LoadExtension(lib_path, extension_path, importer);

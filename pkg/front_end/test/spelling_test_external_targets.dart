@@ -18,15 +18,18 @@ main([List<String> arguments = const []]) =>
 
 Future<SpellContext> createContext(
     Chain suite, Map<String, String> environment) async {
-  return new SpellContextExternal();
+  bool interactive = environment["interactive"] == "true";
+  return new SpellContextExternal(interactive: interactive);
 }
 
 class SpellContextExternal extends SpellContext {
+  SpellContextExternal({bool interactive}) : super(interactive: interactive);
+
   @override
   List<spell.Dictionaries> get dictionaries => const <spell.Dictionaries>[];
 
   @override
-  bool get onlyBlacklisted => true;
+  bool get onlyDenylisted => true;
 
   Stream<TestDescription> list(Chain suite) async* {
     for (String subdir in const ["pkg/", "sdk/"]) {

@@ -12,7 +12,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../analysis_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AnalysisNotificationClosingLabelsTest);
   });
@@ -32,8 +32,8 @@ Widget build(BuildContext context) {
 ''';
 
   static final expectedResults = [
-    ClosingLabel(51, 96, "Row"),
-    ClosingLabel(79, 57, "<Widget>[]")
+    ClosingLabel(51, 96, 'Row'),
+    ClosingLabel(79, 57, '<Widget>[]')
   ];
 
   List<ClosingLabel> lastLabels;
@@ -50,7 +50,7 @@ Widget build(BuildContext context) {
       }
     } else if (notification.event == SERVER_NOTIFICATION_ERROR) {
       var params = ServerErrorParams.fromNotification(notification);
-      throw "${params.message}\n${params.stackTrace}";
+      throw '${params.message}\n${params.stackTrace}';
     }
   }
 
@@ -64,7 +64,7 @@ Widget build(BuildContext context) {
     addAnalysisSubscription(AnalysisService.CLOSING_LABELS, testFile);
   }
 
-  test_afterAnalysis() async {
+  Future<void> test_afterAnalysis() async {
     addTestFile(sampleCode);
     await waitForTasksFinished();
     expect(lastLabels, isNull);
@@ -74,7 +74,7 @@ Widget build(BuildContext context) {
     expect(lastLabels, expectedResults);
   }
 
-  test_afterUpdate() async {
+  Future<void> test_afterUpdate() async {
     addTestFile('');
     // Currently required to get notifications on updates
     setPriorityFiles([testFile]);
@@ -93,7 +93,7 @@ Widget build(BuildContext context) {
     expect(lastLabels, expectedResults);
   }
 
-  Future waitForLabels(action()) {
+  Future waitForLabels(void Function() action) {
     _labelsReceived = Completer();
     action();
     return _labelsReceived.future;

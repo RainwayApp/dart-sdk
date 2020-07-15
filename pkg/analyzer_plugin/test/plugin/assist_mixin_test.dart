@@ -40,11 +40,11 @@ class AssistsMixinTest with ResourceProviderMixin {
     plugin.start(channel);
   }
 
-  test_handleEditGetAssists() async {
+  Future<void> test_handleEditGetAssists() async {
     await plugin.handleAnalysisSetContextRoots(
         AnalysisSetContextRootsParams([contextRoot1]));
 
-    EditGetAssistsResult result = await plugin
+    var result = await plugin
         .handleEditGetAssists(EditGetAssistsParams(filePath1, 10, 0));
     expect(result, isNotNull);
     expect(result.assists, hasLength(3));
@@ -58,7 +58,7 @@ class _TestAssistContributor implements AssistContributor {
 
   @override
   void computeAssists(AssistRequest request, AssistCollector collector) {
-    for (PrioritizedSourceChange change in changes) {
+    for (var change in changes) {
       collector.addAssist(change);
     }
   }

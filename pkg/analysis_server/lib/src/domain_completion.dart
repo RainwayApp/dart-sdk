@@ -20,86 +20,65 @@ import 'package:analysis_server/src/services/completion/token_details/token_deta
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/exception/exception.dart';
-import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/generated/engine.dart';
+import 'package:analyzer/src/util/performance/operation_performance.dart';
 import 'package:analyzer_plugin/protocol/protocol.dart' as plugin;
 import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:analyzer_plugin/protocol/protocol_constants.dart' as plugin;
 import 'package:analyzer_plugin/protocol/protocol_generated.dart' as plugin;
 import 'package:analyzer_plugin/utilities/change_builder/change_builder_dart.dart';
 
-/**
- * Instances of the class [CompletionDomainHandler] implement a [RequestHandler]
- * that handles requests in the completion domain.
- */
+/// Instances of the class [CompletionDomainHandler] implement a
+/// [RequestHandler] that handles requests in the completion domain.
 class CompletionDomainHandler extends AbstractRequestHandler {
-  /**
-   * The maximum number of performance measurements to keep.
-   */
+  /// The maximum number of performance measurements to keep.
   static const int performanceListMaxLength = 50;
 
-  /**
-   * The completion services that the client is currently subscribed.
-   */
-  final Set<CompletionService> subscriptions = Set<CompletionService>();
+  /// The completion services that the client is currently subscribed.
+  final Set<CompletionService> subscriptions = <CompletionService>{};
 
-  /**
-   * The next completion response id.
-   */
+  /// The next completion response id.
   int _nextCompletionId = 0;
 
-  /**
-   * Code completion performance for the last completion operation.
-   */
+  /// Code completion performance for the last completion operation.
   CompletionPerformance performance;
 
-  /**
-   * A list of code completion performance measurements for the latest
-   * completion operation up to [performanceListMaxLength] measurements.
-   */
+  /// A list of code completion performance measurements for the latest
+  /// completion operation up to [performanceListMaxLength] measurements.
   final RecentBuffer<CompletionPerformance> performanceList =
       RecentBuffer<CompletionPerformance>(performanceListMaxLength);
 
-  /**
-   * The current request being processed or `null` if none.
-   */
+  /// The current request being processed or `null` if none.
   CompletionRequestImpl _currentRequest;
 
-  /**
-   * The identifiers of the latest `getSuggestionDetails` request.
-   * We use it to abort previous requests.
-   */
+  /// The identifiers of the latest `getSuggestionDetails` request.
+  /// We use it to abort previous requests.
   int _latestGetSuggestionDetailsId = 0;
 
-  /**
-   * Initialize a new request handler for the given [server].
-   */
+  /// Initialize a new request handler for the given [server].
   CompletionDomainHandler(AnalysisServer server) : super(server);
 
-  /**
-   * Compute completion results for the given request and append them to the stream.
-   * Clients should not call this method directly as it is automatically called
-   * when a client listens to the stream returned by [results].
-   * Subclasses should override this method, append at least one result
-   * to the [controller], and close the controller stream once complete.
-   */
+  /// Compute completion results for the given request and append them to the
+  /// stream. Clients should not call this method directly as it is
+  /// automatically called when a client listens to the stream returned by
+  /// [results]. Subclasses should override this method, append at least one
+  /// result to the [controller], and close the controller stream once complete.
   Future<CompletionResult> computeSuggestions(
+    OperationPerformanceImpl perf,
     CompletionRequestImpl request,
     CompletionGetSuggestionsParams params,
     Set<ElementKind> includedElementKinds,
     Set<String> includedElementNames,
     List<IncludedSuggestionRelevanceTag> includedSuggestionRelevanceTags,
   ) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     //
     // Allow plugins to start computing fixes.
     //
     Map<PluginInfo, Future<plugin.Response>> pluginFutures;
     plugin.CompletionGetSuggestionsParams requestParams;
-    String file = params.file;
-    int offset = params.offset;
-    AnalysisDriver driver = server.getAnalysisDriver(file);
+    var file = params.file;
+    var offset = params.offset;
+    var driver = server.getAnalysisDriver(file);
     if (driver != null) {
       requestParams = plugin.CompletionGetSuggestionsParams(file, offset);
       pluginFutures = server.pluginManager
@@ -108,38 +87,46 @@ class CompletionDomainHandler extends AbstractRequestHandler {
     //
     // Compute completions generated by server.
     //
-    List<CompletionSuggestion> suggestions = <CompletionSuggestion>[];
+    var suggestions = <CompletionSuggestion>[];
     if (request.result != null) {
       const COMPUTE_SUGGESTIONS_TAG = 'computeSuggestions';
-      performance.logStartTime(COMPUTE_SUGGESTIONS_TAG);
+      await perf.runAsync(COMPUTE_SUGGESTIONS_TAG, (perf) async {
+        var manager = DartCompletionManager(
+          dartdocDirectiveInfo: server.getDartdocDirectiveInfoFor(
+            request.result,
+          ),
+          includedElementKinds: includedElementKinds,
+          includedElementNames: includedElementNames,
+          includedSuggestionRelevanceTags: includedSuggestionRelevanceTags,
+        );
 
-      var manager = DartCompletionManager(
-        includedElementKinds: includedElementKinds,
-        includedElementNames: includedElementNames,
-        includedSuggestionRelevanceTags: includedSuggestionRelevanceTags,
-      );
-
-      String contributorTag = 'computeSuggestions - ${manager.runtimeType}';
-      performance.logStartTime(contributorTag);
-      try {
-        suggestions.addAll(await manager.computeSuggestions(request));
-      } on AbortCompletion {
-        suggestions.clear();
-      }
-      performance.logElapseTime(contributorTag);
-      performance.logElapseTime(COMPUTE_SUGGESTIONS_TAG);
+        var contributorTag = 'computeSuggestions - ${manager.runtimeType}';
+        await perf.runAsync(contributorTag, (performance) async {
+          try {
+            suggestions.addAll(
+              await manager.computeSuggestions(
+                performance,
+                request,
+                enableUriContributor: true,
+              ),
+            );
+          } on AbortCompletion {
+            suggestions.clear();
+          }
+        });
+      });
     }
     // TODO (danrubel) if request is obsolete (processAnalysisRequest returns
     // false) then send empty results
 
     //
-    // Add the fixes produced by plugins to the server-generated fixes.
+    // Add the completions produced by plugins to the server-generated list.
     //
     if (pluginFutures != null) {
-      List<plugin.Response> responses = await waitForResponses(pluginFutures,
-          requestParameters: requestParams);
-      for (plugin.Response response in responses) {
-        plugin.CompletionGetSuggestionsResult result =
+      var responses = await waitForResponses(pluginFutures,
+          requestParameters: requestParams, timeout: 100);
+      for (var response in responses) {
+        var result =
             plugin.CompletionGetSuggestionsResult.fromResponse(response);
         if (result.results != null && result.results.isNotEmpty) {
           if (suggestions.isEmpty) {
@@ -163,9 +150,7 @@ class CompletionDomainHandler extends AbstractRequestHandler {
         request.replacementOffset, request.replacementLength, suggestions);
   }
 
-  /**
-   * Process a `completion.getSuggestionDetails` request.
-   */
+  /// Process a `completion.getSuggestionDetails` request.
   void getSuggestionDetails(Request request) async {
     var params = CompletionGetSuggestionDetailsParams.fromRequest(request);
 
@@ -239,8 +224,8 @@ class CompletionDomainHandler extends AbstractRequestHandler {
       );
     }
 
-    return runZoned(() {
-      String requestName = request.method;
+    return runZonedGuarded(() {
+      var requestName = request.method;
 
       if (requestName == COMPLETION_REQUEST_GET_SUGGESTION_DETAILS) {
         getSuggestionDetails(request);
@@ -255,7 +240,7 @@ class CompletionDomainHandler extends AbstractRequestHandler {
         return setSubscriptions(request);
       }
       return null;
-    }, onError: (exception, stackTrace) {
+    }, (exception, stackTrace) {
       AnalysisEngine.instance.instrumentationService.logException(
           CaughtException.withMessage(
               'Failed to handle completion domain request: ${request.method}',
@@ -270,19 +255,16 @@ class CompletionDomainHandler extends AbstractRequestHandler {
     }
   }
 
-  /**
-   * Process a `completion.listTokenDetails` request.
-   */
+  /// Process a `completion.listTokenDetails` request.
   Future<void> listTokenDetails(Request request) async {
-    CompletionListTokenDetailsParams params =
-        CompletionListTokenDetailsParams.fromRequest(request);
+    var params = CompletionListTokenDetailsParams.fromRequest(request);
 
-    String file = params.file;
+    var file = params.file;
     if (server.sendResponseErrorIfInvalidFilePath(request, file)) {
       return;
     }
 
-    AnalysisDriver analysisDriver = server.getAnalysisDriver(file);
+    var analysisDriver = server.getAnalysisDriver(file);
     if (analysisDriver == null) {
       server.sendResponse(Response.invalidParameter(
         request,
@@ -290,8 +272,8 @@ class CompletionDomainHandler extends AbstractRequestHandler {
         'File is not being analyzed: $file',
       ));
     }
-    AnalysisSession session = analysisDriver.currentSession;
-    ResolvedUnitResult result = await session.getResolvedUnit(file);
+    var session = analysisDriver.currentSession;
+    var result = await session.getResolvedUnit(file);
     if (result.state != ResultState.VALID) {
       server.sendResponse(Response.invalidParameter(
         request,
@@ -300,116 +282,111 @@ class CompletionDomainHandler extends AbstractRequestHandler {
       ));
     }
 
-    TokenDetailBuilder builder = TokenDetailBuilder();
+    var builder = TokenDetailBuilder();
     builder.visitNode(result.unit);
     server.sendResponse(
       CompletionListTokenDetailsResult(builder.details).toResponse(request.id),
     );
   }
 
-  /**
-   * Process a `completion.getSuggestions` request.
-   */
+  /// Process a `completion.getSuggestions` request.
   Future<void> processRequest(Request request) async {
     performance = CompletionPerformance();
 
-    // extract and validate params
-    CompletionGetSuggestionsParams params =
-        CompletionGetSuggestionsParams.fromRequest(request);
-    String file = params.file;
-    int offset = params.offset;
+    await performance.runRequestOperation((perf) async {
+      // extract and validate params
+      var params = CompletionGetSuggestionsParams.fromRequest(request);
+      var file = params.file;
+      var offset = params.offset;
 
-    if (server.sendResponseErrorIfInvalidFilePath(request, file)) {
-      return;
-    }
-
-    ResolvedUnitResult resolvedUnit = await server.getResolvedUnit(file);
-    server.requestStatistics?.addItemTimeNow(request, 'resolvedUnit');
-    if (resolvedUnit?.state == ResultState.VALID) {
-      if (offset < 0 || offset > resolvedUnit.content.length) {
-        server.sendResponse(Response.invalidParameter(
-            request,
-            'params.offset',
-            'Expected offset between 0 and source length inclusive,'
-                ' but found $offset'));
+      if (server.sendResponseErrorIfInvalidFilePath(request, file)) {
         return;
       }
 
-      recordRequest(performance, file, resolvedUnit.content, offset);
-    }
-    CompletionRequestImpl completionRequest =
-        CompletionRequestImpl(resolvedUnit, offset, performance);
+      var resolvedUnit = await server.getResolvedUnit(file);
+      server.requestStatistics?.addItemTimeNow(request, 'resolvedUnit');
+      if (resolvedUnit?.state == ResultState.VALID) {
+        if (offset < 0 || offset > resolvedUnit.content.length) {
+          server.sendResponse(Response.invalidParameter(
+              request,
+              'params.offset',
+              'Expected offset between 0 and source length inclusive,'
+                  ' but found $offset'));
+          return;
+        }
 
-    String completionId = (_nextCompletionId++).toString();
+        recordRequest(performance, file, resolvedUnit.content, offset);
+      }
+      var completionRequest = CompletionRequestImpl(
+          resolvedUnit, offset, server.options.useNewRelevance, performance);
 
-    setNewRequest(completionRequest);
+      var completionId = (_nextCompletionId++).toString();
 
-    // initial response without results
-    server.sendResponse(
-        CompletionGetSuggestionsResult(completionId).toResponse(request.id));
+      setNewRequest(completionRequest);
 
-    // If the client opted into using available suggestion sets,
-    // create the kinds set, so signal the completion manager about opt-in.
-    Set<ElementKind> includedElementKinds;
-    Set<String> includedElementNames;
-    List<IncludedSuggestionRelevanceTag> includedSuggestionRelevanceTags;
-    if (subscriptions.contains(CompletionService.AVAILABLE_SUGGESTION_SETS)) {
-      includedElementKinds = Set<ElementKind>();
-      includedElementNames = Set<String>();
-      includedSuggestionRelevanceTags = <IncludedSuggestionRelevanceTag>[];
-    }
+      // initial response without results
+      server.sendResponse(
+          CompletionGetSuggestionsResult(completionId).toResponse(request.id));
 
-    // Compute suggestions in the background
-    computeSuggestions(
-      completionRequest,
-      params,
-      includedElementKinds,
-      includedElementNames,
-      includedSuggestionRelevanceTags,
-    ).then((CompletionResult result) {
-      String libraryFile;
-      List<IncludedSuggestionSet> includedSuggestionSets = [];
-      if (includedElementKinds != null && resolvedUnit != null) {
-        libraryFile = resolvedUnit.libraryElement.source.fullName;
-        server.sendNotification(
-          createExistingImportsNotification(resolvedUnit),
-        );
-        computeIncludedSetList(
-          server.declarationsTracker,
-          resolvedUnit,
-          includedSuggestionSets,
-          includedElementNames,
-        );
+      // If the client opted into using available suggestion sets,
+      // create the kinds set, so signal the completion manager about opt-in.
+      Set<ElementKind> includedElementKinds;
+      Set<String> includedElementNames;
+      List<IncludedSuggestionRelevanceTag> includedSuggestionRelevanceTags;
+      if (subscriptions.contains(CompletionService.AVAILABLE_SUGGESTION_SETS)) {
+        includedElementKinds = <ElementKind>{};
+        includedElementNames = <String>{};
+        includedSuggestionRelevanceTags = <IncludedSuggestionRelevanceTag>[];
       }
 
-      const SEND_NOTIFICATION_TAG = 'send notification';
-      performance.logStartTime(SEND_NOTIFICATION_TAG);
-      sendCompletionNotification(
-        completionId,
-        result.replacementOffset,
-        result.replacementLength,
-        result.suggestions,
-        libraryFile,
-        includedSuggestionSets,
-        includedElementKinds?.toList(),
-        includedSuggestionRelevanceTags,
-      );
-      performance.logElapseTime(SEND_NOTIFICATION_TAG);
+      // Compute suggestions in the background
+      try {
+        var result = await computeSuggestions(
+          perf,
+          completionRequest,
+          params,
+          includedElementKinds,
+          includedElementNames,
+          includedSuggestionRelevanceTags,
+        );
+        String libraryFile;
+        var includedSuggestionSets = <IncludedSuggestionSet>[];
+        if (includedElementKinds != null && resolvedUnit != null) {
+          libraryFile = resolvedUnit.libraryElement.source.fullName;
+          server.sendNotification(
+            createExistingImportsNotification(resolvedUnit),
+          );
+          computeIncludedSetList(
+            server.declarationsTracker,
+            resolvedUnit,
+            includedSuggestionSets,
+            includedElementNames,
+          );
+        }
 
-      performance.notificationCount = 1;
-      performance.logFirstNotificationComplete('notification 1 complete');
-      performance.suggestionCountFirst = result.suggestions.length;
-      performance.suggestionCountLast = result.suggestions.length;
-      performance.complete();
-    }).whenComplete(() {
-      ifMatchesRequestClear(completionRequest);
+        const SEND_NOTIFICATION_TAG = 'send notification';
+        perf.run(SEND_NOTIFICATION_TAG, (_) {
+          sendCompletionNotification(
+            completionId,
+            result.replacementOffset,
+            result.replacementLength,
+            result.suggestions,
+            libraryFile,
+            includedSuggestionSets,
+            includedElementKinds?.toList(),
+            includedSuggestionRelevanceTags,
+          );
+        });
+
+        performance.suggestionCount = result.suggestions.length;
+      } finally {
+        ifMatchesRequestClear(completionRequest);
+      }
     });
   }
 
-  /**
-   * If tracking code completion performance over time, then
-   * record addition information about the request in the performance record.
-   */
+  /// If tracking code completion performance over time, then
+  /// record addition information about the request in the performance record.
   void recordRequest(CompletionPerformance performance, String path,
       String content, int offset) {
     performance.path = path;
@@ -420,9 +397,7 @@ class CompletionDomainHandler extends AbstractRequestHandler {
     performanceList.add(performance);
   }
 
-  /**
-   * Send completion notification results.
-   */
+  /// Send completion notification results.
   void sendCompletionNotification(
     String completionId,
     int replacementOffset,
@@ -453,9 +428,7 @@ class CompletionDomainHandler extends AbstractRequestHandler {
     _currentRequest = completionRequest;
   }
 
-  /**
-   * Implement the 'completion.setSubscriptions' request.
-   */
+  /// Implement the 'completion.setSubscriptions' request.
   Response setSubscriptions(Request request) {
     var params = CompletionSetSubscriptionsParams.fromRequest(request);
 
@@ -485,9 +458,7 @@ class CompletionDomainHandler extends AbstractRequestHandler {
     return CompletionSetSubscriptionsResult().toResponse(request.id);
   }
 
-  /**
-   * Abort the current completion request, if any.
-   */
+  /// Abort the current completion request, if any.
   void _abortCurrentRequest() {
     if (_currentRequest != null) {
       _currentRequest.abort();
@@ -496,28 +467,20 @@ class CompletionDomainHandler extends AbstractRequestHandler {
   }
 }
 
-/**
- * The result of computing suggestions for code completion.
- */
+/// The result of computing suggestions for code completion.
 class CompletionResult {
-  /**
-   * The length of the text to be replaced if the remainder of the identifier
-   * containing the cursor is to be replaced when the suggestion is applied
-   * (that is, the number of characters in the existing identifier).
-   */
+  /// The length of the text to be replaced if the remainder of the identifier
+  /// containing the cursor is to be replaced when the suggestion is applied
+  /// (that is, the number of characters in the existing identifier).
   final int replacementLength;
 
-  /**
-   * The offset of the start of the text to be replaced. This will be different
-   * than the offset used to request the completion suggestions if there was a
-   * portion of an identifier before the original offset. In particular, the
-   * replacementOffset will be the offset of the beginning of said identifier.
-   */
+  /// The offset of the start of the text to be replaced. This will be different
+  /// than the offset used to request the completion suggestions if there was a
+  /// portion of an identifier before the original offset. In particular, the
+  /// replacementOffset will be the offset of the beginning of said identifier.
   final int replacementOffset;
 
-  /**
-   * The suggested completions.
-   */
+  /// The suggested completions.
   final List<CompletionSuggestion> suggestions;
 
   CompletionResult(

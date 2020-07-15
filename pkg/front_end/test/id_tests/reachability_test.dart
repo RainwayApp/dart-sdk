@@ -19,7 +19,6 @@ main(List<String> args) async {
       '../../../_fe_analyzer_shared/test/flow_analysis/reachability/data'));
   await runTests<Set<_ReachabilityAssertion>>(dataDir,
       args: args,
-      supportedMarkers: cfeAnalyzerMarkers,
       createUriForFileName: createUriForFileName,
       onFailure: onFailure,
       runTest: runTestFor(
@@ -37,7 +36,10 @@ class ReachabilityDataComputer
   /// Function that computes a data mapping for [member].
   ///
   /// Fills [actualMap] with the data.
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<Set<_ReachabilityAssertion>>> actualMap,
       {bool verbose}) {
     MemberBuilderImpl memberBuilder =
@@ -45,6 +47,11 @@ class ReachabilityDataComputer
     member.accept(new ReachabilityDataExtractor(compilerResult, actualMap,
         memberBuilder.dataForTesting.inferenceData.flowAnalysisResult));
   }
+
+  /// Errors are supported for testing erroneous code. The reported errors are
+  /// not tested.
+  @override
+  bool get supportsErrors => true;
 }
 
 class ReachabilityDataExtractor
@@ -110,7 +117,8 @@ class _ReachabilityDataInterpreter
   const _ReachabilityDataInterpreter();
 
   @override
-  String getText(Set<_ReachabilityAssertion> actualData) =>
+  String getText(Set<_ReachabilityAssertion> actualData,
+          [String indentation]) =>
       _sortedRepresentation(_toStrings(actualData));
 
   @override

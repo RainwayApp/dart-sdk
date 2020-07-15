@@ -12,11 +12,9 @@ import 'package:analysis_server/src/channel/channel.dart';
 import 'package:analysis_server/src/utilities/request_statistics.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
 
-/**
- * Instances of the class [ByteStreamClientChannel] implement a
- * [ClientCommunicationChannel] that uses a stream and a sink (typically,
- * standard input and standard output) to communicate with servers.
- */
+/// Instances of the class [ByteStreamClientChannel] implement a
+/// [ClientCommunicationChannel] that uses a stream and a sink (typically,
+/// standard input and standard output) to communicate with servers.
 class ByteStreamClientChannel implements ClientCommunicationChannel {
   final Stream input;
   final IOSink output;
@@ -51,43 +49,31 @@ class ByteStreamClientChannel implements ClientCommunicationChannel {
 
   @override
   Future<Response> sendRequest(Request request) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
-    String id = request.id;
+    var id = request.id;
     output.write(json.encode(request.toJson()) + '\n');
     return await responseStream
         .firstWhere((Response response) => response.id == id);
   }
 }
 
-/**
- * Instances of the class [ByteStreamServerChannel] implement a
- * [ServerCommunicationChannel] that uses a stream and a sink (typically,
- * standard input and standard output) to communicate with clients.
- */
+/// Instances of the class [ByteStreamServerChannel] implement a
+/// [ServerCommunicationChannel] that uses a stream and a sink (typically,
+/// standard input and standard output) to communicate with clients.
 class ByteStreamServerChannel implements ServerCommunicationChannel {
   final Stream _input;
 
   final IOSink _output;
 
-  /**
-   * The instrumentation service that is to be used by this analysis server.
-   */
+  /// The instrumentation service that is to be used by this analysis server.
   final InstrumentationService _instrumentationService;
 
-  /**
-   * The helper for recording request / response statistics.
-   */
+  /// The helper for recording request / response statistics.
   final RequestStatisticsHelper _requestStatistics;
 
-  /**
-   * Completer that will be signalled when the input stream is closed.
-   */
+  /// Completer that will be signalled when the input stream is closed.
   final Completer _closed = Completer();
 
-  /**
-   * True if [close] has been called.
-   */
+  /// True if [close] has been called.
   bool _closeRequested = false;
 
   ByteStreamServerChannel(
@@ -97,9 +83,7 @@ class ByteStreamServerChannel implements ServerCommunicationChannel {
     _requestStatistics?.serverChannel = this;
   }
 
-  /**
-   * Future that will be completed when the input stream is closed.
-   */
+  /// Future that will be completed when the input stream is closed.
   Future get closed {
     return _closed.future;
   }
@@ -114,8 +98,8 @@ class ByteStreamServerChannel implements ServerCommunicationChannel {
   }
 
   @override
-  void listen(void onRequest(Request request),
-      {Function onError, void onDone()}) {
+  void listen(void Function(Request request) onRequest,
+      {Function onError, void Function() onDone}) {
     _input.transform(const Utf8Decoder()).transform(LineSplitter()).listen(
         (String data) => _readRequest(data, onRequest),
         onError: onError, onDone: () {
@@ -132,7 +116,7 @@ class ByteStreamServerChannel implements ServerCommunicationChannel {
       return;
     }
     ServerPerformanceStatistics.serverChannel.makeCurrentWhile(() {
-      String jsonEncoding = json.encode(notification.toJson());
+      var jsonEncoding = json.encode(notification.toJson());
       _outputLine(jsonEncoding);
       if (!identical(notification.event, 'server.log')) {
         _instrumentationService.logNotification(jsonEncoding);
@@ -150,28 +134,24 @@ class ByteStreamServerChannel implements ServerCommunicationChannel {
     }
     ServerPerformanceStatistics.serverChannel.makeCurrentWhile(() {
       _requestStatistics?.addResponse(response);
-      String jsonEncoding = json.encode(response.toJson());
+      var jsonEncoding = json.encode(response.toJson());
       _outputLine(jsonEncoding);
       _instrumentationService.logResponse(jsonEncoding);
     });
   }
 
-  /**
-   * Send the string [s] to [_output] followed by a newline.
-   */
+  /// Send the string [s] to [_output] followed by a newline.
   void _outputLine(String s) {
-    runZoned(() {
+    runZonedGuarded(() {
       _output.writeln(s);
-    }, onError: (e) {
+    }, (e, s) {
       close();
     });
   }
 
-  /**
-   * Read a request from the given [data] and use the given function to handle
-   * the request.
-   */
-  void _readRequest(Object data, void onRequest(Request request)) {
+  /// Read a request from the given [data] and use the given function to handle
+  /// the request.
+  void _readRequest(Object data, void Function(Request request) onRequest) {
     // Ignore any further requests after the communication channel is closed.
     if (_closed.isCompleted) {
       return;
@@ -180,7 +160,7 @@ class ByteStreamServerChannel implements ServerCommunicationChannel {
       _instrumentationService.logRequest(data);
       // Parse the string as a JSON descriptor and process the resulting
       // structure as a request.
-      Request request = Request.fromString(data);
+      var request = Request.fromString(data);
       if (request == null) {
         sendResponse(Response.invalidRequestFormat());
         return;

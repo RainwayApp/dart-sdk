@@ -1,4 +1,14 @@
 library test;
+//
+// Problems in library:
+//
+// pkg/front_end/testcases/inference/infer_method_missing_params.dart:23:3: Error: The method 'C.f' has more required arguments than those of overridden method 'B.f'.
+//   f(x, y);
+//   ^
+// pkg/front_end/testcases/inference/infer_method_missing_params.dart:17:7: Context: This is the overridden method ('f').
+//   int f(int x);
+//       ^
+//
 import self as self;
 import "dart:core" as core;
 
@@ -9,6 +19,16 @@ abstract class A extends core::Object {
   abstract method f(core::int* x, core::int* y) → core::int*;
   abstract method g(core::int* x, [core::int* y = #C1]) → core::int*;
   abstract method h(core::int* x, {core::int* y = #C1}) → core::int*;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class B extends core::Object {
   synthetic constructor •() → self::B*
@@ -17,6 +37,16 @@ abstract class B extends core::Object {
   abstract method f(core::int* x) → core::int*;
   abstract method g(core::int* x) → core::int*;
   abstract method h(core::int* x) → core::int*;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class C extends core::Object implements self::A, self::B {
   synthetic constructor •() → self::C*
@@ -25,6 +55,16 @@ abstract class C extends core::Object implements self::A, self::B {
   abstract method f(core::int* x, core::int* y) → core::int*;
   abstract method g(core::int* x, [core::int* y = #C1]) → core::int*;
   abstract method h(core::int* x, {core::int* y = #C1}) → core::int*;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 static method main() → dynamic {}
 

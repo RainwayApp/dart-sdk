@@ -52,11 +52,11 @@ DEFINE_FLAG(int,
 static void GetUniqueDynamicTarget(Isolate* isolate,
                                    const String& fname,
                                    Object* function) {
-  UniqueFunctionsSet functions_set(
+  UniqueFunctionsMap functions_map(
       isolate->object_store()->unique_dynamic_targets());
   ASSERT(fname.IsSymbol());
-  *function = functions_set.GetOrNull(fname);
-  ASSERT(functions_set.Release().raw() ==
+  *function = functions_map.GetOrNull(fname);
+  ASSERT(functions_map.Release().raw() ==
          isolate->object_store()->unique_dynamic_targets());
 }
 
@@ -124,6 +124,9 @@ bool AotCallSpecializer::TryCreateICDataForUniqueTarget(
     RedefinitionInstr* redefinition = new (Z)
         RedefinitionInstr(new (Z) Value(call->ArgumentAt(receiver_index)));
     redefinition->set_ssa_temp_index(flow_graph()->alloc_ssa_temp_index());
+    if (FlowGraph::NeedsPairLocation(redefinition->representation())) {
+      flow_graph()->alloc_ssa_temp_index();
+    }
     redefinition->InsertAfter(call);
     // Replace all uses of the receiver dominated by this call.
     FlowGraph::RenameDominatedUses(call->ArgumentAt(receiver_index),
@@ -220,6 +223,14 @@ bool AotCallSpecializer::TryReplaceWithHaveSameRuntimeType(
 
 static bool HasLikelySmiOperand(InstanceCallInstr* instr) {
   ASSERT(instr->type_args_len() == 0);
+
+  // If Smi is not assignable to the interface target of the call, the receiver
+  // is definitely not a Smi.
+  if (!instr->CanReceiverBeSmiBasedOnInterfaceTarget(
+          Thread::Current()->zone())) {
+    return false;
+  }
+
   // Phis with at least one known smi are // guessed to be likely smi as well.
   for (intptr_t i = 0; i < instr->ArgumentCount(); ++i) {
     PhiInstr* phi = instr->ArgumentAt(i)->AsPhi();
@@ -251,6 +262,10 @@ bool AotCallSpecializer::TryInlineFieldAccess(InstanceCallInstr* call) {
 bool AotCallSpecializer::TryInlineFieldAccess(StaticCallInstr* call) {
   if (call->function().IsImplicitGetterFunction()) {
     Field& field = Field::ZoneHandle(call->function().accessor_field());
+    if (field.is_late()) {
+      // TODO(dartbug.com/40447): Inline implicit getters for late fields.
+      return false;
+    }
     if (should_clone_fields_) {
       field = field.CloneFromOriginal();
     }
@@ -280,7 +295,6 @@ bool AotCallSpecializer::IsSupportedIntOperandForStaticDoubleOp(
 Value* AotCallSpecializer::PrepareStaticOpInput(Value* input,
                                                 intptr_t cid,
                                                 Instruction* call) {
-  ASSERT(I->can_use_strong_mode_types());
   ASSERT((cid == kDoubleCid) || (cid == kMintCid));
 
   if (input->Type()->is_nullable()) {
@@ -354,18 +368,13 @@ static void RefineUseTypes(Definition* instr) {
 
 bool AotCallSpecializer::TryOptimizeInstanceCallUsingStaticTypes(
     InstanceCallInstr* instr) {
-  ASSERT(I->can_use_strong_mode_types());
-
   const Token::Kind op_kind = instr->token_kind();
-
   return TryOptimizeIntegerOperation(instr, op_kind) ||
          TryOptimizeDoubleOperation(instr, op_kind);
 }
 
 bool AotCallSpecializer::TryOptimizeStaticCallUsingStaticTypes(
     StaticCallInstr* instr) {
-  ASSERT(I->can_use_strong_mode_types());
-
   const String& name = String::Handle(Z, instr->function().name());
   const Token::Kind op_kind = MethodTokenRecognizer::RecognizeTokenKind(name);
 
@@ -458,8 +467,6 @@ bool AotCallSpecializer::TryOptimizeIntegerOperation(TemplateDartCall<0>* instr,
     return false;
   }
 
-  ASSERT(I->can_use_strong_mode_types());
-
   Definition* replacement = NULL;
   if (instr->ArgumentCount() == 2) {
     Value* left_value = instr->ArgumentValueAt(0);
@@ -468,8 +475,14 @@ bool AotCallSpecializer::TryOptimizeIntegerOperation(TemplateDartCall<0>* instr,
     CompileType* right_type = right_value->Type();
 
     const bool is_equality_op = Token::IsEqualityOperator(op_kind);
-    const bool has_nullable_int_args =
+    bool has_nullable_int_args =
         left_type->IsNullableInt() && right_type->IsNullableInt();
+
+    if (auto* call = instr->AsInstanceCall()) {
+      if (!call->CanReceiverBeSmiBasedOnInterfaceTarget(zone())) {
+        has_nullable_int_args = false;
+      }
+    }
 
     // NOTE: We cannot use strict comparisons if the receiver has an overridden
     // == operator or if either side can be a double, since 1.0 == 1.
@@ -781,43 +794,8 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
 
   const CallTargets& targets = instr->Targets();
   const intptr_t receiver_idx = instr->FirstArgIndex();
-  if (I->can_use_strong_mode_types()) {
-    // In AOT strong mode, we avoid deopting speculation.
-    // TODO(ajcbik): replace this with actual analysis phase
-    //               that determines if checks are removed later.
-  } else if (speculative_policy_->IsAllowedForInlining(instr->deopt_id()) &&
-             !targets.is_empty()) {
-    if ((op_kind == Token::kINDEX) && TryReplaceWithIndexedOp(instr)) {
-      return;
-    }
-    if ((op_kind == Token::kASSIGN_INDEX) && TryReplaceWithIndexedOp(instr)) {
-      return;
-    }
-    if ((op_kind == Token::kEQ) && TryReplaceWithEqualityOp(instr, op_kind)) {
-      return;
-    }
 
-    if (Token::IsRelationalOperator(op_kind) &&
-        TryReplaceWithRelationalOp(instr, op_kind)) {
-      return;
-    }
-
-    if (Token::IsBinaryOperator(op_kind) &&
-        TryReplaceWithBinaryOp(instr, op_kind)) {
-      return;
-    }
-    if (Token::IsUnaryOperator(op_kind) &&
-        TryReplaceWithUnaryOp(instr, op_kind)) {
-      return;
-    }
-
-    if (TryInlineInstanceMethod(instr)) {
-      return;
-    }
-  }
-
-  if (I->can_use_strong_mode_types() &&
-      TryOptimizeInstanceCallUsingStaticTypes(instr)) {
+  if (TryOptimizeInstanceCallUsingStaticTypes(instr)) {
     return;
   }
 
@@ -831,7 +809,7 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
 
   if (has_one_target) {
     const Function& target = targets.FirstTarget();
-    RawFunction::Kind function_kind = target.kind();
+    FunctionLayout::Kind function_kind = target.kind();
     if (flow_graph()->CheckForInstanceCall(instr, function_kind) ==
         FlowGraph::ToCheck::kNoCheck) {
       StaticCallInstr* call = StaticCallInstr::FromCall(
@@ -912,6 +890,9 @@ void AotCallSpecializer::VisitInstanceCall(InstanceCallInstr* instr) {
       bool is_object_eq = true;
       for (intptr_t i = 0; i < class_ids.length(); i++) {
         const intptr_t cid = class_ids[i];
+        // Skip sentinel cid. It may appear in the unreachable code after
+        // inlining a method which doesn't return.
+        if (cid == kNeverCid) continue;
         const Class& cls = Class::Handle(Z, isolate()->class_table()->At(cid));
         const Function& target =
             Function::Handle(Z, instr->ResolveForReceiverClass(cls));
@@ -1099,7 +1080,8 @@ bool AotCallSpecializer::TryExpandCallThroughGetter(const Class& receiver_class,
   }
 
   const Array& args_desc_array = Array::Handle(
-      Z, ArgumentsDescriptor::New(/*type_args_len=*/0, /*num_arguments=*/1));
+      Z,
+      ArgumentsDescriptor::NewBoxed(/*type_args_len=*/0, /*num_arguments=*/1));
   ArgumentsDescriptor args_desc(args_desc_array);
   target = Resolver::ResolveDynamicForReceiverClass(
       receiver_class, getter_name, args_desc, /*allow_add=*/false);
@@ -1259,6 +1241,78 @@ bool AotCallSpecializer::TryReplaceInstanceOfWithRangeCheck(
   ReplaceCall(call, new_call);
   copy->DeepCopyTo(Z, new_call);
   return true;
+}
+
+void AotCallSpecializer::ReplaceInstanceCallsWithDispatchTableCalls() {
+  ASSERT(current_iterator_ == nullptr);
+  for (BlockIterator block_it = flow_graph()->reverse_postorder_iterator();
+       !block_it.Done(); block_it.Advance()) {
+    ForwardInstructionIterator it(block_it.Current());
+    current_iterator_ = &it;
+    for (; !it.Done(); it.Advance()) {
+      Instruction* instr = it.Current();
+      if (auto call = instr->AsInstanceCall()) {
+        TryReplaceWithDispatchTableCall(call);
+      } else if (auto call = instr->AsPolymorphicInstanceCall()) {
+        TryReplaceWithDispatchTableCall(call);
+      }
+    }
+    current_iterator_ = nullptr;
+  }
+}
+
+const Function& AotCallSpecializer::InterfaceTargetForTableDispatch(
+    InstanceCallBaseInstr* call) {
+  const Function& interface_target = call->interface_target();
+  if (!interface_target.IsNull()) {
+    return interface_target;
+  }
+
+  // Dynamic call or tearoff.
+  const Function& tearoff_interface_target = call->tearoff_interface_target();
+  if (!tearoff_interface_target.IsNull()) {
+    // Tearoff.
+    return Function::ZoneHandle(
+        Z, tearoff_interface_target.GetMethodExtractor(call->function_name()));
+  }
+
+  // Dynamic call.
+  return Function::null_function();
+}
+
+void AotCallSpecializer::TryReplaceWithDispatchTableCall(
+    InstanceCallBaseInstr* call) {
+  const Function& interface_target = InterfaceTargetForTableDispatch(call);
+  if (interface_target.IsNull()) {
+    // Dynamic call.
+    return;
+  }
+
+  Value* receiver = call->ArgumentValueAt(call->FirstArgIndex());
+  const compiler::TableSelector* selector =
+      precompiler_->selector_map()->GetSelector(interface_target);
+
+  if (selector == nullptr) {
+    // Target functions were removed by tree shaking. This call is dead code,
+    // or the receiver is always null.
+#if defined(DEBUG)
+    AddCheckNull(receiver->CopyWithType(Z), call->function_name(),
+                 DeoptId::kNone, call->env(), call);
+    StopInstr* stop = new (Z) StopInstr("Dead instance call executed.");
+    InsertBefore(call, stop, call->env(), FlowGraph::kEffect);
+#endif
+    return;
+  }
+
+  const bool receiver_can_be_smi =
+      call->CanReceiverBeSmiBasedOnInterfaceTarget(zone());
+  auto load_cid = new (Z) LoadClassIdInstr(receiver->CopyWithType(Z), kUntagged,
+                                           receiver_can_be_smi);
+  InsertBefore(call, load_cid, call->env(), FlowGraph::kValue);
+
+  auto dispatch_table_call = DispatchTableCallInstr::FromCall(
+      Z, call, new (Z) Value(load_cid), interface_target, selector);
+  call->ReplaceWith(dispatch_table_call, current_iterator());
 }
 
 #endif  // DART_PRECOMPILER

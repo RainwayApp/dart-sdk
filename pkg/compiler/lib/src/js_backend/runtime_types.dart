@@ -7,27 +7,18 @@ library js_backend.runtime_types;
 import '../common.dart';
 import '../common/names.dart' show Identifiers;
 import '../common_elements.dart'
-    show
-        CommonElements,
-        ElementEnvironment,
-        JCommonElements,
-        JElementEnvironment;
+    show ElementEnvironment, JCommonElements, JElementEnvironment;
 import '../elements/entities.dart';
 import '../elements/types.dart';
 import '../js/js.dart' as jsAst;
-import '../js/js.dart' show js;
-import '../js_emitter/js_emitter.dart' show ModularEmitter;
 import '../options.dart';
 import '../universe/codegen_world_builder.dart';
 import '../universe/feature.dart';
 import '../world.dart';
-import 'namer.dart';
-import 'native_data.dart';
 import 'runtime_types_codegen.dart';
 import 'runtime_types_resolution.dart';
 
 typedef jsAst.Expression OnVariableCallback(TypeVariableType variable);
-typedef bool ShouldEncodeTypedefCallback(TypedefType variable);
 
 /// Interface for the needed runtime type checks.
 abstract class RuntimeTypesChecks {
@@ -306,6 +297,7 @@ abstract class RuntimeTypesSubstitutionsMixin
 
                 assert(substitution != null);
                 for (DartType argument in substitution.arguments) {
+                  argument = argument.withoutNullability;
                   if (argument is InterfaceType) {
                     computeChecks(argument.element);
                   }
@@ -329,6 +321,7 @@ abstract class RuntimeTypesSubstitutionsMixin
 
               assert(substitution != null);
               for (DartType argument in substitution.arguments) {
+                argument = argument.withoutNullability;
                 if (argument is InterfaceType) {
                   computeChecks(argument.element);
                 }
@@ -470,42 +463,6 @@ class TrivialRuntimeTypesSubstitutions extends RuntimeTypesSubstitutionsMixin {
   TypeChecks _requiredChecks;
 
   TrivialRuntimeTypesSubstitutions(this._closedWorld);
-}
-
-abstract class RuntimeTypesEncoder {
-  jsAst.Expression getSignatureEncoding(ModularNamer namer,
-      ModularEmitter emitter, DartType type, jsAst.Expression this_);
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a function type.
-  jsAst.Template get templateForIsFunctionType;
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a FutureOr type.
-  jsAst.Template get templateForIsFutureOrType;
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the void type.
-  jsAst.Template get templateForIsVoidType;
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the dynamic type.
-  jsAst.Template get templateForIsDynamicType;
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a type argument of js-interop class.
-  jsAst.Template get templateForIsJsInteropTypeArgument;
-
-  /// Returns a [jsAst.Expression] representing the given [type]. Type variables
-  /// are replaced by the [jsAst.Expression] returned by [onVariable].
-  jsAst.Expression getTypeRepresentation(
-      ModularEmitter emitter, DartType type, OnVariableCallback onVariable,
-      [ShouldEncodeTypedefCallback shouldEncodeTypedef]);
-
-  jsAst.Expression getJsInteropTypeArguments(int count);
-
-  /// Fixed strings used for runtime types encoding.
-  RuntimeTypeTags get rtiTags;
 }
 
 class _RuntimeTypesChecks implements RuntimeTypesChecks {
@@ -732,6 +689,7 @@ class RuntimeTypesImpl
     bool isFunctionChecked = false;
 
     void processCheckedType(DartType t) {
+      t = t.withoutNullability;
       if (t is FunctionType) {
         checkedFunctionTypes.add(t);
       } else if (t is InterfaceType) {
@@ -822,462 +780,6 @@ ClassFunctionType _computeFunctionType(
   return null;
 }
 
-class RuntimeTypesEncoderImpl implements RuntimeTypesEncoder {
-  final ElementEnvironment _elementEnvironment;
-  final CommonElements commonElements;
-  final TypeRepresentationGenerator _representationGenerator;
-  final RuntimeTypesNeed _rtiNeed;
-  @override
-  final RuntimeTypeTags rtiTags;
-
-  RuntimeTypesEncoderImpl(this.rtiTags, NativeBasicData nativeData,
-      this._elementEnvironment, this.commonElements, this._rtiNeed)
-      : _representationGenerator =
-            new TypeRepresentationGenerator(rtiTags, nativeData);
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a function type.
-  @override
-  jsAst.Template get templateForIsFunctionType {
-    return _representationGenerator.templateForIsFunctionType;
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a FutureOr type.
-  @override
-  jsAst.Template get templateForIsFutureOrType {
-    return _representationGenerator.templateForIsFutureOrType;
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the void type.
-  @override
-  jsAst.Template get templateForIsVoidType {
-    return _representationGenerator.templateForIsVoidType;
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the dynamic type.
-  @override
-  jsAst.Template get templateForIsDynamicType {
-    return _representationGenerator.templateForIsDynamicType;
-  }
-
-  @override
-  jsAst.Template get templateForIsJsInteropTypeArgument {
-    return _representationGenerator.templateForIsJsInteropTypeArgument;
-  }
-
-  @override
-  jsAst.Expression getTypeRepresentation(
-      ModularEmitter emitter, DartType type, OnVariableCallback onVariable,
-      [ShouldEncodeTypedefCallback shouldEncodeTypedef]) {
-    return _representationGenerator.getTypeRepresentation(
-        emitter, type, onVariable, shouldEncodeTypedef);
-  }
-
-  String getTypeVariableName(TypeVariableType type) {
-    String name = type.element.name;
-    return name.replaceAll('#', '_');
-  }
-
-  jsAst.Expression getTypeEncoding(ModularEmitter emitter, DartType type,
-      {bool alwaysGenerateFunction: false}) {
-    ClassEntity contextClass = DartTypes.getClassContext(type);
-    jsAst.Expression onVariable(TypeVariableType v) {
-      return new jsAst.VariableUse(getTypeVariableName(v));
-    }
-
-    jsAst.Expression encoding =
-        getTypeRepresentation(emitter, type, onVariable);
-    if (contextClass == null && !alwaysGenerateFunction) {
-      return encoding;
-    } else {
-      List<String> parameters = const <String>[];
-      if (contextClass != null) {
-        parameters = _elementEnvironment
-            .getThisType(contextClass)
-            .typeArguments
-            .map((DartType _type) {
-          TypeVariableType type = _type;
-          return getTypeVariableName(type);
-        }).toList();
-      }
-      return js('function(#) { return # }', [parameters, encoding]);
-    }
-  }
-
-  @override
-  jsAst.Expression getSignatureEncoding(ModularNamer namer,
-      ModularEmitter emitter, DartType type, jsAst.Expression this_) {
-    ClassEntity contextClass = DartTypes.getClassContext(type);
-    jsAst.Expression encoding =
-        getTypeEncoding(emitter, type, alwaysGenerateFunction: true);
-    if (contextClass != null &&
-        // We only generate folding using 'computeSignature' if [contextClass]
-        // has reified type arguments. The 'computeSignature' function might not
-        // be emitted (if it's not needed elsewhere) and the generated signature
-        // will have `undefined` as its type variables in any case.
-        //
-        // This is needed specifically for --lax-runtime-type-to-string which
-        // may require a signature on a method that uses class type variables
-        // while at the same time not needing type arguments on the class.
-        _rtiNeed.classNeedsTypeArguments(contextClass)) {
-      jsAst.Name contextName = namer.className(contextClass);
-      return js('function () { return #(#, #, #); }', [
-        emitter.staticFunctionAccess(commonElements.computeSignature),
-        encoding,
-        this_,
-        js.quoteName(contextName)
-      ]);
-    } else {
-      return encoding;
-    }
-  }
-
-  @override
-  jsAst.Expression getJsInteropTypeArguments(int count) {
-    return _representationGenerator.getJsInteropTypeArguments(count);
-  }
-}
-
-/// Fixed strings used for runtime types encoding.
-// TODO(johnniwinther): Use different names for minified code?
-class RuntimeTypeTags {
-  const RuntimeTypeTags();
-
-  String get typedefTag => r'typedef';
-
-  String get functionTypeTag => r'func';
-
-  String get functionTypeVoidReturnTag => r'v';
-
-  String get functionTypeReturnTypeTag => r'ret';
-
-  String get functionTypeRequiredParametersTag => r'args';
-
-  String get functionTypeOptionalParametersTag => r'opt';
-
-  String get functionTypeNamedParametersTag => r'named';
-
-  String get functionTypeGenericBoundsTag => r'bounds';
-
-  String get futureOrTag => r'futureOr';
-
-  String get futureOrTypeTag => r'type';
-}
-
-class TypeRepresentationGenerator
-    implements DartTypeVisitor<jsAst.Expression, ModularEmitter> {
-  final RuntimeTypeTags _rtiTags;
-  final NativeBasicData _nativeData;
-
-  OnVariableCallback onVariable;
-  ShouldEncodeTypedefCallback shouldEncodeTypedef;
-  Map<TypeVariableType, jsAst.Expression> typedefBindings;
-  List<FunctionTypeVariable> functionTypeVariables = <FunctionTypeVariable>[];
-
-  TypeRepresentationGenerator(this._rtiTags, this._nativeData);
-
-  /// Creates a type representation for [type]. [onVariable] is called to
-  /// provide the type representation for type variables.
-  jsAst.Expression getTypeRepresentation(
-      ModularEmitter emitter,
-      DartType type,
-      OnVariableCallback onVariable,
-      ShouldEncodeTypedefCallback encodeTypedef) {
-    assert(typedefBindings == null);
-    this.onVariable = onVariable;
-    this.shouldEncodeTypedef =
-        (encodeTypedef != null) ? encodeTypedef : (TypedefType type) => false;
-    jsAst.Expression representation = visit(type, emitter);
-    this.onVariable = null;
-    this.shouldEncodeTypedef = null;
-    assert(functionTypeVariables.isEmpty);
-    return representation;
-  }
-
-  jsAst.Expression getJavaScriptClassName(
-      Entity element, ModularEmitter emitter) {
-    return emitter.typeAccess(element);
-  }
-
-  jsAst.Expression getDynamicValue() => js('null');
-
-  jsAst.Expression getVoidValue() => js('-1');
-
-  jsAst.Expression getJsInteropTypeArgumentValue() => js('-2');
-
-  @override
-  jsAst.Expression visit(DartType type, ModularEmitter emitter) =>
-      type.accept(this, emitter);
-
-  @override
-  jsAst.Expression visitTypeVariableType(
-      TypeVariableType type, ModularEmitter emitter) {
-    if (typedefBindings != null) {
-      assert(typedefBindings[type] != null);
-      return typedefBindings[type];
-    }
-    return onVariable(type);
-  }
-
-  @override
-  jsAst.Expression visitLegacyType(LegacyType type, ModularEmitter emitter) {
-    throw UnsupportedError('Legacy RTI does not support legacy types');
-  }
-
-  @override
-  jsAst.Expression visitNullableType(
-      NullableType type, ModularEmitter emitter) {
-    throw UnsupportedError('Legacy RTI does not support nullable types');
-  }
-
-  @override
-  jsAst.Expression visitNeverType(NeverType type, ModularEmitter emitter) {
-    throw UnsupportedError('Legacy RTI does not support the Never type');
-  }
-
-  @override
-  jsAst.Expression visitFunctionTypeVariable(
-      FunctionTypeVariable type, ModularEmitter emitter) {
-    int position = functionTypeVariables.indexOf(type);
-    assert(position >= 0);
-    return js.number(functionTypeVariables.length - position - 1);
-  }
-
-  @override
-  jsAst.Expression visitDynamicType(DynamicType type, ModularEmitter emitter) {
-    return getDynamicValue();
-  }
-
-  @override
-  jsAst.Expression visitErasedType(ErasedType type, ModularEmitter emitter) {
-    throw UnsupportedError('Legacy RTI does not support erased types');
-  }
-
-  @override
-  jsAst.Expression visitAnyType(AnyType type, ModularEmitter emitter) =>
-      getJsInteropTypeArgumentValue();
-
-  jsAst.Expression getJsInteropTypeArguments(int count,
-      {jsAst.Expression name}) {
-    List<jsAst.Expression> elements = <jsAst.Expression>[];
-    if (name != null) {
-      elements.add(name);
-    }
-    for (int i = 0; i < count; i++) {
-      elements.add(getJsInteropTypeArgumentValue());
-    }
-    return new jsAst.ArrayInitializer(elements);
-  }
-
-  @override
-  jsAst.Expression visitInterfaceType(
-      InterfaceType type, ModularEmitter emitter) {
-    jsAst.Expression name = getJavaScriptClassName(type.element, emitter);
-    jsAst.Expression result;
-    if (type.typeArguments.isEmpty) {
-      result = name;
-    } else {
-      // Visit all type arguments. This is done even for jsinterop classes to
-      // enforce the invariant that [onVariable] is called for each type
-      // variable in the type.
-      result = visitList(type.typeArguments, emitter, head: name);
-      if (_nativeData.isJsInteropClass(type.element)) {
-        // Replace type arguments of generic jsinterop classes with 'any' type.
-        result =
-            getJsInteropTypeArguments(type.typeArguments.length, name: name);
-      }
-    }
-    return result;
-  }
-
-  jsAst.Expression visitList(List<DartType> types, ModularEmitter emitter,
-      {jsAst.Expression head}) {
-    List<jsAst.Expression> elements = <jsAst.Expression>[];
-    if (head != null) {
-      elements.add(head);
-    }
-    for (DartType type in types) {
-      jsAst.Expression element = visit(type, emitter);
-      if (element is jsAst.LiteralNull) {
-        elements.add(new jsAst.ArrayHole());
-      } else {
-        elements.add(element);
-      }
-    }
-    return new jsAst.ArrayInitializer(elements);
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a function type.
-  jsAst.Template get templateForIsFunctionType {
-    return jsAst.js.expressionTemplateFor("'${_rtiTags.functionTypeTag}' in #");
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is a FutureOr type.
-  jsAst.Template get templateForIsFutureOrType {
-    return jsAst.js.expressionTemplateFor("'${_rtiTags.futureOrTag}' in #");
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the void type.
-  jsAst.Template get templateForIsVoidType {
-    return jsAst.js.expressionTemplateFor("# === -1");
-  }
-
-  /// Returns the JavaScript template to determine at runtime if a type object
-  /// is the dynamic type.
-  jsAst.Template get templateForIsDynamicType {
-    return jsAst.js.expressionTemplateFor("# == null");
-  }
-
-  jsAst.Template get templateForIsJsInteropTypeArgument {
-    return jsAst.js.expressionTemplateFor("# === -2");
-  }
-
-  @override
-  jsAst.Expression visitFunctionType(
-      FunctionType type, ModularEmitter emitter) {
-    List<jsAst.Property> properties = <jsAst.Property>[];
-
-    void addProperty(String name, jsAst.Expression value) {
-      properties.add(new jsAst.Property(js.string(name), value));
-    }
-
-    // Type representations for functions have a property which is a tag marking
-    // them as function types. The value is not used, so '1' is just a dummy.
-    addProperty(_rtiTags.functionTypeTag, js.number(1));
-
-    if (type.typeVariables.isNotEmpty) {
-      // Generic function types have type parameters which are reduced to de
-      // Bruijn indexes.
-      for (FunctionTypeVariable variable in type.typeVariables.reversed) {
-        functionTypeVariables.add(variable);
-      }
-      // TODO(sra): This emits `P.Object` for the common unbounded case. We
-      // could replace the Object bounds with an array hole for a compact `[,,]`
-      // representation.
-      addProperty(_rtiTags.functionTypeGenericBoundsTag,
-          visitList(type.typeVariables.map((v) => v.bound).toList(), emitter));
-    }
-
-    if (type.returnType is! DynamicType) {
-      addProperty(
-          _rtiTags.functionTypeReturnTypeTag, visit(type.returnType, emitter));
-    }
-    if (!type.parameterTypes.isEmpty) {
-      addProperty(_rtiTags.functionTypeRequiredParametersTag,
-          visitList(type.parameterTypes, emitter));
-    }
-    if (!type.optionalParameterTypes.isEmpty) {
-      addProperty(_rtiTags.functionTypeOptionalParametersTag,
-          visitList(type.optionalParameterTypes, emitter));
-    }
-    if (!type.namedParameterTypes.isEmpty) {
-      List<jsAst.Property> namedArguments = <jsAst.Property>[];
-      List<String> names = type.namedParameters;
-      List<DartType> types = type.namedParameterTypes;
-      assert(types.length == names.length);
-      for (int index = 0; index < types.length; index++) {
-        jsAst.Expression name = js.string(names[index]);
-        namedArguments
-            .add(new jsAst.Property(name, visit(types[index], emitter)));
-      }
-      addProperty(_rtiTags.functionTypeNamedParametersTag,
-          new jsAst.ObjectInitializer(namedArguments));
-    }
-
-    // Exit generic function scope.
-    if (type.typeVariables.isNotEmpty) {
-      functionTypeVariables.length -= type.typeVariables.length;
-    }
-
-    return new jsAst.ObjectInitializer(properties);
-  }
-
-  @override
-  jsAst.Expression visitVoidType(VoidType type, ModularEmitter emitter) {
-    return getVoidValue();
-  }
-
-  @override
-  jsAst.Expression visitTypedefType(TypedefType type, ModularEmitter emitter) {
-    bool shouldEncode = shouldEncodeTypedef(type);
-    DartType unaliasedType = type.unaliased;
-
-    var oldBindings = typedefBindings;
-    if (typedefBindings == null) {
-      // First level typedef - capture arguments for re-use within typedef body.
-      //
-      // The type `Map<T, Foo<Set<T>>>` contains one type variable referenced
-      // twice, so there are two inputs into the HTypeInfoExpression
-      // instruction.
-      //
-      // If Foo is a typedef, T can be reused, e.g.
-      //
-      //     typedef E Foo<E>(E a, E b);
-      //
-      // As the typedef is expanded (to (Set<T>, Set<T>) => Set<T>) it should
-      // not consume additional types from the to-level input.  We prevent this
-      // by capturing the types and using the captured type expressions inside
-      // the typedef expansion.
-      //
-      // TODO(sra): We should make the type subexpression Foo<...> be a second
-      // HTypeInfoExpression, with Set<T> as its input (a third
-      // HTypeInfoExpression). This would share all the Set<T> subexpressions
-      // instead of duplicating them. This would require HTypeInfoExpression
-      // inputs to correspond to type variables AND typedefs.
-      typedefBindings = <TypeVariableType, jsAst.Expression>{};
-      type.forEachTypeVariable((TypeVariableType variable) {
-        typedefBindings[variable] = onVariable(variable);
-      });
-    }
-
-    jsAst.Expression finish(jsAst.Expression result) {
-      typedefBindings = oldBindings;
-      return result;
-    }
-
-    if (shouldEncode) {
-      jsAst.ObjectInitializer initializer = visit(unaliasedType, emitter);
-      // We have to encode the aliased type.
-      jsAst.Expression name = getJavaScriptClassName(type.element, emitter);
-      jsAst.Expression encodedTypedef = type.treatAsRaw
-          ? name
-          : visitList(type.typeArguments, emitter, head: name);
-
-      // Add it to the function-type object.
-      jsAst.LiteralString tag = js.string(_rtiTags.typedefTag);
-      initializer.properties.add(new jsAst.Property(tag, encodedTypedef));
-      return finish(initializer);
-    } else {
-      return finish(visit(unaliasedType, emitter));
-    }
-  }
-
-  @override
-  jsAst.Expression visitFutureOrType(
-      FutureOrType type, ModularEmitter emitter) {
-    List<jsAst.Property> properties = <jsAst.Property>[];
-
-    void addProperty(String name, jsAst.Expression value) {
-      properties.add(new jsAst.Property(js.string(name), value));
-    }
-
-    // Type representations for FutureOr have a property which is a tag marking
-    // them as FutureOr types. The value is not used, so '1' is just a dummy.
-    addProperty(_rtiTags.futureOrTag, js.number(1));
-    if (type.typeArgument is! DynamicType) {
-      addProperty(_rtiTags.futureOrTypeTag, visit(type.typeArgument, emitter));
-    }
-
-    return new jsAst.ObjectInitializer(properties);
-  }
-}
-
 class TypeCheckMapping implements TypeChecks {
   final Map<ClassEntity, ClassChecks> map = new Map<ClassEntity, ClassChecks>();
 
@@ -1334,11 +836,6 @@ class ArgumentCollector extends DartTypeVisitor<void, void> {
   @override
   void visitFutureOrType(FutureOrType type, _) {
     collect(type.typeArgument);
-  }
-
-  @override
-  void visitTypedefType(TypedefType type, _) {
-    collect(type.unaliased);
   }
 
   @override
@@ -1451,11 +948,6 @@ class TypeVisitor extends DartTypeVisitor<void, TypeVisitorState> {
     visitTypes(type.optionalParameterTypes, contravariantArgument(state));
     visitTypes(type.namedParameterTypes, contravariantArgument(state));
     _visitedFunctionTypeVariables.removeAll(type.typeVariables);
-  }
-
-  @override
-  visitTypedefType(TypedefType type, TypeVisitorState state) {
-    visitType(type.unaliased, state);
   }
 
   @override

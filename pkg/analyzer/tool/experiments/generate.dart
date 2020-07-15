@@ -1,7 +1,5 @@
-/**
- * This file contains code to generate experimental flags
- * based on the information in tools/experimental_features.yaml.
- */
+/// This file contains code to generate experimental flags
+/// based on the information in tools/experimental_features.yaml.
 import 'dart:io';
 
 import 'package:_fe_analyzer_shared/src/scanner/characters.dart'
@@ -60,10 +58,30 @@ class _ExperimentsGenerator {
 part of 'experiments.dart';
 ''');
 
+  Map<String, dynamic> _features;
+
   _ExperimentsGenerator(this.experimentsYaml);
 
+  Map<String, dynamic> get features {
+    if (_features != null) return _features;
+    _features = {};
+    Map yamlFeatures = experimentsYaml['features'];
+    for (MapEntry entry in yamlFeatures.entries) {
+      String category = entry.value['category'] ?? 'language';
+      if (category != "language") {
+        // Skip a feature with a category that's not language. In the future
+        // possibly allow e.g. 'analyzer' etc.
+        continue;
+      }
+      _features[entry.key] = entry.value;
+    }
+
+    return _features;
+  }
+
   void generateFormatCode() {
-    keysSorted = experimentsYaml.keys.cast<String>().toList()..sort();
+    keysSorted = features.keys.toList()..sort();
+    generateSection_CurrentVersion();
     generateSection_KnownFeatures();
     generateSection_BuildExperimentalFlagsArray();
     generateSection_EnableString();
@@ -80,7 +98,7 @@ List<bool> _buildExperimentalFlagsArray() => <bool>[
 ''');
     for (var key in keysSorted) {
       var id = keyToIdentifier(key);
-      var entry = experimentsYaml[key] as YamlMap;
+      var entry = features[key] as YamlMap;
       bool shipped = entry['enabledIn'] != null;
       bool expired = entry['expired'];
       if (shipped || expired == true) {
@@ -89,26 +107,15 @@ List<bool> _buildExperimentalFlagsArray() => <bool>[
         out.writeln('IsEnabledByDefault.$id,');
       }
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-      false, // bogus-disabled
-      true, // bogus-enabled
     ];
 ''');
   }
 
   void generateSection_CurrentState() {
-    // TODO(danrubel): Remove bogus entries
     out.write('''
 
 mixin _CurrentState {
-  /// Current state for the flag "bogus-disabled"
-  @deprecated
-  bool get bogus_disabled => isEnabled(ExperimentalFeatures.bogus_disabled);
-
-  /// Current state for the flag "bogus-enabled"
-  @deprecated
-  bool get bogus_enabled => isEnabled(ExperimentalFeatures.bogus_enabled);
 ''');
     for (var key in keysSorted) {
       var id = keyToIdentifier(key);
@@ -121,6 +128,16 @@ mixin _CurrentState {
 
   bool isEnabled(covariant ExperimentalFeature feature);
 }''');
+  }
+
+  void generateSection_CurrentVersion() {
+    var version = _versionNumberAsString(experimentsYaml['current-version']);
+    out.write('''
+
+/// The current version of the Dart language (or, for non-stable releases, the
+/// version of the language currently in the process of being developed).
+const _currentVersion = '$version';
+    ''');
   }
 
   void generateSection_EnableString() {
@@ -136,16 +153,7 @@ class EnableString {
       static const String ${keyToIdentifier(key)} = '$key';
     ''');
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-
-      /// String to enable the experiment "bogus-disabled"
-      @deprecated
-      static const String bogus_disabled = 'bogus-disabled';
-
-      /// String to enable the experiment "bogus-enabled"
-      @deprecated
-      static const String bogus_enabled = 'bogus-enabled';
     }''');
   }
 
@@ -157,47 +165,27 @@ class ExperimentalFeatures {
     int index = 0;
     for (var key in keysSorted) {
       var id = keyToIdentifier(key);
-      var help = (experimentsYaml[key] as YamlMap)['help'] ?? '';
-      var enabledIn = (experimentsYaml[key] as YamlMap)['enabledIn'];
+      var help = (features[key] as YamlMap)['help'] ?? '';
+      var enabledIn = (features[key] as YamlMap)['enabledIn'];
       out.write('''
 
       static const $id = ExperimentalFeature(
-      $index,
-      EnableString.$id,
-      IsEnabledByDefault.$id,
-      IsExpired.$id,
-      '$help'
+        index: $index,
+        enableString: EnableString.$id,
+        isEnabledByDefault: IsEnabledByDefault.$id,
+        isExpired: IsExpired.$id,
+        documentation: '$help',
     ''');
       if (enabledIn != null) {
-        if (enabledIn is double) {
-          enabledIn = '$enabledIn.0';
-        }
-        out.write(",firstSupportedVersion: '$enabledIn'");
+        enabledIn = _versionNumberAsString(enabledIn);
+        out.write("firstSupportedVersion: '$enabledIn',");
+      } else {
+        out.write("firstSupportedVersion: null,");
       }
       out.writeln(');');
       ++index;
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-
-      @deprecated
-      static const bogus_disabled = ExperimentalFeature(
-        $index,
-        // ignore: deprecated_member_use_from_same_package
-        EnableString.bogus_disabled,
-        IsEnabledByDefault.bogus_disabled,
-        IsExpired.bogus_disabled,
-        null);
-
-      @deprecated
-      static const bogus_enabled = ExperimentalFeature(
-        ${index + 1},
-        // ignore: deprecated_member_use_from_same_package
-        EnableString.bogus_enabled,
-        IsEnabledByDefault.bogus_enabled,
-        IsExpired.bogus_enabled,
-        null,
-        firstSupportedVersion: '1.0.0');
     }''');
   }
 
@@ -209,23 +197,14 @@ class ExperimentalFeatures {
 class IsEnabledByDefault {
 ''');
     for (var key in keysSorted) {
-      var entry = experimentsYaml[key] as YamlMap;
+      var entry = features[key] as YamlMap;
       bool shipped = entry['enabledIn'] != null;
       out.write('''
       /// Default state of the experiment "$key"
       static const bool ${keyToIdentifier(key)} = $shipped;
     ''');
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-
-      /// Default state of the experiment "bogus-disabled"
-      @deprecated
-      static const bool bogus_disabled = false;
-
-      /// Default state of the experiment "bogus-enabled"
-      @deprecated
-      static const bool bogus_enabled = true;
     }''');
   }
 
@@ -238,7 +217,7 @@ class IsEnabledByDefault {
 class IsExpired {
 ''');
     for (var key in keysSorted) {
-      var entry = experimentsYaml[key] as YamlMap;
+      var entry = features[key] as YamlMap;
       bool shipped = entry['enabledIn'] != null;
       bool expired = entry['expired'];
       out.write('''
@@ -249,14 +228,7 @@ class IsExpired {
         throw 'Cannot mark shipped feature as "expired: false"';
       }
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-
-      /// Expiration status of the experiment "bogus-disabled"
-      static const bool bogus_disabled = true;
-
-      /// Expiration status of the experiment "bogus-enabled"
-      static const bool bogus_enabled = true;
     }''');
   }
 
@@ -272,14 +244,16 @@ const _knownFeatures = <String, ExperimentalFeature>{
   EnableString.$id: ExperimentalFeatures.$id,
     ''');
     }
-    // TODO(danrubel): Remove bogus entries
     out.write('''
-
-  // ignore: deprecated_member_use_from_same_package
-  EnableString.bogus_disabled: ExperimentalFeatures.bogus_disabled,
-  // ignore: deprecated_member_use_from_same_package
-  EnableString.bogus_enabled: ExperimentalFeatures.bogus_enabled,
 };
 ''');
+  }
+
+  String _versionNumberAsString(dynamic enabledIn) {
+    if (enabledIn is double) {
+      return '$enabledIn.0';
+    } else {
+      return enabledIn.toString();
+    }
   }
 }

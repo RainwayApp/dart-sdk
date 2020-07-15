@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(RemoveArgumentTest);
   });
@@ -23,12 +23,12 @@ class RemoveArgumentTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.avoid_redundant_argument_values;
 
-  test_named_param() async {
+  Future<void> test_named_param() async {
     await resolveTestUnit('''
 void f({bool valWithDefault = true, bool val}) {}
 
 void main() {
-  f(valWithDefault: /*LINT*/true);
+  f(valWithDefault: true);
 }
 ''');
     await assertHasFix('''
@@ -40,29 +40,29 @@ void main() {
 ''');
   }
 
-  test_named_param_2() async {
+  Future<void> test_named_param_2() async {
     await resolveTestUnit('''
 void f({bool valWithDefault = true, bool val}) {}
 
 void main() {
-  f(valWithDefault: /*LINT*/true, false);
+  f(valWithDefault: true, val: false);
 }
 ''');
     await assertHasFix('''
 void f({bool valWithDefault = true, bool val}) {}
 
 void main() {
-  f(false);
+  f(val: false);
 }
 ''');
   }
 
-  test_optional_positional() async {
+  Future<void> test_optional_positional() async {
     await resolveTestUnit('''
 void g(int x, [int y = 0]) {}
 
 void main() {
-  g(1, /*LINT*/0);
+  g(1, 0);
 }
 ''');
     await assertHasFix('''

@@ -7,12 +7,14 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/source/error_processor.dart';
+import 'package:analyzer/src/context/packages.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/dart/analysis/file_state.dart';
@@ -277,7 +279,9 @@ class AbstractStrongTest with ResourceProviderMixin {
     analysisOptions.implicitDynamic = implicitDynamic;
     analysisOptions.strictInference = strictInference;
     analysisOptions.strictRawTypes = strictRawTypes;
-    analysisOptions.enabledExperiments = enabledExperiments;
+    analysisOptions.contextFeatures = FeatureSet.fromEnableFlags(
+      enabledExperiments,
+    );
 
     var mockSdk = MockSdk(
       resourceProvider: resourceProvider,
@@ -303,7 +307,8 @@ class AbstractStrongTest with ResourceProviderMixin {
         fileContentOverlay,
         null,
         sourceFactory,
-        analysisOptions);
+        analysisOptions,
+        packages: Packages.empty);
     scheduler.start();
 
     mainUnit = (await _driver.getResult(mainFile.path)).unit;

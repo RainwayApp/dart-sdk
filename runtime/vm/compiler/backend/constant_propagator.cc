@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 #include "vm/compiler/backend/constant_propagator.h"
 
 #include "vm/bit_vector.h"
@@ -36,8 +34,10 @@ ConstantPropagator::ConstantPropagator(
       graph_(graph),
       unknown_(Object::unknown_constant()),
       non_constant_(Object::non_constant()),
+      constant_value_(Object::Handle(Z)),
       reachable_(new (Z) BitVector(Z, graph->preorder().length())),
-      marked_phis_(new (Z) BitVector(Z, graph->max_virtual_register_number())),
+      unwrapped_phis_(new (Z)
+                          BitVector(Z, graph->max_virtual_register_number())),
       block_worklist_(),
       definition_worklist_(graph, 10) {}
 
@@ -219,7 +219,16 @@ void ConstantPropagator::VisitGoto(GotoInstr* instr) {
   // Phi value depends on the reachability of a predecessor. We have
   // to revisit phis every time a predecessor becomes reachable.
   for (PhiIterator it(instr->successor()); !it.Done(); it.Advance()) {
-    it.Current()->Accept(this);
+    PhiInstr* phi = it.Current();
+    phi->Accept(this);
+
+    // If this phi was previously unwrapped as redundant and it is no longer
+    // redundant (does not unwrap) then we need to revisit the uses.
+    if (unwrapped_phis_->Contains(phi->ssa_temp_index()) &&
+        (UnwrapPhi(phi) == phi)) {
+      unwrapped_phis_->Remove(phi->ssa_temp_index());
+      definition_worklist_.Add(phi);
+    }
   }
 }
 
@@ -289,6 +298,8 @@ void ConstantPropagator::VisitStoreIndexed(StoreIndexedInstr* instr) {}
 void ConstantPropagator::VisitStoreInstanceField(
     StoreInstanceFieldInstr* instr) {}
 
+void ConstantPropagator::VisitMemoryCopy(MemoryCopyInstr* instr) {}
+
 void ConstantPropagator::VisitDeoptimize(DeoptimizeInstr* instr) {
   // TODO(vegorov) remove all code after DeoptimizeInstr as dead.
 }
@@ -314,9 +325,25 @@ Definition* ConstantPropagator::UnwrapPhi(Definition* defn) {
   return defn;
 }
 
-void ConstantPropagator::MarkPhi(Definition* phi) {
+void ConstantPropagator::MarkUnwrappedPhi(Definition* phi) {
   ASSERT(phi->IsPhi());
-  marked_phis_->Add(phi->ssa_temp_index());
+  unwrapped_phis_->Add(phi->ssa_temp_index());
+}
+
+ConstantPropagator::PhiInfo* ConstantPropagator::GetPhiInfo(PhiInstr* phi) {
+  if (phi->HasPassSpecificId(CompilerPass::kConstantPropagation)) {
+    const intptr_t id =
+        phi->GetPassSpecificId(CompilerPass::kConstantPropagation);
+    // Note: id might have been assigned by the previous round of constant
+    // propagation, so we need to verify it before using it.
+    if (id < phis_.length() && phis_[id].phi == phi) {
+      return &phis_[id];
+    }
+  }
+
+  phi->SetPassSpecificId(CompilerPass::kConstantPropagation, phis_.length());
+  phis_.Add({phi, 0});
+  return &phis_.Last();
 }
 
 // --------------------------------------------------------------------------
@@ -324,6 +351,29 @@ void ConstantPropagator::MarkPhi(Definition* phi) {
 // and the definition has input uses, add the definition to the definition
 // worklist so that the used can be processed.
 void ConstantPropagator::VisitPhi(PhiInstr* instr) {
+  // Detect convergence issues by checking if visit count for this phi
+  // is too high. We should only visit this phi once for every predecessor
+  // becoming reachable, once for every input changing its constant value and
+  // once for an unwrapped redundant phi becoming non-redundant.
+  // Inputs can only change their constant value at most three times: from
+  // non-constant to unknown to specific constant to non-constant. The first
+  // link (non-constant to ...) can happen when we run the second round of
+  // constant propagation - some instructions can have non-constant assigned to
+  // them at the end of the previous constant propagation.
+  auto info = GetPhiInfo(instr);
+  info->visit_count++;
+  const intptr_t kMaxVisitsExpected = 5 * instr->InputCount();
+  if (info->visit_count > kMaxVisitsExpected) {
+    OS::PrintErr(
+        "ConstantPropagation pass is failing to converge on graph for %s\n",
+        graph_->parsed_function().function().ToCString());
+    OS::PrintErr("Phi %s was visited %" Pd " times\n", instr->ToCString(),
+                 info->visit_count);
+    NOT_IN_PRODUCT(
+        FlowGraphPrinter::PrintGraph("Constant Propagation", graph_));
+    FATAL("Aborting due to non-covergence.");
+  }
+
   // Compute the join over all the reachable predecessor values.
   JoinEntryInstr* block = instr->block();
   Object& value = Object::ZoneHandle(Z, Unknown());
@@ -333,11 +383,7 @@ void ConstantPropagator::VisitPhi(PhiInstr* instr) {
       Join(&value, instr->InputAt(pred_idx)->definition()->constant_value());
     }
   }
-  if (!SetValue(instr, value) &&
-      marked_phis_->Contains(instr->ssa_temp_index())) {
-    marked_phis_->Remove(instr->ssa_temp_index());
-    definition_worklist_.Add(instr);
-  }
+  SetValue(instr, value);
 }
 
 void ConstantPropagator::VisitRedefinition(RedefinitionInstr* instr) {
@@ -347,6 +393,10 @@ void ConstantPropagator::VisitRedefinition(RedefinitionInstr* instr) {
   } else {
     SetValue(instr, non_constant_);
   }
+}
+
+void ConstantPropagator::VisitReachabilityFence(ReachabilityFenceInstr* instr) {
+  // Nothing to do.
 }
 
 void ConstantPropagator::VisitCheckArrayBound(CheckArrayBoundInstr* instr) {
@@ -383,14 +433,15 @@ void ConstantPropagator::VisitPushArgument(PushArgumentInstr* instr) {
 }
 
 void ConstantPropagator::VisitAssertAssignable(AssertAssignableInstr* instr) {
-  const Object& value = instr->value()->definition()->constant_value();
-  if (IsNonConstant(value)) {
+  const auto& value = instr->value()->definition()->constant_value();
+  const auto& dst_type = instr->dst_type()->definition()->constant_value();
+
+  if (IsNonConstant(value) || IsNonConstant(dst_type)) {
     SetValue(instr, non_constant_);
-  } else if (IsConstant(value)) {
+  } else if (IsConstant(value) && IsConstant(dst_type)) {
     // We are ignoring the instantiator and instantiator_type_arguments, but
     // still monotonic and safe.
-    if (instr->value()->Type()->IsAssignableTo(instr->nnbd_mode(),
-                                               instr->dst_type())) {
+    if (instr->value()->Type()->IsAssignableTo(AbstractType::Cast(dst_type))) {
       SetValue(instr, value);
     } else {
       SetValue(instr, non_constant_);
@@ -427,6 +478,10 @@ void ConstantPropagator::VisitInstanceCall(InstanceCallInstr* instr) {
 
 void ConstantPropagator::VisitPolymorphicInstanceCall(
     PolymorphicInstanceCallInstr* instr) {
+  SetValue(instr, non_constant_);
+}
+
+void ConstantPropagator::VisitDispatchTableCall(DispatchTableCallInstr* instr) {
   SetValue(instr, non_constant_);
 }
 
@@ -515,12 +570,13 @@ void ConstantPropagator::VisitStrictCompare(StrictCompareInstr* instr) {
   Definition* unwrapped_right_defn = UnwrapPhi(right_defn);
   if (unwrapped_left_defn == unwrapped_right_defn) {
     // Fold x === x, and x !== x to true/false.
-    SetValue(instr, Bool::Get(instr->kind() == Token::kEQ_STRICT));
-    if (unwrapped_left_defn != left_defn) {
-      MarkPhi(left_defn);
-    }
-    if (unwrapped_right_defn != right_defn) {
-      MarkPhi(right_defn);
+    if (SetValue(instr, Bool::Get(instr->kind() == Token::kEQ_STRICT))) {
+      if (unwrapped_left_defn != left_defn) {
+        MarkUnwrappedPhi(left_defn);
+      }
+      if (unwrapped_right_defn != right_defn) {
+        MarkUnwrappedPhi(right_defn);
+      }
     }
     return;
   }
@@ -542,7 +598,11 @@ void ConstantPropagator::VisitStrictCompare(StrictCompareInstr* instr) {
       const intptr_t right_cid = instr->right()->Type()->ToCid();
       // If exact classes (cids) are known and they differ, the result
       // of strict compare can be computed.
+      // The only exception is comparison with special sentinel value
+      // (used for lazy initialization) which can be compared to a
+      // value of any type. Sentinel value has kNeverCid.
       if ((left_cid != kDynamicCid) && (right_cid != kDynamicCid) &&
+          (left_cid != kNeverCid) && (right_cid != kNeverCid) &&
           (left_cid != right_cid)) {
         const bool result = (instr->kind() != Token::kEQ_STRICT);
         SetValue(instr, Bool::Get(result));
@@ -612,18 +672,19 @@ void ConstantPropagator::VisitEqualityCompare(EqualityCompareInstr* instr) {
   Definition* left_defn = instr->left()->definition();
   Definition* right_defn = instr->right()->definition();
 
-  if (RawObject::IsIntegerClassId(instr->operation_cid())) {
+  if (IsIntegerClassId(instr->operation_cid())) {
     // Fold x == x, and x != x to true/false for numbers comparisons.
     Definition* unwrapped_left_defn = UnwrapPhi(left_defn);
     Definition* unwrapped_right_defn = UnwrapPhi(right_defn);
     if (unwrapped_left_defn == unwrapped_right_defn) {
       // Fold x === x, and x !== x to true/false.
-      SetValue(instr, Bool::Get(instr->kind() == Token::kEQ));
-      if (unwrapped_left_defn != left_defn) {
-        MarkPhi(left_defn);
-      }
-      if (unwrapped_right_defn != right_defn) {
-        MarkPhi(right_defn);
+      if (SetValue(instr, Bool::Get(instr->kind() == Token::kEQ))) {
+        if (unwrapped_left_defn != left_defn) {
+          MarkUnwrappedPhi(left_defn);
+        }
+        if (unwrapped_right_defn != right_defn) {
+          MarkUnwrappedPhi(right_defn);
+        }
       }
       return;
     }
@@ -674,6 +735,22 @@ void ConstantPropagator::VisitFfiCall(FfiCallInstr* instr) {
   SetValue(instr, non_constant_);
 }
 
+void ConstantPropagator::VisitEnterHandleScope(EnterHandleScopeInstr* instr) {
+  SetValue(instr, non_constant_);
+}
+
+void ConstantPropagator::VisitExitHandleScope(ExitHandleScopeInstr* instr) {
+  // Nothing to do.
+}
+
+void ConstantPropagator::VisitAllocateHandle(AllocateHandleInstr* instr) {
+  SetValue(instr, non_constant_);
+}
+
+void ConstantPropagator::VisitRawStoreField(RawStoreFieldInstr* instr) {
+  // Nothing to do.
+}
+
 void ConstantPropagator::VisitDebugStepCheck(DebugStepCheckInstr* instr) {
   // Nothing to do.
 }
@@ -687,7 +764,7 @@ void ConstantPropagator::VisitOneByteStringFromCharCode(
     const intptr_t ch_code = Smi::Cast(o).Value();
     ASSERT(ch_code >= 0);
     if (ch_code < Symbols::kMaxOneCharCodeSymbol) {
-      RawString** table = Symbols::PredefinedAddress();
+      StringPtr* table = Symbols::PredefinedAddress();
       SetValue(instr, String::ZoneHandle(Z, table[ch_code]));
     } else {
       SetValue(instr, non_constant_);
@@ -708,6 +785,10 @@ void ConstantPropagator::VisitStringToCharCode(StringToCharCodeInstr* instr) {
 }
 
 void ConstantPropagator::VisitStringInterpolate(StringInterpolateInstr* instr) {
+  SetValue(instr, non_constant_);
+}
+
+void ConstantPropagator::VisitUtf8Scan(Utf8ScanInstr* instr) {
   SetValue(instr, non_constant_);
 }
 
@@ -756,21 +837,12 @@ void ConstantPropagator::VisitLoadIndexedUnsafe(LoadIndexedUnsafeInstr* instr) {
   SetValue(instr, non_constant_);
 }
 
-void ConstantPropagator::VisitInitInstanceField(InitInstanceFieldInstr* instr) {
-  // Nothing to do.
-}
-
-void ConstantPropagator::VisitInitStaticField(InitStaticFieldInstr* instr) {
-  // Nothing to do.
-}
-
 void ConstantPropagator::VisitLoadStaticField(LoadStaticFieldInstr* instr) {
   if (!FLAG_fields_may_be_reset) {
-    const Field& field = instr->StaticField();
+    const Field& field = instr->field();
     ASSERT(field.is_static());
-    Instance& obj = Instance::Handle(Z, field.StaticValue());
-    if (field.is_final() && (obj.raw() != Object::sentinel().raw()) &&
-        (obj.raw() != Object::transition_sentinel().raw())) {
+    if (field.is_final() && instr->IsFieldInitialized()) {
+      Instance& obj = Instance::Handle(Z, field.StaticValue());
       if (obj.IsSmi() || (obj.IsOld() && obj.IsCanonical())) {
         SetValue(instr, obj);
         return;
@@ -798,8 +870,8 @@ void ConstantPropagator::VisitInstanceOf(InstanceOfInstr* instr) {
   Definition* def = instr->value()->definition();
   const Object& value = def->constant_value();
   const AbstractType& checked_type = instr->type();
-  // TODO(regis): Revisit the evaluation of the type test.
-  if (checked_type.IsTopType()) {
+  // If the checked type is a top type, the result is always true.
+  if (checked_type.IsTopTypeForInstanceOf()) {
     SetValue(instr, Bool::True());
   } else if (IsNonConstant(value)) {
     intptr_t value_cid = instr->value()->definition()->Type()->ToCid();
@@ -824,9 +896,9 @@ void ConstantPropagator::VisitInstanceOf(InstanceOfInstr* instr) {
       const Instance& instance = Instance::Cast(value);
       if (instr->instantiator_type_arguments()->BindsToConstantNull() &&
           instr->function_type_arguments()->BindsToConstantNull()) {
-        bool is_instance = instance.IsInstanceOf(
-            instr->nnbd_mode(), checked_type, Object::null_type_arguments(),
-            Object::null_type_arguments());
+        bool is_instance =
+            instance.IsInstanceOf(checked_type, Object::null_type_arguments(),
+                                  Object::null_type_arguments());
         SetValue(instr, Bool::Get(is_instance));
         return;
       }
@@ -919,67 +991,92 @@ void ConstantPropagator::VisitLoadField(LoadFieldInstr* instr) {
 }
 
 void ConstantPropagator::VisitInstantiateType(InstantiateTypeInstr* instr) {
-  const Object& object =
-      instr->instantiator_type_arguments()->definition()->constant_value();
-  if (IsNonConstant(object)) {
-    SetValue(instr, non_constant_);
-    return;
-  }
-  if (IsConstant(object)) {
-    if (instr->type().IsTypeParameter() &&
-        TypeParameter::Cast(instr->type()).IsClassTypeParameter()) {
-      if (object.IsNull()) {
-        SetValue(instr, Object::dynamic_type());
-        return;
-      }
-      // We could try to instantiate the type parameter and return it if no
-      // malformed error is reported.
+  TypeArguments& instantiator_type_args = TypeArguments::Handle(Z);
+  TypeArguments& function_type_args = TypeArguments::Handle(Z);
+  if (!instr->type().IsInstantiated(kCurrentClass)) {
+    // Type refers to class type parameters.
+    const Object& instantiator_type_args_obj =
+        instr->instantiator_type_arguments()->definition()->constant_value();
+    if (IsNonConstant(instantiator_type_args_obj)) {
+      SetValue(instr, non_constant_);
+      return;
     }
-    SetValue(instr, non_constant_);
+    if (IsConstant(instantiator_type_args_obj)) {
+      instantiator_type_args ^= instantiator_type_args_obj.raw();
+    } else {
+      return;
+    }
   }
-  // TODO(regis): We can do the same as above for a function type parameter.
-  // Better: If both instantiator type arguments and function type arguments are
-  // constant, instantiate the type if no bound error is reported.
+  if (!instr->type().IsInstantiated(kFunctions)) {
+    // Type refers to function type parameters.
+    const Object& function_type_args_obj =
+        instr->function_type_arguments()->definition()->constant_value();
+    if (IsNonConstant(function_type_args_obj)) {
+      SetValue(instr, non_constant_);
+      return;
+    }
+    if (IsConstant(function_type_args_obj)) {
+      function_type_args ^= function_type_args_obj.raw();
+    } else {
+      return;
+    }
+  }
+  AbstractType& result = AbstractType::Handle(
+      Z, instr->type().InstantiateFrom(
+             instantiator_type_args, function_type_args, kAllFree, Heap::kOld));
+  ASSERT(result.IsInstantiated());
+  result = result.Canonicalize();
+  SetValue(instr, result);
 }
 
 void ConstantPropagator::VisitInstantiateTypeArguments(
     InstantiateTypeArgumentsInstr* instr) {
-  const Object& instantiator_type_args =
-      instr->instantiator_type_arguments()->definition()->constant_value();
-  const Object& function_type_args =
-      instr->function_type_arguments()->definition()->constant_value();
-  if (IsNonConstant(instantiator_type_args) ||
-      IsNonConstant(function_type_args)) {
-    SetValue(instr, non_constant_);
-    return;
-  }
-  if (IsConstant(instantiator_type_args) && IsConstant(function_type_args)) {
-    if (instantiator_type_args.IsNull() && function_type_args.IsNull()) {
-      const intptr_t len = instr->type_arguments().Length();
-      if (instr->type_arguments().IsRawWhenInstantiatedFromRaw(len)) {
+  TypeArguments& instantiator_type_args = TypeArguments::Handle(Z);
+  TypeArguments& function_type_args = TypeArguments::Handle(Z);
+  if (!instr->type_arguments().IsInstantiated(kCurrentClass)) {
+    // Type arguments refer to class type parameters.
+    const Object& instantiator_type_args_obj =
+        instr->instantiator_type_arguments()->definition()->constant_value();
+    if (IsNonConstant(instantiator_type_args_obj)) {
+      SetValue(instr, non_constant_);
+      return;
+    }
+    if (IsConstant(instantiator_type_args_obj)) {
+      instantiator_type_args ^= instantiator_type_args_obj.raw();
+      if (instr->type_arguments().CanShareInstantiatorTypeArguments(
+              instr->instantiator_class())) {
         SetValue(instr, instantiator_type_args);
         return;
       }
-    }
-    if (instr->type_arguments().CanShareInstantiatorTypeArguments(
-            instr->instantiator_class())) {
-      SetValue(instr, instantiator_type_args);
+    } else {
       return;
     }
-    if (instr->type_arguments().CanShareFunctionTypeArguments(
-            instr->function())) {
-      SetValue(instr, function_type_args);
-      return;
-    }
-    SetValue(instr, non_constant_);
   }
-  // TODO(regis): If both instantiator type arguments and function type
-  // arguments are constant, instantiate the type arguments if no bound error
-  // is reported.
-  // TODO(regis): If either instantiator type arguments or function type
-  // arguments are constant null, check
-  // type_arguments().IsRawWhenInstantiatedFromRaw() separately for each
-  // genericity.
+  if (!instr->type_arguments().IsInstantiated(kFunctions)) {
+    // Type arguments refer to function type parameters.
+    const Object& function_type_args_obj =
+        instr->function_type_arguments()->definition()->constant_value();
+    if (IsNonConstant(function_type_args_obj)) {
+      SetValue(instr, non_constant_);
+      return;
+    }
+    if (IsConstant(function_type_args_obj)) {
+      function_type_args ^= function_type_args_obj.raw();
+      if (instr->type_arguments().CanShareFunctionTypeArguments(
+              instr->function())) {
+        SetValue(instr, function_type_args);
+        return;
+      }
+    } else {
+      return;
+    }
+  }
+  TypeArguments& result = TypeArguments::Handle(
+      Z, instr->type_arguments().InstantiateFrom(
+             instantiator_type_args, function_type_args, kAllFree, Heap::kOld));
+  ASSERT(result.IsInstantiated());
+  result = result.Canonicalize();
+  SetValue(instr, result);
 }
 
 void ConstantPropagator::VisitAllocateContext(AllocateContextInstr* instr) {
@@ -1314,11 +1411,6 @@ void ConstantPropagator::VisitIntConverter(IntConverterInstr* instr) {
   SetValue(instr, non_constant_);
 }
 
-void ConstantPropagator::VisitUnboxedWidthExtender(
-    UnboxedWidthExtenderInstr* instr) {
-  SetValue(instr, non_constant_);
-}
-
 void ConstantPropagator::VisitBitCast(BitCastInstr* instr) {
   SetValue(instr, non_constant_);
 }
@@ -1348,9 +1440,15 @@ void ConstantPropagator::Analyze() {
   }
 }
 
+static bool HasPhis(BlockEntryInstr* block) {
+  if (auto* join = block->AsJoinEntry()) {
+    return (join->phis() != nullptr) && !join->phis()->is_empty();
+  }
+  return false;
+}
+
 static bool IsEmptyBlock(BlockEntryInstr* block) {
-  return block->next()->IsGoto() &&
-         (!block->IsJoinEntry() || (block->AsJoinEntry()->phis() == NULL)) &&
+  return block->next()->IsGoto() && !HasPhis(block) &&
          !block->IsIndirectEntry();
 }
 
@@ -1361,7 +1459,7 @@ static BlockEntryInstr* FindFirstNonEmptySuccessor(TargetEntryInstr* block,
                                                    BitVector* empty_blocks) {
   BlockEntryInstr* current = block;
   while (IsEmptyBlock(current) && block->Dominates(current)) {
-    ASSERT(!block->IsJoinEntry() || (block->AsJoinEntry()->phis() == NULL));
+    ASSERT(!HasPhis(block));
     empty_blocks->Add(current->preorder_number());
     current = current->next()->AsGoto()->successor();
   }
@@ -1387,10 +1485,9 @@ void ConstantPropagator::EliminateRedundantBranches() {
         // Replace the branch with a jump to the common successor.
         // Drop the comparison, which does not have side effects
         JoinEntryInstr* join = if_true->AsJoinEntry();
-        if (join->phis() == NULL) {
-          GotoInstr* jump =
-              new (Z) GotoInstr(if_true->AsJoinEntry(), DeoptId::kNone);
-          jump->InheritDeoptTarget(Z, branch);
+        if (!HasPhis(join)) {
+          GotoInstr* jump = new (Z) GotoInstr(join, DeoptId::kNone);
+          graph_->CopyDeoptTarget(jump, branch);
 
           Instruction* previous = branch->previous();
           branch->set_previous(NULL);
@@ -1417,6 +1514,7 @@ void ConstantPropagator::EliminateRedundantBranches() {
 
   if (changed) {
     graph_->DiscoverBlocks();
+    graph_->MergeBlocks();
     // TODO(fschneider): Update dominator tree in place instead of recomputing.
     GrowableArray<BitVector*> dominance_frontier;
     graph_->ComputeDominators(&dominance_frontier);
@@ -1428,7 +1526,6 @@ void ConstantPropagator::Transform() {
   // instructions, previous pointers, predecessors, etc. after eliminating
   // unreachable code.  We do not maintain those properties during the
   // transformation.
-  auto& value = Object::Handle(Z);
   for (BlockIterator b = graph_->reverse_postorder_iterator(); !b.Done();
        b.Advance()) {
     BlockEntryInstr* block = b.Current();
@@ -1492,32 +1589,17 @@ void ConstantPropagator::Transform() {
       }
     }
 
+    if (join != nullptr) {
+      for (PhiIterator it(join); !it.Done(); it.Advance()) {
+        auto phi = it.Current();
+        if (TransformDefinition(phi)) {
+          it.RemoveCurrentFromGraph();
+        }
+      }
+    }
     for (ForwardInstructionIterator i(block); !i.Done(); i.Advance()) {
       Definition* defn = i.Current()->AsDefinition();
-      // Replace constant-valued instructions without observable side
-      // effects.  Do this for smis only to avoid having to copy other
-      // objects into the heap's old generation.
-      ASSERT((defn == nullptr) || !defn->IsPushArgument());
-      if ((defn != nullptr) && IsConstant(defn->constant_value()) &&
-          (defn->constant_value().IsSmi() || defn->constant_value().IsOld()) &&
-          !defn->IsConstant() && !defn->IsStoreIndexed() &&
-          !defn->IsStoreInstanceField() && !defn->IsStoreStaticField()) {
-        if (FLAG_trace_constant_propagation && graph_->should_print()) {
-          THR_Print("Constant v%" Pd " = %s\n", defn->ssa_temp_index(),
-                    defn->constant_value().ToCString());
-        }
-        value = defn->constant_value().raw();
-        if ((value.IsString() || value.IsMint() || value.IsDouble()) &&
-            !value.IsCanonical()) {
-          const char* error_str = nullptr;
-          value = Instance::Cast(value).CheckAndCanonicalize(T, &error_str);
-          ASSERT(!value.IsNull() && (error_str == nullptr));
-        }
-        if (auto call = defn->AsStaticCall()) {
-          ASSERT(!call->HasPushArguments());
-        }
-        ConstantInstr* constant = graph_->GetConstant(value);
-        defn->ReplaceUsesWith(constant);
+      if (TransformDefinition(defn)) {
         i.RemoveCurrentFromGraph();
       }
     }
@@ -1535,14 +1617,14 @@ void ConstantPropagator::Transform() {
         ASSERT(if_false->parallel_move() == NULL);
         join = new (Z) JoinEntryInstr(if_false->block_id(),
                                       if_false->try_index(), DeoptId::kNone);
-        join->InheritDeoptTarget(Z, if_false);
+        graph_->CopyDeoptTarget(join, if_false);
         if_false->UnuseAllInputs();
         next = if_false->next();
       } else if (!reachable_->Contains(if_false->preorder_number())) {
         ASSERT(if_true->parallel_move() == NULL);
         join = new (Z) JoinEntryInstr(if_true->block_id(), if_true->try_index(),
                                       DeoptId::kNone);
-        join->InheritDeoptTarget(Z, if_true);
+        graph_->CopyDeoptTarget(join, if_true);
         if_true->UnuseAllInputs();
         next = if_true->next();
       }
@@ -1553,7 +1635,7 @@ void ConstantPropagator::Transform() {
         // as it is a strict compare (the only one we can determine is
         // constant with the current analysis).
         GotoInstr* jump = new (Z) GotoInstr(join, DeoptId::kNone);
-        jump->InheritDeoptTarget(Z, branch);
+        graph_->CopyDeoptTarget(jump, branch);
 
         Instruction* previous = branch->previous();
         branch->set_previous(NULL);
@@ -1573,6 +1655,39 @@ void ConstantPropagator::Transform() {
   graph_->ComputeDominators(&dominance_frontier);
 }
 
-}  // namespace dart
+bool ConstantPropagator::TransformDefinition(Definition* defn) {
+  // Replace constant-valued instructions without observable side
+  // effects.  Do this for smis and old objects only to avoid having to
+  // copy other objects into the heap's old generation.
+  ASSERT((defn == nullptr) || !defn->IsPushArgument());
+  if ((defn != nullptr) && IsConstant(defn->constant_value()) &&
+      (defn->constant_value().IsSmi() || defn->constant_value().IsOld()) &&
+      !defn->IsConstant() && !defn->IsStoreIndexed() &&
+      !defn->IsStoreInstanceField() && !defn->IsStoreStaticField()) {
+    if (FLAG_trace_constant_propagation && graph_->should_print()) {
+      THR_Print("Constant v%" Pd " = %s\n", defn->ssa_temp_index(),
+                defn->constant_value().ToCString());
+    }
+    constant_value_ = defn->constant_value().raw();
+    if ((constant_value_.IsString() || constant_value_.IsMint() ||
+         constant_value_.IsDouble()) &&
+        !constant_value_.IsCanonical()) {
+      const char* error_str = nullptr;
+      constant_value_ =
+          Instance::Cast(constant_value_).CheckAndCanonicalize(T, &error_str);
+      ASSERT(!constant_value_.IsNull() && (error_str == nullptr));
+    }
+    if (auto call = defn->AsStaticCall()) {
+      ASSERT(!call->HasPushArguments());
+    }
+    Definition* replacement =
+        graph_->TryCreateConstantReplacementFor(defn, constant_value_);
+    if (replacement != defn) {
+      defn->ReplaceUsesWith(replacement);
+      return true;
+    }
+  }
+  return false;
+}
 
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+}  // namespace dart

@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(RemoveUnnecessaryConstTest);
   });
@@ -23,36 +23,23 @@ class RemoveUnnecessaryConstTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.unnecessary_const;
 
-  test_constConstructor() async {
+  Future<void> test_instanceCreation() async {
     await resolveTestUnit('''
-class A { const A(); }
-m(){
-  const a = /*LINT*/const A();
-}
+class C { const C(); }
+const c = const C();
 ''');
     await assertHasFix('''
-class A { const A(); }
-m(){
-  const a = /*LINT*/A();
-}
+class C { const C(); }
+const c = C();
 ''');
   }
 
-  test_instanceCreation() async {
+  Future<void> test_typedLiteral() async {
     await resolveTestUnit('''
-const list = /*LINT*/const List();
+const list = const [];
 ''');
     await assertHasFix('''
-const list = /*LINT*/List();
-''', length: 5);
-  }
-
-  test_typedLiteral() async {
-    await resolveTestUnit('''
-const list = /*LINT*/const [];
+const list = [];
 ''');
-    await assertHasFix('''
-const list = /*LINT*/[];
-''', length: 5);
   }
 }

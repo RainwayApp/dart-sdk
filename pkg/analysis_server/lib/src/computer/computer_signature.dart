@@ -12,9 +12,8 @@ import 'package:analyzer/src/dart/ast/element_locator.dart';
 import 'package:analyzer/src/dart/ast/utilities.dart';
 import 'package:analyzer/src/dartdoc/dartdoc_directive_info.dart';
 
-/**
- * A computer for the signature at the specified offset of a Dart [CompilationUnit].
- */
+/// A computer for the signature at the specified offset of a Dart
+/// [CompilationUnit].
 class DartUnitSignatureComputer {
   final DartdocDirectiveInfo _dartdocInfo;
   final AstNode _node;
@@ -24,9 +23,7 @@ class DartUnitSignatureComputer {
 
   bool get offsetIsValid => _node != null;
 
-  /**
-   * Returns the computed signature information, maybe `null`.
-   */
+  /// Returns the computed signature information, maybe `null`.
   AnalysisGetSignatureResult compute() {
     if (_node == null) {
       return null;
@@ -58,7 +55,7 @@ class DartUnitSignatureComputer {
       InstanceCreationExpression constructor = args.parent;
       name = constructor.constructorName.type.name.name;
       if (constructor.constructorName.name != null) {
-        name += ".${constructor.constructorName.name.name}";
+        name += '.${constructor.constructorName.name.name}';
       }
       execElement = ElementLocator.locate(constructor) as ExecutableElement;
     }

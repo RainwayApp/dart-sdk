@@ -28,7 +28,6 @@ namespace dart {
 
 // Forward declarations.
 class ObjectPointerVisitor;
-class RawContext;
 class LocalVariable;
 
 extern FrameLayout runtime_frame_layout;
@@ -81,8 +80,8 @@ class StackFrame : public ValueObject {
     pc_ = value;
   }
 
-  void set_pc_marker(RawCode* code) {
-    *reinterpret_cast<RawCode**>(
+  void set_pc_marker(CodePtr code) {
+    *reinterpret_cast<CodePtr*>(
         fp() + ((is_interpreted() ? kKBCPcMarkerSlotFromFp
                                   : runtime_frame_layout.code_from_fp) *
                 kWordSize)) = code;
@@ -96,11 +95,12 @@ class StackFrame : public ValueObject {
   // Check validity of a frame, used for assertion purposes.
   virtual bool IsValid() const;
 
-  // Returns the isolate containing the bare instructions of the current frame.
+  // Returns the isolate group containing the bare instructions of the
+  // current frame.
   //
   // If the frame does not belong to a bare instructions snapshot, it will
   // return nullptr.
-  Isolate* IsolateOfBareInstructionsFrame() const;
+  IsolateGroup* IsolateGroupOfBareInstructionsFrame() const;
 
   // Returns true iff the current frame is a bare instructions dart frame.
   bool IsBareInstructionsDartFrame() const;
@@ -119,9 +119,9 @@ class StackFrame : public ValueObject {
 
   virtual bool is_interpreted() const { return is_interpreted_; }
 
-  RawFunction* LookupDartFunction() const;
-  RawCode* LookupDartCode() const;
-  RawBytecode* LookupDartBytecode() const;
+  FunctionPtr LookupDartFunction() const;
+  CodePtr LookupDartCode() const;
+  BytecodePtr LookupDartBytecode() const;
   bool FindExceptionHandler(Thread* thread,
                             uword* handler_pc,
                             bool* needs_stacktrace,
@@ -131,6 +131,12 @@ class StackFrame : public ValueObject {
   TokenPosition GetTokenPos() const;
 
   static void DumpCurrentTrace();
+
+  uword GetCallerSp() const {
+    return fp() +
+           ((is_interpreted() ? kKBCCallerSpSlotFromFp : kCallerSpSlotFromFp) *
+            kWordSize);
+  }
 
  protected:
   explicit StackFrame(Thread* thread)
@@ -144,18 +150,13 @@ class StackFrame : public ValueObject {
   }
 
   Isolate* isolate() const { return thread_->isolate(); }
+  IsolateGroup* isolate_group() const { return thread_->isolate_group(); }
 
   Thread* thread() const { return thread_; }
 
  private:
-  RawCode* GetCodeObject() const;
-  RawBytecode* GetBytecodeObject() const;
-
-  uword GetCallerSp() const {
-    return fp() +
-           ((is_interpreted() ? kKBCCallerSpSlotFromFp : kCallerSpSlotFromFp) *
-            kWordSize);
-  }
+  CodePtr GetCodeObject() const;
+  BytecodePtr GetBytecodeObject() const;
 
   uword GetCallerFp() const {
     return *(reinterpret_cast<uword*>(
@@ -171,7 +172,7 @@ class StackFrame : public ValueObject {
                 kWordSize)));
     ASSERT(raw_pc != StubCode::DeoptimizeLazyFromThrow().EntryPoint());
     if (raw_pc == StubCode::DeoptimizeLazyFromReturn().EntryPoint()) {
-      return isolate()->FindPendingDeopt(GetCallerFp());
+      return isolate_group()->FindPendingDeoptAtSafepoint(GetCallerFp());
     }
     return raw_pc;
   }
@@ -305,6 +306,7 @@ class StackFrameIterator : public ValueObject {
           is_interpreted_(false) {}
     bool is_interpreted() const { return is_interpreted_; }
     void CheckIfInterpreted(uword exit_marker);
+    void Unpoison();
 
     uword fp_;
     uword sp_;
@@ -405,7 +407,7 @@ class InlinedFunctionsIterator : public ValueObject {
   bool Done() const { return index_ == -1; }
   void Advance();
 
-  RawFunction* function() const {
+  FunctionPtr function() const {
     ASSERT(!Done());
     return function_.raw();
   }
@@ -415,12 +417,14 @@ class InlinedFunctionsIterator : public ValueObject {
     return pc_;
   }
 
-  RawCode* code() const {
+  CodePtr code() const {
     ASSERT(!Done());
     return code_.raw();
   }
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
   intptr_t GetDeoptFpOffset() const;
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
  private:
   void SetDone() { index_ = -1; }

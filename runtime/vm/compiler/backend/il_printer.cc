@@ -4,68 +4,17 @@
 
 #include "vm/compiler/backend/il_printer.h"
 
+#include "vm/compiler/api/print_filter.h"
 #include "vm/compiler/backend/il.h"
+#include "vm/compiler/backend/linearscan.h"
 #include "vm/compiler/backend/range_analysis.h"
+#include "vm/compiler/ffi/native_calling_convention.h"
 #include "vm/os.h"
 #include "vm/parser.h"
 
 namespace dart {
 
 #if !defined(PRODUCT) || defined(FORCE_INCLUDE_DISASSEMBLER)
-
-DEFINE_FLAG(charp,
-            print_flow_graph_filter,
-            NULL,
-            "Print only IR of functions with matching names");
-
-// Checks whether function's name matches the given filter, which is
-// a comma-separated list of strings.
-bool FlowGraphPrinter::PassesFilter(const char* filter,
-                                    const Function& function) {
-  if (filter == NULL) {
-    return true;
-  }
-
-  char* save_ptr;  // Needed for strtok_r.
-  const char* scrubbed_name =
-      String::Handle(function.QualifiedScrubbedName()).ToCString();
-  const char* function_name = function.ToFullyQualifiedCString();
-  intptr_t function_name_len = strlen(function_name);
-
-  intptr_t len = strlen(filter) + 1;  // Length with \0.
-  char* filter_buffer = new char[len];
-  strncpy(filter_buffer, filter, len);  // strtok modifies arg 1.
-  char* token = strtok_r(filter_buffer, ",", &save_ptr);
-  bool found = false;
-  while (token != NULL) {
-    if ((strstr(function_name, token) != NULL) ||
-        (strstr(scrubbed_name, token) != NULL)) {
-      found = true;
-      break;
-    }
-    const intptr_t token_len = strlen(token);
-    if (token[token_len - 1] == '%') {
-      if (function_name_len > token_len) {
-        const char* suffix =
-            function_name + (function_name_len - token_len + 1);
-        if (strncmp(suffix, token, token_len - 1) == 0) {
-          found = true;
-          break;
-        }
-      }
-    }
-    token = strtok_r(NULL, ",", &save_ptr);
-  }
-  delete[] filter_buffer;
-
-  return found;
-}
-
-bool FlowGraphPrinter::ShouldPrint(const Function& function) {
-  return PassesFilter(FLAG_print_flow_graph_filter, function);
-}
-
-#if !defined(DART_PRECOMPILED_RUNTIME)
 
 DEFINE_FLAG(bool,
             display_sorted_ic_data,
@@ -74,6 +23,10 @@ DEFINE_FLAG(bool,
 DEFINE_FLAG(bool, print_environments, false, "Print SSA environments.");
 
 DECLARE_FLAG(bool, trace_inlining_intervals);
+
+bool FlowGraphPrinter::ShouldPrint(const Function& function) {
+  return compiler::PrintFilter::ShouldPrint(function);
+}
 
 void FlowGraphPrinter::PrintGraph(const char* phase, FlowGraph* flow_graph) {
   LogBlock lb;
@@ -122,8 +75,8 @@ void FlowGraphPrinter::PrintOneInstruction(Instruction* instr,
   if (print_locations && (instr->HasLocs())) {
     instr->locs()->PrintTo(&f);
   }
-  if (instr->lifetime_position() != -1) {
-    THR_Print("%3" Pd ": ", instr->lifetime_position());
+  if (FlowGraphAllocator::HasLifetimePosition(instr)) {
+    THR_Print("%3" Pd ": ", FlowGraphAllocator::GetLifetimePosition(instr));
   }
   if (!instr->IsBlockEntry()) THR_Print("    ");
   THR_Print("%s", str);
@@ -354,7 +307,17 @@ void Definition::PrintTo(BufferFormatter* f) const {
 
 void CheckNullInstr::PrintOperandsTo(BufferFormatter* f) const {
   Definition::PrintOperandsTo(f);
-  f->Print(IsArgumentCheck() ? ", ArgumentError" : ", NoSuchMethodError");
+  switch (exception_type()) {
+    case kNoSuchMethod:
+      f->Print(", NoSuchMethodError");
+      break;
+    case kArgumentError:
+      f->Print(", ArgumentError");
+      break;
+    case kCastError:
+      f->Print(", CastError");
+      break;
+  }
 }
 
 void Definition::PrintOperandsTo(BufferFormatter* f) const {
@@ -371,6 +334,10 @@ void RedefinitionInstr::PrintOperandsTo(BufferFormatter* f) const {
   if (constrained_type_ != nullptr) {
     f->Print(" ^ %s", constrained_type_->ToCString());
   }
+}
+
+void ReachabilityFenceInstr::PrintOperandsTo(BufferFormatter* f) const {
+  value()->PrintTo(f);
 }
 
 void Value::PrintTo(BufferFormatter* f) const {
@@ -458,14 +425,11 @@ void DropTempsInstr::PrintOperandsTo(BufferFormatter* f) const {
   }
 }
 
-static const char* TypeToUserVisibleName(const AbstractType& type) {
-  return String::Handle(type.UserVisibleName()).ToCString();
-}
-
 void AssertAssignableInstr::PrintOperandsTo(BufferFormatter* f) const {
   value()->PrintTo(f);
-  f->Print(", %s, '%s',", TypeToUserVisibleName(dst_type()),
-           dst_name().ToCString());
+  f->Print(", ");
+  dst_type()->PrintTo(f);
+  f->Print(", '%s',", dst_name().ToCString());
   f->Print(" instantiator_type_args(");
   instantiator_type_arguments()->PrintTo(f);
   f->Print("), function_type_args(");
@@ -474,8 +438,10 @@ void AssertAssignableInstr::PrintOperandsTo(BufferFormatter* f) const {
 }
 
 void AssertSubtypeInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print("%s, %s, '%s',", TypeToUserVisibleName(sub_type()),
-           TypeToUserVisibleName(super_type()), dst_name().ToCString());
+  sub_type()->PrintTo(f);
+  f->Print(", ");
+  super_type()->PrintTo(f);
+  f->Print(", '%s', ", dst_name().ToCString());
   f->Print(" instantiator_type_args(");
   instantiator_type_arguments()->PrintTo(f);
   f->Print("), function_type_args(");
@@ -497,16 +463,6 @@ void ClosureCallInstr::PrintOperandsTo(BufferFormatter* f) const {
   }
   if (entry_kind() == Code::EntryKind::kUnchecked) {
     f->Print(" using unchecked entrypoint");
-  }
-}
-
-void FfiCallInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print(" pointer=");
-  InputAt(TargetAddressIndex())->PrintTo(f);
-  for (intptr_t i = 0, n = InputCount(); i < n - 1; ++i) {
-    f->Print(", ");
-    InputAt(i)->PrintTo(f);
-    f->Print(" (@%s)", arg_locations_[i].ToCString());
   }
 }
 
@@ -532,8 +488,7 @@ void InstanceCallInstr::PrintOperandsTo(BufferFormatter* f) const {
 }
 
 void PolymorphicInstanceCallInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print(" %s<%" Pd ">", instance_call()->function_name().ToCString(),
-           instance_call()->type_args_len());
+  f->Print(" %s<%" Pd ">", function_name().ToCString(), type_args_len());
   for (intptr_t i = 0; i < ArgumentCount(); ++i) {
     f->Print(", ");
     ArgumentValueAt(i)->PrintTo(f);
@@ -542,8 +497,20 @@ void PolymorphicInstanceCallInstr::PrintOperandsTo(BufferFormatter* f) const {
   if (complete()) {
     f->Print(" COMPLETE");
   }
-  if (instance_call()->entry_kind() == Code::EntryKind::kUnchecked) {
+  if (entry_kind() == Code::EntryKind::kUnchecked) {
     f->Print(" using unchecked entrypoint");
+  }
+}
+
+void DispatchTableCallInstr::PrintOperandsTo(BufferFormatter* f) const {
+  const String& name =
+      String::Handle(interface_target().QualifiedUserVisibleName());
+  f->Print(" cid=");
+  class_id()->PrintTo(f);
+  f->Print(" %s<%" Pd ">", name.ToCString(), type_args_len());
+  for (intptr_t i = 0; i < ArgumentCount(); ++i) {
+    f->Print(", ");
+    ArgumentValueAt(i)->PrintTo(f);
   }
 }
 
@@ -638,7 +605,10 @@ void IfThenElseInstr::PrintOperandsTo(BufferFormatter* f) const {
 }
 
 void LoadStaticFieldInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print("%s", String::Handle(StaticField().name()).ToCString());
+  f->Print("%s", String::Handle(field().name()).ToCString());
+  if (calls_initializer()) {
+    f->Print(", CallsInitializer");
+  }
 }
 
 void StoreStaticFieldInstr::PrintOperandsTo(BufferFormatter* f) const {
@@ -686,6 +656,9 @@ void MaterializeObjectInstr::PrintOperandsTo(BufferFormatter* f) const {
 void LoadFieldInstr::PrintOperandsTo(BufferFormatter* f) const {
   instance()->PrintTo(f);
   f->Print(" . %s%s", slot().Name(), slot().is_immutable() ? " {final}" : "");
+  if (calls_initializer()) {
+    f->Print(", CallsInitializer");
+  }
 }
 
 void LoadUntaggedInstr::PrintOperandsTo(BufferFormatter* f) const {
@@ -817,6 +790,13 @@ void UnaryDoubleOpInstr::PrintOperandsTo(BufferFormatter* f) const {
   value()->PrintTo(f);
 }
 
+void LoadClassIdInstr::PrintOperandsTo(BufferFormatter* f) const {
+  if (!input_can_be_smi_) {
+    f->Print("<non-smi> ");
+  }
+  object()->PrintTo(f);
+}
+
 void CheckClassIdInstr::PrintOperandsTo(BufferFormatter* f) const {
   value()->PrintTo(f);
 
@@ -898,8 +878,11 @@ void JoinEntryInstr::PrintTo(BufferFormatter* f) const {
 }
 
 void IndirectEntryInstr::PrintTo(BufferFormatter* f) const {
-  ASSERT(try_index() == kInvalidTryIndex);
-  f->Print("B%" Pd "[join indirect]:%" Pd " pred(", block_id(), GetDeoptId());
+  f->Print("B%" Pd "[join indirect", block_id());
+  if (try_index() != kInvalidTryIndex) {
+    f->Print(" try_idx %" Pd, try_index());
+  }
+  f->Print("]:%" Pd " pred(", GetDeoptId());
   for (intptr_t i = 0; i < predecessors_.length(); ++i) {
     if (i > 0) f->Print(", ");
     f->Print("B%" Pd, predecessors_[i]->block_id());
@@ -996,12 +979,6 @@ void IntConverterInstr::PrintOperandsTo(BufferFormatter* f) const {
   Definition::PrintOperandsTo(f);
 }
 
-void UnboxedWidthExtenderInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print("%" Pd " -> 4 (%s), ", from_width_bytes(),
-           RepresentationToCString(representation()));
-  Definition::PrintOperandsTo(f);
-}
-
 void BitCastInstr::PrintOperandsTo(BufferFormatter* f) const {
   Definition::PrintOperandsTo(f);
   f->Print(" (%s -> %s)", RepresentationToCString(from()),
@@ -1070,18 +1047,44 @@ void NativeEntryInstr::PrintTo(BufferFormatter* f) const {
 
 void ReturnInstr::PrintOperandsTo(BufferFormatter* f) const {
   Instruction::PrintOperandsTo(f);
-  if (yield_index() != RawPcDescriptors::kInvalidYieldIndex) {
+  if (yield_index() != PcDescriptorsLayout::kInvalidYieldIndex) {
     f->Print(", yield_index = %" Pd "", yield_index());
+  }
+}
+
+void FfiCallInstr::PrintOperandsTo(BufferFormatter* f) const {
+  f->Print(" pointer=");
+  InputAt(TargetAddressIndex())->PrintTo(f);
+  for (intptr_t i = 0, n = InputCount(); i < n - 1; ++i) {
+    f->Print(", ");
+    InputAt(i)->PrintTo(f);
+    f->Print(" (@");
+    marshaller_.Location(i).PrintTo(f);
+    f->Print(")");
+  }
+}
+
+void EnterHandleScopeInstr::PrintOperandsTo(BufferFormatter* f) const {
+  if (kind_ == Kind::kEnterHandleScope) {
+    f->Print("<enter handle scope>");
+  } else {
+    f->Print("<get top api scope>");
   }
 }
 
 void NativeReturnInstr::PrintOperandsTo(BufferFormatter* f) const {
   value()->PrintTo(f);
+  f->Print(" (@");
+  marshaller_.Location(compiler::ffi::kResultIndex).PrintTo(f);
+  f->Print(")");
 }
 
 void NativeParameterInstr::PrintOperandsTo(BufferFormatter* f) const {
-  f->Print("%s as %s", loc_.ToCString(),
-           RepresentationToCString(representation_));
+  // Where the calling convention puts it.
+  marshaller_.Location(index_).PrintTo(f);
+  f->Print(" at ");
+  // Where the arguments are when pushed on the stack.
+  marshaller_.NativeLocationOfNativeParameter(index_).PrintTo(f);
 }
 
 void CatchBlockEntryInstr::PrintTo(BufferFormatter* f) const {
@@ -1106,6 +1109,13 @@ void StoreIndexedUnsafeInstr::PrintOperandsTo(BufferFormatter* f) const {
   index()->PrintTo(f);
   f->Print(" + %" Pd "], ", offset());
   value()->PrintTo(f);
+}
+
+void StoreIndexedInstr::PrintOperandsTo(BufferFormatter* f) const {
+  Instruction::PrintOperandsTo(f);
+  if (!ShouldEmitStoreBarrier()) {
+    f->Print(", NoStoreBarrier");
+  }
 }
 
 void TailCallInstr::PrintOperandsTo(BufferFormatter* f) const {
@@ -1169,6 +1179,11 @@ void ParallelMoveInstr::PrintTo(BufferFormatter* f) const {
   }
 }
 
+void Utf8ScanInstr::PrintTo(BufferFormatter* f) const {
+  Definition::PrintTo(f);
+  f->Print(" [%s]", scan_flags_field_.Name());
+}
+
 void Environment::PrintTo(BufferFormatter* f) const {
   f->Print(" env={ ");
   int arg_count = 0;
@@ -1196,11 +1211,7 @@ const char* Environment::ToCString() const {
   return Thread::Current()->zone()->MakeCopyOfString(buffer);
 }
 
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
-
 #else  // !defined(PRODUCT) || defined(FORCE_INCLUDE_DISASSEMBLER)
-
-#if !defined(DART_PRECOMPILED_RUNTIME)
 
 const char* Instruction::ToCString() const {
   return DebugName();
@@ -1237,8 +1248,6 @@ void FlowGraphPrinter::PrintICData(const ICData& ic_data,
 bool FlowGraphPrinter::ShouldPrint(const Function& function) {
   return false;
 }
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 #endif  // !defined(PRODUCT) || defined(FORCE_INCLUDE_DISASSEMBLER)
 

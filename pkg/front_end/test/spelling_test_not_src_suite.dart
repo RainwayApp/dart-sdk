@@ -15,10 +15,13 @@ main([List<String> arguments = const []]) =>
 
 Future<SpellContext> createContext(
     Chain suite, Map<String, String> environment) async {
-  return new SpellContextTest();
+  bool interactive = environment["interactive"] == "true";
+  return new SpellContextTest(interactive: interactive);
 }
 
 class SpellContextTest extends SpellContext {
+  SpellContextTest({bool interactive}) : super(interactive: interactive);
+
   @override
   List<spell.Dictionaries> get dictionaries => const <spell.Dictionaries>[
         spell.Dictionaries.common,
@@ -27,5 +30,5 @@ class SpellContextTest extends SpellContext {
       ];
 
   @override
-  bool get onlyBlacklisted => false;
+  bool get onlyDenylisted => false;
 }

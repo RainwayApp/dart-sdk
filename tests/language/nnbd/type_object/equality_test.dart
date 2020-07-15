@@ -2,15 +2,17 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import "package:expect/expect.dart";
+// Requirements=nnbd
 
-import "legacy_library.dart";
+import "package:expect/expect.dart";
 
 class A {}
 
 class B {}
 
 Type type<T>() => T;
+
+Type listType<T>() => <T>[].runtimeType;
 
 main() {
   var a = new A();
@@ -31,11 +33,6 @@ main() {
 
   Expect.isTrue(type<int?>() == type<int?>());
   Expect.isFalse(type<int?>() == type<int>());
-  Expect.isFalse(type<int?>() == legacyType<int>());
   Expect.isFalse(type<int>() == type<int?>());
   Expect.isTrue(type<int>() == type<int>());
-  Expect.isTrue(type<int>() == legacyType<int>());
-  Expect.isFalse(legacyType<int>() == type<int?>());
-  Expect.isTrue(legacyType<int>() == type<int>());
-  Expect.isTrue(legacyType<int>() == legacyType<int>());
 }

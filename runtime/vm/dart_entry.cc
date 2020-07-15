@@ -6,9 +6,8 @@
 
 #include "platform/safe_stack.h"
 #include "vm/class_finalizer.h"
-#include "vm/compiler/frontend/bytecode_reader.h"
-#include "vm/compiler/jit/compiler.h"
 #include "vm/debugger.h"
+#include "vm/dispatch_table.h"
 #include "vm/heap/safepoint.h"
 #include "vm/interpreter.h"
 #include "vm/object_store.h"
@@ -18,20 +17,25 @@
 #include "vm/stub_code.h"
 #include "vm/symbols.h"
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/compiler/frontend/bytecode_reader.h"
+#include "vm/compiler/jit/compiler.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+
 namespace dart {
 
 DECLARE_FLAG(bool, enable_interpreter);
 DECLARE_FLAG(bool, precompiled_mode);
 
 // A cache of VM heap allocated arguments descriptors.
-RawArray* ArgumentsDescriptor::cached_args_descriptors_[kCachedDescriptorCount];
+ArrayPtr ArgumentsDescriptor::cached_args_descriptors_[kCachedDescriptorCount];
 
-RawObject* DartEntry::InvokeFunction(const Function& function,
-                                     const Array& arguments) {
+ObjectPtr DartEntry::InvokeFunction(const Function& function,
+                                    const Array& arguments) {
   ASSERT(Thread::Current()->IsMutatorThread());
   const int kTypeArgsLen = 0;  // No support to pass type args to generic func.
-  const Array& arguments_descriptor =
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, arguments.Length()));
+  const Array& arguments_descriptor = Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, arguments.Length()));
   return InvokeFunction(function, arguments, arguments_descriptor);
 }
 
@@ -95,11 +99,10 @@ class SuspendLongJumpScope : public ThreadStackResource {
   LongJumpScope* saved_long_jump_base_;
 };
 
-NO_SANITIZE_SAFE_STACK
-RawObject* DartEntry::InvokeFunction(const Function& function,
-                                     const Array& arguments,
-                                     const Array& arguments_descriptor,
-                                     uword current_sp) {
+ObjectPtr DartEntry::InvokeFunction(const Function& function,
+                                    const Array& arguments,
+                                    const Array& arguments_descriptor,
+                                    uword current_sp) {
   // We use a kernel2kernel constant evaluator in Dart 2.0 AOT compilation
   // and never start the VM service isolate. So we should never end up invoking
   // any dart code in the Dart 2.0 AOT compiler.
@@ -107,10 +110,14 @@ RawObject* DartEntry::InvokeFunction(const Function& function,
 #if !defined(DART_PRECOMPILED_RUNTIME)
     UNREACHABLE();
 #else
-    if (FLAG_precompiled_mode && FLAG_use_bare_instructions) {
+    if (FLAG_use_bare_instructions) {
       Thread* thread = Thread::Current();
       thread->set_global_object_pool(
           thread->isolate()->object_store()->global_object_pool());
+      const DispatchTable* dispatch_table = thread->isolate()->dispatch_table();
+      if (dispatch_table != nullptr) {
+        thread->set_dispatch_table_array(dispatch_table->ArrayOrigin());
+      }
       ASSERT(thread->global_object_pool() != Object::null());
     }
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
@@ -129,7 +136,7 @@ RawObject* DartEntry::InvokeFunction(const Function& function,
   if (!function.HasCode()) {
     if (FLAG_enable_interpreter && function.IsBytecodeAllowed(zone)) {
       if (!function.HasBytecode()) {
-        RawError* error =
+        ErrorPtr error =
             kernel::BytecodeReader::ReadFunctionBytecode(thread, function);
         if (error != Error::null()) {
           return error;
@@ -160,101 +167,166 @@ RawObject* DartEntry::InvokeFunction(const Function& function,
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   // Now Call the invoke stub which will invoke the dart function.
-  invokestub entrypoint =
-      reinterpret_cast<invokestub>(StubCode::InvokeDartCode().EntryPoint());
   const Code& code = Code::Handle(zone, function.CurrentCode());
+  return InvokeCode(code, arguments_descriptor, arguments, thread);
+}
+
+extern "C" {
+// Note: The invocation stub follows the C ABI, so we cannot pass C++ struct
+// values like ObjectPtr. In some calling conventions (IA32), ObjectPtr is
+// passed/returned different from a pointer.
+typedef uword /*ObjectPtr*/ (*invokestub)(const Code& target_code,
+                                          const Array& arguments_descriptor,
+                                          const Array& arguments,
+                                          Thread* thread);
+}
+
+NO_SANITIZE_SAFE_STACK
+ObjectPtr DartEntry::InvokeCode(const Code& code,
+                                const Array& arguments_descriptor,
+                                const Array& arguments,
+                                Thread* thread) {
   ASSERT(!code.IsNull());
   ASSERT(thread->no_callback_scope_depth() == 0);
+  ASSERT(!Isolate::Current()->null_safety_not_set());
+
+  invokestub entrypoint =
+      reinterpret_cast<invokestub>(StubCode::InvokeDartCode().EntryPoint());
   SuspendLongJumpScope suspend_long_jump_scope(thread);
   TransitionToGenerated transition(thread);
 #if defined(USING_SIMULATOR)
-  return bit_copy<RawObject*, int64_t>(Simulator::Current()->Call(
+  return bit_copy<ObjectPtr, int64_t>(Simulator::Current()->Call(
       reinterpret_cast<intptr_t>(entrypoint), reinterpret_cast<intptr_t>(&code),
       reinterpret_cast<intptr_t>(&arguments_descriptor),
       reinterpret_cast<intptr_t>(&arguments),
       reinterpret_cast<intptr_t>(thread)));
 #else
-  return entrypoint(code, arguments_descriptor, arguments, thread);
+  return static_cast<ObjectPtr>(
+      entrypoint(code, arguments_descriptor, arguments, thread));
 #endif
 }
 
-RawObject* DartEntry::InvokeClosure(const Array& arguments) {
-  const int kTypeArgsLen = 0;  // No support to pass type args to generic func.
-  const Array& arguments_descriptor =
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, arguments.Length()));
-  return InvokeClosure(arguments, arguments_descriptor);
+ObjectPtr DartEntry::ResolveCallable(const Array& arguments,
+                                     const Array& arguments_descriptor) {
+  auto thread = Thread::Current();
+  auto isolate = thread->isolate();
+  auto zone = thread->zone();
+
+  const ArgumentsDescriptor args_desc(arguments_descriptor);
+  const intptr_t receiver_index = args_desc.FirstArgIndex();
+  const intptr_t type_args_len = args_desc.TypeArgsLen();
+  const intptr_t args_count = args_desc.Count();
+  const intptr_t named_args_count = args_desc.NamedCount();
+  const auto& getter_name = Symbols::GetCall();
+
+  auto& instance = Instance::Handle(zone);
+  auto& function = Function::Handle(zone);
+  auto& cls = Class::Handle(zone);
+
+  // The null instance cannot resolve to a callable, so we can stop there.
+  for (instance ^= arguments.At(receiver_index); !instance.IsNull();
+       instance ^= arguments.At(receiver_index)) {
+    // If the current instance is a compatible callable, return its function.
+    if (instance.IsCallable(&function) &&
+        function.AreValidArgumentCounts(type_args_len, args_count,
+                                        named_args_count, nullptr)) {
+      return function.raw();
+    }
+
+    // Special case: closures are implemented with a call getter instead of a
+    // call method, so checking for a call getter would cause an infinite loop.
+    if (instance.IsClosure()) {
+      break;
+    }
+
+    // Find a call getter, if any, in the class hierarchy.
+    for (cls = instance.clazz(); !cls.IsNull(); cls = cls.SuperClass()) {
+      function = cls.LookupDynamicFunction(getter_name);
+      if (function.IsNull()) {
+        continue;
+      }
+
+      if (!OSThread::Current()->HasStackHeadroom()) {
+        const Instance& exception =
+            Instance::Handle(zone, isolate->object_store()->stack_overflow());
+        return UnhandledException::New(exception, StackTrace::Handle(zone));
+      }
+
+      const Array& getter_arguments = Array::Handle(zone, Array::New(1));
+      getter_arguments.SetAt(0, instance);
+      const Object& getter_result = Object::Handle(
+          zone, DartEntry::InvokeFunction(function, getter_arguments));
+      if (getter_result.IsError()) {
+        return getter_result.raw();
+      }
+      ASSERT(getter_result.IsNull() || getter_result.IsInstance());
+
+      // We have a new possibly compatible callable, so set the first argument
+      // accordingly so it gets picked up in the main loop.
+      arguments.SetAt(receiver_index, getter_result);
+      break;
+    }
+
+    // No call getter was found in the hierarchy, so stop the search.
+    if (cls.IsNull()) {
+      break;
+    }
+  }
+
+  // No compatible callable was found.
+  return Function::null();
 }
 
-RawObject* DartEntry::InvokeClosure(const Array& arguments,
+ObjectPtr DartEntry::InvokeCallable(const Function& callable_function,
+                                    const Array& arguments,
                                     const Array& arguments_descriptor) {
+  if (!callable_function.IsNull()) {
+    return InvokeFunction(callable_function, arguments, arguments_descriptor);
+  }
+
+  // No compatible callable was found, so invoke noSuchMethod.
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   const ArgumentsDescriptor args_desc(arguments_descriptor);
-  Instance& instance = Instance::Handle(zone);
-  instance ^= arguments.At(args_desc.FirstArgIndex());
-  // Get the entrypoint corresponding to the closure function or to the call
-  // method of the instance. This will result in a compilation of the function
-  // if it is not already compiled.
-  Function& function = Function::Handle(zone);
-  if (instance.IsCallable(&function)) {
-    // Only invoke the function if its arguments are compatible.
-    if (function.AreValidArgumentCounts(args_desc.TypeArgsLen(),
-                                        args_desc.Count(),
-                                        args_desc.NamedCount(), NULL)) {
-      // The closure or non-closure object (receiver) is passed as implicit
-      // first argument. It is already included in the arguments array.
-      return InvokeFunction(function, arguments, arguments_descriptor);
-    }
-  }
-
-  // There is no compatible 'call' method, see if there's a getter.
+  auto& instance =
+      Instance::CheckedHandle(zone, arguments.At(args_desc.FirstArgIndex()));
+  auto& target_name = String::Handle(zone, Symbols::Call().raw());
   if (instance.IsClosure()) {
-    // Special case: closures are implemented with a call getter instead of a
-    // call method. If the arguments didn't match, go to noSuchMethod instead
-    // of infinitely recursing on the getter.
-  } else {
-    const String& getter_name = Symbols::GetCall();
-    Class& cls = Class::Handle(zone, instance.clazz());
-    while (!cls.IsNull()) {
-      function = cls.LookupDynamicFunction(getter_name);
-      if (!function.IsNull()) {
-        Isolate* isolate = thread->isolate();
-        if (!OSThread::Current()->HasStackHeadroom()) {
-          const Instance& exception =
-              Instance::Handle(zone, isolate->object_store()->stack_overflow());
-          return UnhandledException::New(exception, StackTrace::Handle(zone));
-        }
-
-        const Array& getter_arguments = Array::Handle(zone, Array::New(1));
-        getter_arguments.SetAt(0, instance);
-        const Object& getter_result = Object::Handle(
-            zone, DartEntry::InvokeFunction(function, getter_arguments));
-        if (getter_result.IsError()) {
-          return getter_result.raw();
-        }
-        ASSERT(getter_result.IsNull() || getter_result.IsInstance());
-
-        arguments.SetAt(0, getter_result);
-        // This otherwise unnecessary handle is used to prevent clang from
-        // doing tail call elimination, which would make the stack overflow
-        // check above ineffective.
-        Object& result = Object::Handle(
-            zone, InvokeClosure(arguments, arguments_descriptor));
-        return result.raw();
-      }
-      cls = cls.SuperClass();
-    }
+    const auto& closure = Closure::Cast(instance);
+    // For closures, use the name of the closure, not 'call'.
+    const auto& function = Function::Handle(zone, closure.function());
+    target_name = function.QualifiedUserVisibleName();
   }
-
-  // No compatible method or getter so invoke noSuchMethod.
-  return InvokeNoSuchMethod(instance, Symbols::Call(), arguments,
+  return InvokeNoSuchMethod(instance, target_name, arguments,
                             arguments_descriptor);
 }
 
-RawObject* DartEntry::InvokeNoSuchMethod(const Instance& receiver,
-                                         const String& target_name,
-                                         const Array& arguments,
-                                         const Array& arguments_descriptor) {
+ObjectPtr DartEntry::InvokeClosure(const Array& arguments) {
+  const int kTypeArgsLen = 0;  // No support to pass type args to generic func.
+
+  // Closures always have boxed parameters
+  const Array& arguments_descriptor = Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, arguments.Length()));
+  return InvokeClosure(arguments, arguments_descriptor);
+}
+
+ObjectPtr DartEntry::InvokeClosure(const Array& arguments,
+                                   const Array& arguments_descriptor) {
+  const Object& resolved_result =
+      Object::Handle(ResolveCallable(arguments, arguments_descriptor));
+  if (resolved_result.IsError()) {
+    return resolved_result.raw();
+  }
+
+  const auto& function =
+      Function::Handle(Function::RawCast(resolved_result.raw()));
+  return InvokeCallable(function, arguments, arguments_descriptor);
+}
+
+ObjectPtr DartEntry::InvokeNoSuchMethod(const Instance& receiver,
+                                        const String& target_name,
+                                        const Array& arguments,
+                                        const Array& arguments_descriptor) {
   const ArgumentsDescriptor args_desc(arguments_descriptor);
   ASSERT(receiver.raw() == arguments.At(args_desc.FirstArgIndex()));
   // Allocate an Invocation object.
@@ -284,8 +356,8 @@ RawObject* DartEntry::InvokeNoSuchMethod(const Instance& receiver,
   // Now use the invocation mirror object and invoke NoSuchMethod.
   const int kTypeArgsLen = 0;
   const int kNumArguments = 2;
-  ArgumentsDescriptor nsm_args_desc(
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, kNumArguments)));
+  ArgumentsDescriptor nsm_args_desc(Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, kNumArguments)));
   Function& function = Function::Handle(Resolver::ResolveDynamic(
       receiver, Symbols::NoSuchMethod(), nsm_args_desc));
   if (function.IsNull()) {
@@ -314,11 +386,15 @@ intptr_t ArgumentsDescriptor::Count() const {
   return Smi::Value(Smi::RawCast(array_.At(kCountIndex)));
 }
 
+intptr_t ArgumentsDescriptor::Size() const {
+  return Smi::Value(Smi::RawCast(array_.At(kSizeIndex)));
+}
+
 intptr_t ArgumentsDescriptor::PositionalCount() const {
   return Smi::Value(Smi::RawCast(array_.At(kPositionalCountIndex)));
 }
 
-RawString* ArgumentsDescriptor::NameAt(intptr_t index) const {
+StringPtr ArgumentsDescriptor::NameAt(intptr_t index) const {
   const intptr_t offset =
       kFirstNamedEntryIndex + (index * kNamedEntrySize) + kNameOffset;
   String& result = String::Handle();
@@ -337,7 +413,7 @@ bool ArgumentsDescriptor::MatchesNameAt(intptr_t index,
   return NameAt(index) == other.raw();
 }
 
-RawArray* ArgumentsDescriptor::GetArgumentNames() const {
+ArrayPtr ArgumentsDescriptor::GetArgumentNames() const {
   const intptr_t num_named_args = NamedCount();
   if (num_named_args == 0) {
     return Array::null();
@@ -357,14 +433,16 @@ RawArray* ArgumentsDescriptor::GetArgumentNames() const {
   return names.raw();
 }
 
-RawArray* ArgumentsDescriptor::New(intptr_t type_args_len,
-                                   intptr_t num_arguments,
-                                   const Array& optional_arguments_names,
-                                   Heap::Space space) {
+ArrayPtr ArgumentsDescriptor::New(intptr_t type_args_len,
+                                  intptr_t num_arguments,
+                                  intptr_t size_arguments,
+                                  const Array& optional_arguments_names,
+                                  Heap::Space space) {
   const intptr_t num_named_args =
       optional_arguments_names.IsNull() ? 0 : optional_arguments_names.Length();
   if (num_named_args == 0) {
-    return ArgumentsDescriptor::New(type_args_len, num_arguments, space);
+    return ArgumentsDescriptor::New(type_args_len, num_arguments,
+                                    size_arguments, space);
   }
   ASSERT(type_args_len >= 0);
   ASSERT(num_arguments >= 0);
@@ -384,6 +462,8 @@ RawArray* ArgumentsDescriptor::New(intptr_t type_args_len,
   descriptor.SetAt(kTypeArgsLenIndex, Smi::Handle(Smi::New(type_args_len)));
   // Set total number of passed arguments.
   descriptor.SetAt(kCountIndex, Smi::Handle(Smi::New(num_arguments)));
+  // Set total number of passed arguments.
+  descriptor.SetAt(kSizeIndex, Smi::Handle(Smi::New(size_arguments)));
 
   // Set number of positional arguments.
   descriptor.SetAt(kPositionalCountIndex, Smi::Handle(Smi::New(num_pos_args)));
@@ -427,22 +507,26 @@ RawArray* ArgumentsDescriptor::New(intptr_t type_args_len,
   return descriptor.raw();
 }
 
-RawArray* ArgumentsDescriptor::New(intptr_t type_args_len,
-                                   intptr_t num_arguments,
-                                   Heap::Space space) {
+ArrayPtr ArgumentsDescriptor::New(intptr_t type_args_len,
+                                  intptr_t num_arguments,
+                                  intptr_t size_arguments,
+                                  Heap::Space space) {
   ASSERT(type_args_len >= 0);
   ASSERT(num_arguments >= 0);
 
-  if ((type_args_len == 0) && (num_arguments < kCachedDescriptorCount)) {
+  if ((type_args_len == 0) && (num_arguments < kCachedDescriptorCount) &&
+      (num_arguments == size_arguments)) {
     return cached_args_descriptors_[num_arguments];
   }
-  return NewNonCached(type_args_len, num_arguments, true, space);
+  return NewNonCached(type_args_len, num_arguments, size_arguments, true,
+                      space);
 }
 
-RawArray* ArgumentsDescriptor::NewNonCached(intptr_t type_args_len,
-                                            intptr_t num_arguments,
-                                            bool canonicalize,
-                                            Heap::Space space) {
+ArrayPtr ArgumentsDescriptor::NewNonCached(intptr_t type_args_len,
+                                           intptr_t num_arguments,
+                                           intptr_t size_arguments,
+                                           bool canonicalize,
+                                           Heap::Space space) {
   // Build the arguments descriptor array, which consists of the length of the
   // type argument vector, total argument count; the positional argument count;
   // and a terminating null to simplify iterating in generated code.
@@ -451,6 +535,7 @@ RawArray* ArgumentsDescriptor::NewNonCached(intptr_t type_args_len,
   const intptr_t descriptor_len = LengthFor(0);
   Array& descriptor = Array::Handle(zone, Array::New(descriptor_len, space));
   const Smi& arg_count = Smi::Handle(zone, Smi::New(num_arguments));
+  const Smi& arg_size = Smi::Handle(zone, Smi::New(size_arguments));
 
   // Set type argument vector length.
   descriptor.SetAt(kTypeArgsLenIndex,
@@ -458,6 +543,9 @@ RawArray* ArgumentsDescriptor::NewNonCached(intptr_t type_args_len,
 
   // Set total number of passed arguments.
   descriptor.SetAt(kCountIndex, arg_count);
+
+  // Set total size of passed arguments.
+  descriptor.SetAt(kSizeIndex, arg_size);
 
   // Set number of positional arguments.
   descriptor.SetAt(kPositionalCountIndex, arg_count);
@@ -481,7 +569,7 @@ RawArray* ArgumentsDescriptor::NewNonCached(intptr_t type_args_len,
 void ArgumentsDescriptor::Init() {
   for (int i = 0; i < kCachedDescriptorCount; i++) {
     cached_args_descriptors_[i] =
-        NewNonCached(/*type_args_len=*/0, i, false, Heap::kOld);
+        NewNonCached(/*type_args_len=*/0, i, i, false, Heap::kOld);
   }
 }
 
@@ -492,10 +580,10 @@ void ArgumentsDescriptor::Cleanup() {
   }
 }
 
-RawObject* DartLibraryCalls::InstanceCreate(const Library& lib,
-                                            const String& class_name,
-                                            const String& constructor_name,
-                                            const Array& arguments) {
+ObjectPtr DartLibraryCalls::InstanceCreate(const Library& lib,
+                                           const String& class_name,
+                                           const String& constructor_name,
+                                           const Array& arguments) {
   const Class& cls = Class::Handle(lib.LookupClassAllowPrivate(class_name));
   ASSERT(!cls.IsNull());
   // For now, we only support a non-parameterized or raw type.
@@ -524,11 +612,11 @@ RawObject* DartLibraryCalls::InstanceCreate(const Library& lib,
   return exception_object.raw();
 }
 
-RawObject* DartLibraryCalls::ToString(const Instance& receiver) {
+ObjectPtr DartLibraryCalls::ToString(const Instance& receiver) {
   const int kTypeArgsLen = 0;
   const int kNumArguments = 1;  // Receiver.
-  ArgumentsDescriptor args_desc(
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, kNumArguments)));
+  ArgumentsDescriptor args_desc(Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, kNumArguments)));
   const Function& function = Function::Handle(
       Resolver::ResolveDynamic(receiver, Symbols::toString(), args_desc));
   ASSERT(!function.IsNull());
@@ -540,11 +628,11 @@ RawObject* DartLibraryCalls::ToString(const Instance& receiver) {
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::HashCode(const Instance& receiver) {
+ObjectPtr DartLibraryCalls::HashCode(const Instance& receiver) {
   const int kTypeArgsLen = 0;
   const int kNumArguments = 1;  // Receiver.
-  ArgumentsDescriptor args_desc(
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, kNumArguments)));
+  ArgumentsDescriptor args_desc(Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, kNumArguments)));
   const Function& function = Function::Handle(
       Resolver::ResolveDynamic(receiver, Symbols::hashCode(), args_desc));
   ASSERT(!function.IsNull());
@@ -556,12 +644,12 @@ RawObject* DartLibraryCalls::HashCode(const Instance& receiver) {
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::Equals(const Instance& left,
-                                    const Instance& right) {
+ObjectPtr DartLibraryCalls::Equals(const Instance& left,
+                                   const Instance& right) {
   const int kTypeArgsLen = 0;
   const int kNumArguments = 2;
-  ArgumentsDescriptor args_desc(
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, kNumArguments)));
+  ArgumentsDescriptor args_desc(Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, kNumArguments)));
   const Function& function = Function::Handle(
       Resolver::ResolveDynamic(left, Symbols::EqualOperator(), args_desc));
   ASSERT(!function.IsNull());
@@ -576,7 +664,7 @@ RawObject* DartLibraryCalls::Equals(const Instance& left,
 }
 
 // On success, returns a RawInstance.  On failure, a RawError.
-RawObject* DartLibraryCalls::IdentityHashCode(const Instance& object) {
+ObjectPtr DartLibraryCalls::IdentityHashCode(const Instance& object) {
   const int kNumArguments = 1;
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
@@ -593,7 +681,7 @@ RawObject* DartLibraryCalls::IdentityHashCode(const Instance& object) {
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::LookupHandler(Dart_Port port_id) {
+ObjectPtr DartLibraryCalls::LookupHandler(Dart_Port port_id) {
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   Function& function = Function::Handle(
@@ -613,15 +701,20 @@ RawObject* DartLibraryCalls::LookupHandler(Dart_Port port_id) {
     ASSERT(!function.IsNull());
     thread->isolate()->object_store()->set_lookup_port_handler(function);
   }
-  const Array& args = Array::Handle(zone, Array::New(kNumArguments));
+  Array& args = Array::Handle(
+      zone, thread->isolate()->isolate_object_store()->dart_args_1());
+  if (args.IsNull()) {
+    args = Array::New(kNumArguments);
+    thread->isolate()->isolate_object_store()->set_dart_args_1(args);
+  }
   args.SetAt(0, Integer::Handle(zone, Integer::New(port_id)));
   const Object& result =
       Object::Handle(zone, DartEntry::InvokeFunction(function, args));
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::HandleMessage(const Object& handler,
-                                           const Instance& message) {
+ObjectPtr DartLibraryCalls::HandleMessage(const Object& handler,
+                                          const Instance& message) {
   Thread* thread = Thread::Current();
   Zone* zone = thread->zone();
   Isolate* isolate = thread->isolate();
@@ -642,7 +735,12 @@ RawObject* DartLibraryCalls::HandleMessage(const Object& handler,
     ASSERT(!function.IsNull());
     isolate->object_store()->set_handle_message_function(function);
   }
-  const Array& args = Array::Handle(zone, Array::New(kNumArguments));
+  Array& args = Array::Handle(
+      zone, thread->isolate()->isolate_object_store()->dart_args_2());
+  if (args.IsNull()) {
+    args = Array::New(kNumArguments);
+    thread->isolate()->isolate_object_store()->set_dart_args_2(args);
+  }
   args.SetAt(0, handler);
   args.SetAt(1, message);
 #if !defined(PRODUCT)
@@ -659,7 +757,7 @@ RawObject* DartLibraryCalls::HandleMessage(const Object& handler,
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::DrainMicrotaskQueue() {
+ObjectPtr DartLibraryCalls::DrainMicrotaskQueue() {
   Zone* zone = Thread::Current()->zone();
   Library& isolate_lib = Library::Handle(zone, Library::IsolateLibrary());
   ASSERT(!isolate_lib.IsNull());
@@ -672,7 +770,7 @@ RawObject* DartLibraryCalls::DrainMicrotaskQueue() {
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::EnsureScheduleImmediate() {
+ObjectPtr DartLibraryCalls::EnsureScheduleImmediate() {
   Zone* zone = Thread::Current()->zone();
   const Library& async_lib = Library::Handle(zone, Library::AsyncLibrary());
   ASSERT(!async_lib.IsNull());
@@ -686,13 +784,13 @@ RawObject* DartLibraryCalls::EnsureScheduleImmediate() {
   return result.raw();
 }
 
-RawObject* DartLibraryCalls::MapSetAt(const Instance& map,
-                                      const Instance& key,
-                                      const Instance& value) {
+ObjectPtr DartLibraryCalls::MapSetAt(const Instance& map,
+                                     const Instance& key,
+                                     const Instance& value) {
   const int kTypeArgsLen = 0;
   const int kNumArguments = 3;
-  ArgumentsDescriptor args_desc(
-      Array::Handle(ArgumentsDescriptor::New(kTypeArgsLen, kNumArguments)));
+  ArgumentsDescriptor args_desc(Array::Handle(
+      ArgumentsDescriptor::NewBoxed(kTypeArgsLen, kNumArguments)));
   const Function& function = Function::Handle(
       Resolver::ResolveDynamic(map, Symbols::AssignIndexToken(), args_desc));
   ASSERT(!function.IsNull());

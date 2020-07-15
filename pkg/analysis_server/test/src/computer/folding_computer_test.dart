@@ -6,13 +6,12 @@ import 'dart:async';
 
 import 'package:analysis_server/src/computer/computer_folding.dart';
 import 'package:analysis_server/src/protocol_server.dart';
-import 'package:analyzer/dart/analysis/results.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../../abstract_context.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(FoldingComputerTest);
   });
@@ -23,13 +22,13 @@ class FoldingComputerTest extends AbstractContextTest {
   String sourcePath;
 
   @override
-  setUp() {
+  void setUp() {
     super.setUp();
     sourcePath = convertPath('/home/test/lib/test.dart');
   }
 
-  test_annotations() async {
-    String content = """
+  Future<void> test_annotations() async {
+    var content = '''
 @myMultilineAnnotation/*1:INC*/(
   "this",
   "is a test"
@@ -73,14 +72,14 @@ class MyClass2 {/*4:INC*/
   @constructorAnnotation1/*9:EXC:ANNOTATIONS*/
   MyClass2() {}
 /*4:INC:CLASS_BODY*/}
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_assertInitializer() async {
-    String content = '''
+  Future<void> test_assertInitializer() async {
+    var content = '''
 class C {/*1:INC*/
   C() : assert(/*2:INC*/
     true,
@@ -92,8 +91,8 @@ class C {/*1:INC*/
     _compareRegions(regions, content);
   }
 
-  test_assertStatement() async {
-    String content = '''
+  Future<void> test_assertStatement() async {
+    var content = '''
 main() {/*1:INC*/
   assert(/*2:INC*/
     true,
@@ -105,8 +104,8 @@ main() {/*1:INC*/
     _compareRegions(regions, content);
   }
 
-  test_class() async {
-    String content = """
+  Future<void> test_class() async {
+    var content = '''
 // Content before
 
 class Person {/*1:INC*/
@@ -120,14 +119,14 @@ class Person {/*1:INC*/
 /*1:INC:CLASS_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_comment_is_not_considered_file_header() async {
-    String content = """
+  Future<void> test_comment_is_not_considered_file_header() async {
+    var content = """
 // This is not the file header
 // It's just a comment
 main() {}
@@ -139,8 +138,8 @@ main() {}
     expect(regions, hasLength(0));
   }
 
-  test_constructor_invocations() async {
-    String content = """
+  Future<void> test_constructor_invocations() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -150,14 +149,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_file_header() async {
-    String content = """
+  Future<void> test_file_header() async {
+    var content = """
 // Copyright some year by some people/*1:EXC*/
 // See LICENCE etc./*1:INC:FILE_HEADER*/
 
@@ -170,8 +169,8 @@ main() {}
     _compareRegions(regions, content);
   }
 
-  test_file_header_does_not_include_block_comments() async {
-    String content = """
+  Future<void> test_file_header_does_not_include_block_comments() async {
+    var content = """
 /*
  * Copyright some year by some people
  * See LICENCE etc.
@@ -185,20 +184,20 @@ main() {}
     expect(regions, hasLength(0));
   }
 
-  test_file_header_with_no_function_comment() async {
-    String content = """
+  Future<void> test_file_header_with_no_function_comment() async {
+    var content = '''
 // Copyright some year by some people/*1:EXC*/
 // See LICENCE etc./*1:INC:FILE_HEADER*/
 
 main() {}
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_file_header_with_non_end_of_line_comment() async {
-    String content = """
+  Future<void> test_file_header_with_non_end_of_line_comment() async {
+    var content = """
 // Copyright some year by some people/*1:EXC*/
 // See LICENCE etc./*1:INC:FILE_HEADER*/
 /* This shouldn't be part of the file header */
@@ -210,8 +209,8 @@ main() {}
     _compareRegions(regions, content);
   }
 
-  test_file_header_with_script_prefix() async {
-    String content = """
+  Future<void> test_file_header_with_script_prefix() async {
+    var content = """
 #! /usr/bin/dart
 // Copyright some year by some people/*1:EXC*/
 // See LICENCE etc./*1:INC:FILE_HEADER*/
@@ -225,8 +224,8 @@ main() {}
     _compareRegions(regions, content);
   }
 
-  test_function() async {
-    String content = """
+  Future<void> test_function() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -234,14 +233,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_function_expression_invocation() async {
-    String content = """
+  Future<void> test_function_expression_invocation() async {
+    var content = '''
 // Content before
 
 getFunc() => (String a, String b) {/*1:INC*/
@@ -256,14 +255,14 @@ main2() {/*2:INC*/
 /*2:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_function_with_dart_doc() async {
-    String content = """
+  Future<void> test_function_with_dart_doc() async {
+    var content = '''
 // Content before
 
 /*1:EXC*//// This is a doc comment
@@ -273,14 +272,14 @@ main() {/*2:INC*/
 /*2:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_invocations() async {
-    String content = """
+  Future<void> test_invocations() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -290,14 +289,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_literal_list() async {
-    String content = """
+  Future<void> test_literal_list() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -308,14 +307,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_literal_map() async {
-    String content = """
+  Future<void> test_literal_map() async {
+    var content = '''
 // Content before
 
 main2() {/*1:INC*/
@@ -326,14 +325,14 @@ main2() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_mixin() async {
-    String content = """
+  Future<void> test_mixin() async {
+    var content = '''
 // Content before
 
 mixin M {/*1:INC*/
@@ -343,14 +342,14 @@ mixin M {/*1:INC*/
 /*1:INC:CLASS_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_multiple_directive_types() async {
-    String content = """
+  Future<void> test_multiple_directive_types() async {
+    var content = """
 import/*1:INC*/ 'dart:async';
 
 // We can have comments
@@ -366,8 +365,8 @@ main() {}
     _compareRegions(regions, content);
   }
 
-  test_multiple_import_directives() async {
-    String content = """
+  Future<void> test_multiple_import_directives() async {
+    var content = """
 import/*1:INC*/ 'dart:async';
 
 // We can have comments
@@ -383,8 +382,8 @@ main() {}
     _compareRegions(regions, content);
   }
 
-  test_nested_function() async {
-    String content = """
+  Future<void> test_nested_function() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -395,14 +394,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_nested_invocations() async {
-    String content = """
+  Future<void> test_nested_invocations() async {
+    var content = '''
 // Content before
 
 main() {/*1:INC*/
@@ -416,14 +415,14 @@ main() {/*1:INC*/
 /*1:INC:FUNCTION_BODY*/}
 
 // Content after
-""";
+''';
 
     final regions = await _computeRegions(content);
     _compareRegions(regions, content);
   }
 
-  test_single_import_directives() async {
-    String content = """
+  Future<void> test_single_import_directives() async {
+    var content = """
 import 'dart:async';
 
 main() {}
@@ -450,17 +449,17 @@ main() {}
     // ensure it's in the results.
     expectedRegions.forEach((m) {
       final i = m.group(1);
-      final inclusiveStart = m.group(2) == "INC";
+      final inclusiveStart = m.group(2) == 'INC';
       // Find the end marker.
       final endMatch = RegExp('/\\*$i:(INC|EXC):(.+?)\\*/').firstMatch(content);
 
-      final inclusiveEnd = endMatch.group(1) == "INC";
+      final inclusiveEnd = endMatch.group(1) == 'INC';
       final expectedKindString = endMatch.group(2);
       final expectedKind = FoldingKind.VALUES.firstWhere(
           (f) => f.toString() == 'FoldingKind.$expectedKindString',
           orElse: () => throw Exception(
-              "Annotated test code references $expectedKindString but "
-              "this does not exist in FoldingKind"));
+              'Annotated test code references $expectedKindString but '
+              'this does not exist in FoldingKind'));
 
       final expectedStart = inclusiveStart ? m.start : m.end;
       final expectedLength =
@@ -473,9 +472,8 @@ main() {}
 
   Future<List<FoldingRegion>> _computeRegions(String sourceContent) async {
     newFile(sourcePath, content: sourceContent);
-    ResolvedUnitResult result = await session.getResolvedUnit(sourcePath);
-    DartUnitFoldingComputer computer =
-        DartUnitFoldingComputer(result.lineInfo, result.unit);
+    var result = await session.getResolvedUnit(sourcePath);
+    var computer = DartUnitFoldingComputer(result.lineInfo, result.unit);
     return computer.compute();
   }
 }

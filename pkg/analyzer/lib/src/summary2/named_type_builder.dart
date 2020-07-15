@@ -6,9 +6,13 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type.dart';
+import 'package:analyzer/dart/element/type_visitor.dart';
+import 'package:analyzer/src/dart/ast/extensions.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
+import 'package:analyzer/src/dart/element/type_visitor.dart';
 import 'package:analyzer/src/summary2/lazy_ast.dart';
 import 'package:analyzer/src/summary2/type_builder.dart';
 import 'package:meta/meta.dart';
@@ -17,8 +21,8 @@ import 'package:meta/meta.dart';
 class NamedTypeBuilder extends TypeBuilder {
   static DynamicTypeImpl get _dynamicType => DynamicTypeImpl.instance;
 
-  /// Indicates whether the library is opted into NNBD.
-  final bool isNNBD;
+  /// The type system of the library with the type name.
+  final TypeSystemImpl typeSystem;
 
   @override
   final Element element;
@@ -40,11 +44,11 @@ class NamedTypeBuilder extends TypeBuilder {
   DartType _type;
 
   NamedTypeBuilder(
-      this.isNNBD, this.element, this.arguments, this.nullabilitySuffix,
+      this.typeSystem, this.element, this.arguments, this.nullabilitySuffix,
       {this.node});
 
   factory NamedTypeBuilder.of(
-    bool isNNBD,
+    TypeSystemImpl typeSystem,
     TypeName node,
     Element element,
     NullabilitySuffix nullabilitySuffix,
@@ -57,8 +61,18 @@ class NamedTypeBuilder extends TypeBuilder {
       arguments = <DartType>[];
     }
 
-    return NamedTypeBuilder(isNNBD, element, arguments, nullabilitySuffix,
+    return NamedTypeBuilder(typeSystem, element, arguments, nullabilitySuffix,
         node: node);
+  }
+
+  @override
+  R accept<R>(TypeVisitor<R> visitor) {
+    if (visitor is LinkingTypeVisitor<R>) {
+      var visitor2 = visitor as LinkingTypeVisitor<R>;
+      return visitor2.visitNamedTypeBuilder(this);
+    } else {
+      throw StateError('Should not happen outside linking.');
+    }
   }
 
   @override
@@ -71,10 +85,12 @@ class NamedTypeBuilder extends TypeBuilder {
     if (element is ClassElement) {
       var parameters = element.typeParameters;
       var arguments = _buildArguments(parameters);
-      _type = element.instantiate(
+      var type = element.instantiate(
         typeArguments: arguments,
         nullabilitySuffix: nullabilitySuffix,
       );
+      type = typeSystem.toLegacyType(type);
+      _type = type;
     } else if (element is GenericTypeAliasElement) {
       var rawType = _getRawFunctionType(element);
       if (rawType is FunctionType) {
@@ -82,7 +98,7 @@ class NamedTypeBuilder extends TypeBuilder {
         var arguments = _buildArguments(parameters);
         var substitution = Substitution.fromPairs(parameters, arguments);
         var instantiated = substitution.substituteType(rawType) as FunctionType;
-        _type = FunctionTypeImpl(
+        var type = FunctionTypeImpl(
           typeFormals: instantiated.typeFormals,
           parameters: instantiated.parameters,
           returnType: instantiated.returnType,
@@ -90,14 +106,20 @@ class NamedTypeBuilder extends TypeBuilder {
           element: element,
           typeArguments: arguments,
         );
+        type = typeSystem.toLegacyType(type);
+        _type = type;
       } else {
         _type = _dynamicType;
       }
     } else if (element is NeverElementImpl) {
-      _type = NeverTypeImpl.instance.withNullability(nullabilitySuffix);
+      if (typeSystem.isNonNullableByDefault) {
+        _type = NeverTypeImpl.instance.withNullability(nullabilitySuffix);
+      } else {
+        _type = typeSystem.typeProvider.nullType;
+      }
     } else if (element is TypeParameterElement) {
       _type = TypeParameterTypeImpl(
-        element,
+        element: element,
         nullabilitySuffix: nullabilitySuffix,
       );
     } else {
@@ -109,7 +131,7 @@ class NamedTypeBuilder extends TypeBuilder {
   }
 
   @override
-  String toString({bool withNullability = false}) {
+  String toString() {
     var buffer = StringBuffer();
     buffer.write(element.displayName);
     if (arguments.isNotEmpty) {
@@ -126,7 +148,7 @@ class NamedTypeBuilder extends TypeBuilder {
       return this;
     }
 
-    return NamedTypeBuilder(isNNBD, element, arguments, nullabilitySuffix,
+    return NamedTypeBuilder(typeSystem, element, arguments, nullabilitySuffix,
         node: node);
   }
 
@@ -182,15 +204,7 @@ class NamedTypeBuilder extends TypeBuilder {
   }) {
     var returnType = _buildNodeType(returnTypeNode);
     var typeParameters = _typeParameters(typeParameterList);
-
-    var formalParameters = parameterList.parameters.map((parameter) {
-      return ParameterElementImpl.synthetic(
-        parameter.identifier?.name ?? '',
-        _buildFormalParameterType(parameter),
-        // ignore: deprecated_member_use_from_same_package
-        parameter.kind,
-      );
-    }).toList();
+    var formalParameters = _formalParameters(parameterList);
 
     return FunctionTypeImpl(
       typeFormals: typeParameters,
@@ -221,10 +235,20 @@ class NamedTypeBuilder extends TypeBuilder {
     }
   }
 
+  List<ParameterElementImpl> _formalParameters(FormalParameterList node) {
+    return node.parameters.asImpl.map((parameter) {
+      return ParameterElementImpl.synthetic(
+        parameter.identifier?.name ?? '',
+        _buildFormalParameterType(parameter),
+        parameter.kind,
+      );
+    }).toList();
+  }
+
   NullabilitySuffix _getNullabilitySuffix(bool hasQuestion) {
     if (hasQuestion) {
       return NullabilitySuffix.question;
-    } else if (isNNBD) {
+    } else if (typeSystem.isNonNullableByDefault) {
       return NullabilitySuffix.none;
     } else {
       return NullabilitySuffix.star;

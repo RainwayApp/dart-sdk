@@ -9,7 +9,7 @@ class Class1 {
 }
 
 class Class2 {
-  int field;
+  int field = 42;
 }
 
 extension Extension on Class2 {
@@ -72,13 +72,13 @@ main() {
 
   Extension(c1?.field)?.[0];
   Extension(c1?.field)?.[0] = 1;
-  Extension(c1?.field)?.[0] = 1 + Extension(c2)?.[0];
+  Extension(c1?.field)?.[0] = 1 + Extension(c2)?.[0]!;
   Extension(c1?.field)?.[0] += 1;
-  Extension(c1?.field)?.[0] += 1 + Extension(c2)?.[0];
+  Extension(c1?.field)?.[0] += 1 + Extension(c2)?.[0]!;
   // TODO(johnniwinther): ++ should probably not be null-shorted, awaiting spec
   //  update.
   ++Extension(c1?.field)?.[0];
   Extension(c1?.field)?.[0]++;
   Extension(c1?.field)?.[0] ??= 1;
-  Extension(c1?.field)?.[0] ??= 1 + Extension(c2)?.[1];
+  Extension(c1?.field)?.[0] ??= 1 + Extension(c2)?.[1]!;
 }

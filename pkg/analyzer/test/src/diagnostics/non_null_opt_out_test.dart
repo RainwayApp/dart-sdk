@@ -425,7 +425,7 @@ main() {
     assertType(instanceCreation, 'A*');
 
     _assertLegacyMember(
-      instanceCreation.staticElement,
+      instanceCreation.constructorName.staticElement,
       _import_a.unnamedConstructor('A'),
     );
   }
@@ -448,10 +448,25 @@ main() {
     assertType(instanceCreation, 'A<int*>*');
 
     _assertLegacyMember(
-      instanceCreation.staticElement,
+      instanceCreation.constructorName.staticElement,
       _import_a.unnamedConstructor('A'),
       expectedSubstitution: {'T': 'int*'},
     );
+  }
+
+  test_instanceCreation_generic_instantiateToBounds() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A<T extends num> {}
+''');
+    await assertNoErrorsInCode(r'''
+// @dart = 2.5
+import 'a.dart';
+
+var v = A();
+''');
+
+    var v = findElement.topVar('v');
+    assertType(v.type, 'A<num*>*');
   }
 
   test_methodInvocation_extension_functionTarget() async {

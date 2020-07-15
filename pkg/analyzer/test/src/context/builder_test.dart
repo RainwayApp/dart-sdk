@@ -6,6 +6,7 @@ import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/src/command_line/arguments.dart';
 import 'package:analyzer/src/context/builder.dart';
 import 'package:analyzer/src/context/context_root.dart';
+import 'package:analyzer/src/context/packages.dart';
 import 'package:analyzer/src/context/source.dart';
 import 'package:analyzer/src/file_system/file_system.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -24,8 +25,6 @@ import 'package:analyzer/src/workspace/package_build.dart';
 import 'package:analyzer/src/workspace/pub.dart';
 import 'package:analyzer/src/workspace/workspace.dart';
 import 'package:args/args.dart';
-import 'package:package_config/packages.dart';
-import 'package:package_config/src/packages_impl.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
@@ -41,30 +40,20 @@ main() {
 
 @reflectiveTest
 class ContextBuilderTest with ResourceProviderMixin {
-  /**
-   * The SDK manager used by the tests;
-   */
+  /// The SDK manager used by the tests;
   DartSdkManager sdkManager;
 
-  /**
-   * The content cache used by the tests.
-   */
+  /// The content cache used by the tests.
   ContentCache contentCache;
 
-  /**
-   * The options passed to the context builder.
-   */
+  /// The options passed to the context builder.
   ContextBuilderOptions builderOptions = ContextBuilderOptions();
 
-  /**
-   * The context builder to be used in the test.
-   */
+  /// The context builder to be used in the test.
   ContextBuilder builder;
 
-  /**
-   * The path to the default SDK, or `null` if the test has not explicitly
-   * invoked [createDefaultSdk].
-   */
+  /// The path to the default SDK, or `null` if the test has not explicitly
+  /// invoked [createDefaultSdk].
   String defaultSdkPath;
 
   _MockLintRule _mockLintRule;
@@ -87,14 +76,14 @@ const Map<String, LibraryInfo> libraries = const {
   "core": const LibraryInfo("core/core.dart"),
 };
 ''');
-    sdkManager = DartSdkManager(defaultSdkPath, false);
+    sdkManager = DartSdkManager(defaultSdkPath);
     builder = ContextBuilder(resourceProvider, sdkManager, contentCache,
         options: builderOptions);
   }
 
   void setUp() {
     MockSdk(resourceProvider: resourceProvider);
-    sdkManager = DartSdkManager(convertPath('/sdk'), false);
+    sdkManager = DartSdkManager(convertPath('/sdk'));
     contentCache = ContentCache();
     builder = ContextBuilder(
       resourceProvider,
@@ -230,39 +219,11 @@ linter:
 //    _expectEqualOptions(options, expected);
   }
 
-  void test_convertPackagesToMap_noPackages() {
-    expect(builder.convertPackagesToMap(Packages.noPackages), isEmpty);
-  }
-
-  void test_convertPackagesToMap_null() {
-    expect(builder.convertPackagesToMap(null), isEmpty);
-  }
-
-  void test_convertPackagesToMap_packages() {
-    String fooName = 'foo';
-    String fooPath = convertPath('/pkg/foo');
-    Uri fooUri = resourceProvider.pathContext.toUri(fooPath);
-    String barName = 'bar';
-    String barPath = convertPath('/pkg/bar');
-    Uri barUri = resourceProvider.pathContext.toUri(barPath);
-
-    MapPackages packages = MapPackages({fooName: fooUri, barName: barUri});
-    Map<String, List<Folder>> result = builder.convertPackagesToMap(packages);
-    expect(result, isNotNull);
-    expect(result, hasLength(2));
-    expect(result[fooName], hasLength(1));
-    expect(result[fooName][0].path, fooPath);
-    expect(result[barName], hasLength(1));
-    expect(result[barName][0].path, barPath);
-  }
-
   void test_createDefaultOptions_default() {
     // Invert a subset of the options to ensure that the default options are
     // being returned.
     AnalysisOptionsImpl defaultOptions = AnalysisOptionsImpl();
     defaultOptions.dart2jsHint = !defaultOptions.dart2jsHint;
-    defaultOptions.enableLazyAssignmentOperators =
-        !defaultOptions.enableLazyAssignmentOperators;
     builderOptions.defaultOptions = defaultOptions;
     AnalysisOptions options = builder.createDefaultOptions();
     _expectEqualOptions(options, defaultOptions);
@@ -273,68 +234,26 @@ linter:
     _expectEqualOptions(options, AnalysisOptionsImpl());
   }
 
-  void test_createPackageMap_fromPackageDirectory_explicit() {
-    // Use a package directory that is outside the project directory.
-    String rootPath = convertPath('/root');
-    String projectPath = join(rootPath, 'project');
-    String packageDirPath = join(rootPath, 'packages');
-    String fooName = 'foo';
-    String fooPath = join(packageDirPath, fooName);
-    String barName = 'bar';
-    String barPath = join(packageDirPath, barName);
-    newFolder(projectPath);
-    newFolder(fooPath);
-    newFolder(barPath);
-
-    builderOptions.defaultPackagesDirectoryPath = packageDirPath;
-
-    Packages packages = builder.createPackageMap(projectPath);
-    expect(packages, isNotNull);
-    Map<String, Uri> map = packages.asMap();
-    expect(map, hasLength(2));
-    expect(map[fooName], convertedDirectoryUri(fooPath));
-    expect(map[barName], convertedDirectoryUri(barPath));
-  }
-
-  void test_createPackageMap_fromPackageDirectory_inRoot() {
-    // Use a package directory that is inside the project directory.
-    String projectPath = convertPath('/root/project');
-    String packageDirPath = join(projectPath, 'packages');
-    String fooName = 'foo';
-    String fooPath = join(packageDirPath, fooName);
-    String barName = 'bar';
-    String barPath = join(packageDirPath, barName);
-    newFolder(fooPath);
-    newFolder(barPath);
-
-    Packages packages = builder.createPackageMap(projectPath);
-    expect(packages, isNotNull);
-    Map<String, Uri> map = packages.asMap();
-    expect(map, hasLength(2));
-    expect(map[fooName], convertedDirectoryUri(fooPath));
-    expect(map[barName], convertedDirectoryUri(barPath));
-  }
-
   void test_createPackageMap_fromPackageFile_explicit() {
     // Use a package file that is outside the project directory's hierarchy.
     String rootPath = convertPath('/root');
     String projectPath = join(rootPath, 'project');
     String packageFilePath = join(rootPath, 'child', '.packages');
     newFolder(projectPath);
-    Uri fooUri = convertedDirectoryUri('/pkg/foo');
-    Uri barUri = convertedDirectoryUri('/pkg/bar');
     newFile(packageFilePath, content: '''
-foo:$fooUri
-bar:$barUri
+foo:${toUriStr('/pkg/foo')}
+bar:${toUriStr('/pkg/bar')}
 ''');
 
     builderOptions.defaultPackageFilePath = packageFilePath;
     Packages packages = builder.createPackageMap(projectPath);
-    expect(packages, isNotNull);
-    Map<String, Uri> map = packages.asMap();
-    expect(map, hasLength(2));
-    expect(map['foo'], fooUri);
-    expect(map['bar'], barUri);
+    _assertPackages(
+      packages,
+      {
+        'foo': convertPath('/pkg/foo'),
+        'bar': convertPath('/pkg/bar'),
+      },
+    );
   }
 
   void test_createPackageMap_fromPackageFile_inParentOfRoot() {
@@ -343,19 +262,19 @@ bar:$barUri
     String projectPath = join(rootPath, 'project');
     String packageFilePath = join(rootPath, '.packages');
     newFolder(projectPath);
-    Uri fooUri = convertedDirectoryUri('/pkg/foo');
-    Uri barUri = convertedDirectoryUri('/pkg/bar');
     newFile(packageFilePath, content: '''
-foo:$fooUri
-bar:$barUri
+foo:${toUriStr('/pkg/foo')}
+bar:${toUriStr('/pkg/bar')}
 ''');
 
     Packages packages = builder.createPackageMap(projectPath);
-    expect(packages, isNotNull);
-    Map<String, Uri> map = packages.asMap();
-    expect(map, hasLength(2));
-    expect(map['foo'], fooUri);
-    expect(map['bar'], barUri);
+    _assertPackages(
+      packages,
+      {
+        'foo': convertPath('/pkg/foo'),
+        'bar': convertPath('/pkg/bar'),
+      },
+    );
   }
 
   void test_createPackageMap_fromPackageFile_inRoot() {
@@ -364,32 +283,32 @@ bar:$barUri
     String projectPath = join(rootPath, 'project');
     String packageFilePath = join(projectPath, '.packages');
     newFolder(projectPath);
-    Uri fooUri = convertedDirectoryUri('/pkg/foo');
-    Uri barUri = convertedDirectoryUri('/pkg/bar');
     newFile(packageFilePath, content: '''
-foo:$fooUri
-bar:$barUri
+foo:${toUriStr('/pkg/foo')}
+bar:${toUriStr('/pkg/bar')}
 ''');
 
     Packages packages = builder.createPackageMap(projectPath);
-    expect(packages, isNotNull);
-    Map<String, Uri> map = packages.asMap();
-    expect(map, hasLength(2));
-    expect(map['foo'], fooUri);
-    expect(map['bar'], barUri);
+    _assertPackages(
+      packages,
+      {
+        'foo': convertPath('/pkg/foo'),
+        'bar': convertPath('/pkg/bar'),
+      },
+    );
   }
 
   void test_createPackageMap_none() {
     String rootPath = convertPath('/root');
     newFolder(rootPath);
     Packages packages = builder.createPackageMap(rootPath);
-    expect(packages, same(Packages.noPackages));
+    expect(packages.packages, isEmpty);
   }
 
   void test_createPackageMap_rootDoesNotExist() {
     String rootPath = convertPath('/root');
     Packages packages = builder.createPackageMap(rootPath);
-    expect(packages, same(Packages.noPackages));
+    expect(packages.packages, isEmpty);
   }
 
   void test_createSourceFactory_bazelWorkspace_fileProvider() {
@@ -622,7 +541,9 @@ linter:
     expected.lint = true;
     expected.lintRules = <Linter>[_mockLintRule];
     String packagesFilePath = convertPath('/some/directory/path/.packages');
-    newFile(packagesFilePath, content: 'flutter:/pkg/flutter/lib/');
+    newFile(packagesFilePath, content: '''
+flutter:${toUriStr('/pkg/flutter/lib/')}
+''');
     newFile('/pkg/flutter/lib/analysis_options_user.yaml', content: '''
 linter:
   rules:
@@ -635,10 +556,8 @@ linter:
 
   void test_getAnalysisOptions_default_noOverrides() {
     AnalysisOptionsImpl defaultOptions = AnalysisOptionsImpl();
-    defaultOptions.enableLazyAssignmentOperators = true;
     builderOptions.defaultOptions = defaultOptions;
     AnalysisOptionsImpl expected = AnalysisOptionsImpl();
-    expected.enableLazyAssignmentOperators = true;
     String path = convertPath('/some/directory/path');
     String filePath = join(path, AnalysisEngine.ANALYSIS_OPTIONS_YAML_FILE);
     newFile(filePath, content: '''
@@ -817,17 +736,6 @@ environment:
     expect(result.path, filePath);
   }
 
-  void test_getOptionsFile_inParentOfRoot_old() {
-    String parentPath = convertPath('/some/directory');
-    String path = join(parentPath, 'path');
-    String filePath = join(parentPath, AnalysisEngine.ANALYSIS_OPTIONS_FILE);
-    newFile(filePath);
-
-    File result = builder.getOptionsFile(path);
-    expect(result, isNotNull);
-    expect(result.path, filePath);
-  }
-
   void test_getOptionsFile_inRoot_new() {
     String path = convertPath('/some/directory/path');
     String filePath = join(path, AnalysisEngine.ANALYSIS_OPTIONS_YAML_FILE);
@@ -838,14 +746,14 @@ environment:
     expect(result.path, filePath);
   }
 
-  void test_getOptionsFile_inRoot_old() {
-    String path = convertPath('/some/directory/path');
-    String filePath = join(path, AnalysisEngine.ANALYSIS_OPTIONS_FILE);
-    newFile(filePath);
-
-    File result = builder.getOptionsFile(path);
-    expect(result, isNotNull);
-    expect(result.path, filePath);
+  void _assertPackages(Packages packages, Map<String, String> nameToPath) {
+    expect(packages, isNotNull);
+    expect(packages.packages, hasLength(nameToPath.length));
+    for (var name in nameToPath.keys) {
+      var expectedPath = nameToPath[name];
+      var path = packages[name].libFolder.path;
+      expect(path, expectedPath, reason: 'package $name');
+    }
   }
 
   _defineMockLintRules() {
@@ -862,28 +770,19 @@ environment:
   void _expectEqualOptions(
       AnalysisOptionsImpl actual, AnalysisOptionsImpl expected) {
     // TODO(brianwilkerson) Consider moving this to AnalysisOptionsImpl.==.
-    expect(actual.analyzeFunctionBodiesPredicate,
-        same(expected.analyzeFunctionBodiesPredicate));
     expect(actual.dart2jsHint, expected.dart2jsHint);
-    expect(actual.enableLazyAssignmentOperators,
-        expected.enableLazyAssignmentOperators);
     expect(actual.enableTiming, expected.enableTiming);
-    expect(actual.generateImplicitErrors, expected.generateImplicitErrors);
-    expect(actual.generateSdkErrors, expected.generateSdkErrors);
     expect(actual.hint, expected.hint);
     expect(actual.lint, expected.lint);
     expect(
       actual.lintRules.map((l) => l.name),
       unorderedEquals(expected.lintRules.map((l) => l.name)),
     );
-    expect(actual.preserveComments, expected.preserveComments);
     expect(actual.strongMode, expected.strongMode);
     expect(actual.implicitCasts, expected.implicitCasts);
     expect(actual.implicitDynamic, expected.implicitDynamic);
     expect(actual.strictInference, expected.strictInference);
     expect(actual.strictRawTypes, expected.strictRawTypes);
-    expect(actual.trackCacheDependencies, expected.trackCacheDependencies);
-    expect(actual.disableCacheFlushing, expected.disableCacheFlushing);
   }
 
   Uri _relativeUri(String path, {String from}) {

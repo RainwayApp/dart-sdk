@@ -7,8 +7,6 @@
 #include "vm/compiler/backend/il.h"  // For CompileType.
 #include "vm/compiler/frontend/kernel_translation_helper.h"
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 namespace dart {
 namespace kernel {
 
@@ -66,6 +64,7 @@ ScopeBuilder::ScopeBuilder(ParsedFunction* parsed_function)
       inferred_type_metadata_helper_(&helper_, &constant_reader_),
       procedure_attributes_metadata_helper_(&helper_),
       type_translator_(&helper_,
+                       &constant_reader_,
                        &active_class_,
                        /*finalize=*/true) {
   H.InitFromScript(helper_.script());
@@ -147,12 +146,12 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
           function.kernel_offset());
 
   switch (function.kind()) {
-    case RawFunction::kClosureFunction:
-    case RawFunction::kImplicitClosureFunction:
-    case RawFunction::kRegularFunction:
-    case RawFunction::kGetterFunction:
-    case RawFunction::kSetterFunction:
-    case RawFunction::kConstructor: {
+    case FunctionLayout::kClosureFunction:
+    case FunctionLayout::kImplicitClosureFunction:
+    case FunctionLayout::kRegularFunction:
+    case FunctionLayout::kGetterFunction:
+    case FunctionLayout::kSetterFunction:
+    case FunctionLayout::kConstructor: {
       const Tag tag = helper_.PeekTag();
       helper_.ReadUntilFunctionNode();
       function_node_helper.ReadUntilExcluding(
@@ -214,7 +213,17 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       }
 
       ParameterTypeCheckMode type_check_mode = kTypeCheckAllParameters;
-      if (function.IsNonImplicitClosureFunction()) {
+      if (function.IsSyncYielding()) {
+        // Don't type check the parameter of sync-yielding since these calls are
+        // all synthetic and types should always match.
+        ASSERT((function.NumParameters() - function.NumImplicitParameters()) ==
+               1);
+        ASSERT(
+            Class::Handle(
+                AbstractType::Handle(function.ParameterTypeAt(1)).type_class())
+                .Name() == Symbols::_SyncIterator().raw());
+        type_check_mode = kTypeCheckForStaticFunction;
+      } else if (function.IsNonImplicitClosureFunction()) {
         type_check_mode = kTypeCheckAllParameters;
       } else if (function.IsImplicitClosureFunction()) {
         if (MethodCanSkipTypeChecksForNonCovariantArguments(
@@ -272,11 +281,12 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       }
       break;
     }
-    case RawFunction::kImplicitGetter:
-    case RawFunction::kImplicitSetter: {
+    case FunctionLayout::kImplicitGetter:
+    case FunctionLayout::kImplicitSetter: {
       ASSERT(helper_.PeekTag() == kField);
       const bool is_setter = function.IsImplicitSetterFunction();
       const bool is_method = !function.IsStaticFunction();
+      const auto& field = Field::Handle(Z, function.accessor_field());
       intptr_t pos = 0;
       if (is_method) {
         Class& klass = Class::Handle(Z, function.Owner());
@@ -288,8 +298,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
         parsed_function_->set_receiver_var(variable);
       }
       if (is_setter) {
-        const auto& field = Field::Handle(Z, function.accessor_field());
-        if (FLAG_precompiled_mode) {
+        if (CompilerState::Current().is_aot()) {
           const intptr_t kernel_offset = field.kernel_offset();
           const InferredTypeMetadata parameter_type =
               inferred_type_metadata_helper_.GetInferredType(kernel_offset);
@@ -319,7 +328,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       }
       break;
     }
-    case RawFunction::kImplicitStaticGetter: {
+    case FunctionLayout::kImplicitStaticGetter: {
       ASSERT(helper_.PeekTag() == kField);
       ASSERT(function.IsStaticFunction());
       // In addition to static field initializers, scopes/local variables
@@ -330,7 +339,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       }
       break;
     }
-    case RawFunction::kFieldInitializer: {
+    case FunctionLayout::kFieldInitializer: {
       ASSERT(helper_.PeekTag() == kField);
       if (!function.is_static()) {
         Class& klass = Class::Handle(Z, function.Owner());
@@ -344,7 +353,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       VisitNode();
       break;
     }
-    case RawFunction::kDynamicInvocationForwarder: {
+    case FunctionLayout::kDynamicInvocationForwarder: {
       if (helper_.PeekTag() == kField) {
 #ifdef DEBUG
         String& name = String::Handle(Z, function.name());
@@ -385,7 +394,7 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       }
       break;
     }
-    case RawFunction::kMethodExtractor: {
+    case FunctionLayout::kMethodExtractor: {
       // Add a receiver parameter.  Though it is captured, we emit code to
       // explicitly copy it to a fixed offset in a freshly-allocated context
       // instead of using the generic code for regular functions.
@@ -399,9 +408,9 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
       parsed_function_->set_receiver_var(variable);
       break;
     }
-    case RawFunction::kNoSuchMethodDispatcher:
-    case RawFunction::kInvokeFieldDispatcher:
-    case RawFunction::kFfiTrampoline:
+    case FunctionLayout::kNoSuchMethodDispatcher:
+    case FunctionLayout::kInvokeFieldDispatcher:
+    case FunctionLayout::kFfiTrampoline:
       for (intptr_t i = 0; i < function.NumParameters(); ++i) {
         LocalVariable* variable = MakeVariable(
             TokenPosition::kNoSource, TokenPosition::kNoSource,
@@ -411,9 +420,10 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
                                             : Object::dynamic_type().raw()));
         scope_->InsertParameterAt(i, variable);
       }
-      // Callbacks need try/catch variables.
+      // Callbacks and calls with handles need try/catch variables.
       if (function.IsFfiTrampoline() &&
-          function.FfiCallbackTarget() != Function::null()) {
+          (function.FfiCallbackTarget() != Function::null() ||
+           function.FfiCSignatureContainsHandles())) {
         current_function_async_marker_ = FunctionNodeHelper::kSync;
         ++depth_.try_;
         AddTryVariables();
@@ -424,14 +434,14 @@ ScopeBuildingResult* ScopeBuilder::BuildScopes() {
         --depth_.catch_;
       }
       break;
-    case RawFunction::kSignatureFunction:
-    case RawFunction::kIrregexpFunction:
+    case FunctionLayout::kSignatureFunction:
+    case FunctionLayout::kIrregexpFunction:
       UNREACHABLE();
   }
   if (needs_expr_temp_) {
     scope_->AddVariable(parsed_function_->EnsureExpressionTemp());
   }
-  if (parsed_function_->function().MayHaveUncheckedEntryPoint(I)) {
+  if (parsed_function_->function().MayHaveUncheckedEntryPoint()) {
     scope_->AddVariable(parsed_function_->EnsureEntryPointsTemp());
   }
   parsed_function_->AllocateVariables();
@@ -530,6 +540,8 @@ void ScopeBuilder::VisitFunctionNode() {
   FunctionNodeHelper function_node_helper(&helper_);
   function_node_helper.ReadUntilExcluding(FunctionNodeHelper::kTypeParameters);
 
+  const auto& function = parsed_function_->function();
+
   intptr_t list_length =
       helper_.ReadListLength();  // read type_parameters list length.
   for (intptr_t i = 0; i < list_length; ++i) {
@@ -555,10 +567,8 @@ void ScopeBuilder::VisitFunctionNode() {
   }
 
   if (function_node_helper.async_marker_ == FunctionNodeHelper::kSyncYielding) {
-    intptr_t offset = parsed_function_->function().num_fixed_parameters();
-    for (intptr_t i = 0;
-         i < parsed_function_->function().NumOptionalPositionalParameters();
-         i++) {
+    intptr_t offset = function.num_fixed_parameters();
+    for (intptr_t i = 0; i < function.NumOptionalPositionalParameters(); i++) {
       parsed_function_->ParameterVariable(offset + i)->set_is_forced_stack();
     }
   }
@@ -616,6 +626,14 @@ void ScopeBuilder::VisitFunctionNode() {
         scope_->CaptureVariable(temp);
       }
     }
+  }
+
+  // Mark known chained futures such as _Future::timeout()'s _future.
+  if (function.recognized_kind() == MethodRecognizer::kFutureTimeout &&
+      depth_.function_ == 1) {
+    LocalVariable* future = scope_->LookupVariable(Symbols::_future(), true);
+    ASSERT(future != nullptr);
+    future->set_is_chained_future();
   }
 }
 
@@ -803,8 +821,11 @@ void ScopeBuilder::VisitExpression() {
     }
     case kIsExpression:
       helper_.ReadPosition();  // read position.
-      VisitExpression();       // read operand.
-      VisitDartType();         // read type.
+      if (translation_helper_.info().kernel_binary_version() >= 38) {
+        helper_.ReadFlags();  // read flags.
+      }
+      VisitExpression();  // read operand.
+      VisitDartType();    // read type.
       return;
     case kAsExpression:
       helper_.ReadPosition();  // read position.
@@ -1849,5 +1870,3 @@ void ScopeBuilder::LookupCapturedVariableByName(LocalVariable** variable,
 
 }  // namespace kernel
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

@@ -48,12 +48,10 @@ abstract class RuntimeConfiguration {
       case Runtime.dartPrecompiled:
         if (configuration.system == System.android) {
           return DartPrecompiledAdbRuntimeConfiguration(
-            useBlobs: configuration.useBlobs,
             useElf: configuration.useElf,
           );
         } else {
           return DartPrecompiledRuntimeConfiguration(
-            useBlobs: configuration.useBlobs,
             useElf: configuration.useElf,
           );
         }
@@ -213,6 +211,20 @@ class JsshellRuntimeConfiguration extends CommandLineJavaScriptRuntime {
   }
 }
 
+class QemuConfig {
+  static const all = <Architecture, QemuConfig>{
+    Architecture.arm:
+        QemuConfig('qemu-arm', ['-L', '/usr/arm-linux-gnueabihf/']),
+    Architecture.arm64:
+        QemuConfig('qemu-aarch64', ['-L', '/usr/aarch64-linux-gnu/']),
+  };
+
+  final String executable;
+  final List<String> arguments;
+
+  const QemuConfig(this.executable, this.arguments);
+}
+
 /// Common runtime configuration for runtimes based on the Dart VM.
 class DartVmRuntimeConfiguration extends RuntimeConfiguration {
   DartVmRuntimeConfiguration() : super._subclass();
@@ -245,6 +257,9 @@ class DartVmRuntimeConfiguration extends RuntimeConfiguration {
     if (isReload) {
       multiplier *= 2;
     }
+    if (_configuration.sanitizer != Sanitizer.none) {
+      multiplier *= 2;
+    }
     return multiplier;
   }
 }
@@ -273,16 +288,19 @@ class StandaloneDartRuntimeConfiguration extends DartVmRuntimeConfiguration {
     if (type == 'application/kernel-ir-fully-linked') {
       executable = dartVmExecutableFileName;
     }
+    if (_configuration.useQemu) {
+      final config = QemuConfig.all[_configuration.architecture];
+      arguments.insert(0, executable);
+      arguments.insertAll(0, config.arguments);
+      executable = config.executable;
+    }
     return [VMCommand(executable, arguments, environmentOverrides)];
   }
 }
 
 class DartPrecompiledRuntimeConfiguration extends DartVmRuntimeConfiguration {
-  final bool useBlobs;
   final bool useElf;
-  DartPrecompiledRuntimeConfiguration({bool useBlobs, bool useElf})
-      : useBlobs = useBlobs,
-        useElf = useElf;
+  DartPrecompiledRuntimeConfiguration({bool useElf}) : useElf = useElf;
 
   List<Command> computeRuntimeCommands(
       CommandArtifact artifact,
@@ -296,9 +314,16 @@ class DartPrecompiledRuntimeConfiguration extends DartVmRuntimeConfiguration {
       throw "dart_precompiled cannot run files of type '$type'.";
     }
 
-    return [
-      VMCommand(dartPrecompiledBinaryFileName, arguments, environmentOverrides)
-    ];
+    var executable = dartPrecompiledBinaryFileName;
+
+    if (_configuration.useQemu) {
+      final config = QemuConfig.all[_configuration.architecture];
+      arguments.insert(0, executable);
+      arguments.insertAll(0, config.arguments);
+      executable = config.executable;
+    }
+
+    return [VMCommand(executable, arguments, environmentOverrides)];
   }
 }
 
@@ -331,11 +356,8 @@ class DartPrecompiledAdbRuntimeConfiguration
   static const deviceDir = '/data/local/tmp/precompilation-testing';
   static const deviceTestDir = '/data/local/tmp/precompilation-testing/test';
 
-  final bool useBlobs;
   final bool useElf;
-  DartPrecompiledAdbRuntimeConfiguration({bool useBlobs, bool useElf})
-      : useBlobs = useBlobs,
-        useElf = useElf;
+  DartPrecompiledAdbRuntimeConfiguration({bool useElf}) : useElf = useElf;
 
   List<Command> computeRuntimeCommands(
       CommandArtifact artifact,
@@ -352,7 +374,7 @@ class DartPrecompiledAdbRuntimeConfiguration
     var processTest = processTestBinaryFileName;
     return [
       AdbPrecompilationCommand(
-          buildDir, processTest, script, arguments, useBlobs, useElf, extraLibs)
+          buildDir, processTest, script, arguments, useElf, extraLibs)
     ];
   }
 }

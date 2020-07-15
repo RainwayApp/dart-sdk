@@ -2,6 +2,10 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'dart:io';
+
+import 'package:path/path.dart' as p;
+
 import 'package:migration/src/io.dart';
 import 'package:migration/src/test_directories.dart';
 
@@ -15,17 +19,6 @@ import 'package:migration/src/test_directories.dart';
 // TODO(rnystrom): Update this with numbers from migrating some language tests.
 const _linesPerDay = 24607;
 
-const _includeNonCoreLibs = false;
-
-const _nonCoreLibs = [
-  "lib_2/html/",
-  "lib_2/isolate/",
-  "lib_2/mirrors/",
-  "lib_2/profiler/",
-  "lib_2/wasm/",
-  "standalone_2/io/",
-];
-
 /// Some legacy files test behavior that doesn't apply to NNBD at all which
 /// means they don't end up in the migrated directory but are done. We put this
 /// comment in the *legacy* file to track that it has been migrated.
@@ -36,40 +29,62 @@ void main(List<String> arguments) {
   var totalLines = 0;
   var totalMigratedFiles = 0;
   var totalMigratedLines = 0;
+  var languageDirs = 0;
+  var migratedLanguageDirs = 0;
 
-  for (var dir in legacyRootDirs) {
-    var files = 0;
-    var lines = 0;
-    var migratedFiles = 0;
-    var migratedLines = 0;
+  var skipCompleteSubfolders = arguments.contains("--incomplete");
 
-    for (var legacyPath in listFiles(dir)) {
-      if (!_includeNonCoreLibs && _nonCoreLibs.any(legacyPath.startsWith)) {
-        continue;
+  for (var rootDir in legacyRootDirs) {
+    var subdirs = Directory(p.join(testRoot, rootDir))
+        .listSync()
+        .where((subdir) => subdir is Directory)
+        .map((subdir) => p.relative(subdir.path, from: testRoot))
+        .toList();
+    subdirs.add(rootDir);
+    subdirs.sort();
+
+    for (var dir in subdirs) {
+      var files = 0;
+      var lines = 0;
+      var migratedFiles = 0;
+      var migratedLines = 0;
+
+      for (var legacyPath in listFiles(dir)) {
+        files++;
+        var sourceLines = readFileLines(legacyPath);
+        lines += sourceLines.length;
+
+        var nnbdPath = toNnbdPath(legacyPath);
+        if (fileExists(nnbdPath) ||
+            sourceLines.any((line) => line.contains(_nonMigratedMarker))) {
+          migratedFiles++;
+          migratedLines += sourceLines.length;
+        }
       }
 
-      files++;
-      var sourceLines = readFileLines(legacyPath);
-      lines += sourceLines.length;
+      if (files == 0) continue;
+      if (skipCompleteSubfolders && lines == migratedLines) continue;
 
-      var nnbdPath = toNnbdPath(legacyPath);
-      if (fileExists(nnbdPath) ||
-          sourceLines.any((line) => line.contains(_nonMigratedMarker))) {
-        migratedFiles++;
-        migratedLines += sourceLines.length;
+      _show(dir, migratedFiles, files, migratedLines, lines);
+      totalFiles += files;
+      totalLines += lines;
+      totalMigratedFiles += migratedFiles;
+      totalMigratedLines += migratedLines;
+
+      if (dir.startsWith("language_2/")) {
+        languageDirs++;
+        if (migratedLines == lines) {
+          migratedLanguageDirs++;
+        }
       }
     }
-
-    _show(dir, migratedFiles, files, migratedLines, lines);
-    totalFiles += files;
-    totalLines += lines;
-    totalMigratedFiles += migratedFiles;
-    totalMigratedLines += migratedLines;
   }
 
   print("");
   _show(
       "total", totalMigratedFiles, totalFiles, totalMigratedLines, totalLines);
+  print("");
+  print("Finished $migratedLanguageDirs/$languageDirs language directories.");
 }
 
 void _show(
@@ -82,12 +97,17 @@ void _show(
   var migratedDays = migratedLines / _linesPerDay;
   var daysLeft = days - migratedDays;
 
-  print("${label.padRight(12)} ${pad(migratedFiles, 4)}/${pad(files, 4)} "
+  var daysLeftString = ", ${pad(daysLeft.toStringAsFixed(2), 6)}/"
+      "${pad(days.toStringAsFixed(2), 5)} days left";
+  if (migratedLines == 0) {
+    daysLeftString = ", ${pad(daysLeft.toStringAsFixed(2), 6)} days left";
+  } else if (migratedLines == lines) {
+    daysLeftString = "";
+  }
+
+  print("${label.padRight(40)} ${pad(migratedFiles, 4)}/${pad(files, 4)} "
       "files (${percent(migratedFiles, files)}%), "
       "${pad(migratedLines, 6)}/${pad(lines, 6)} "
-      "lines (${percent(migratedLines, lines)}%), "
-      "${pad(migratedDays.toStringAsFixed(2), 6)}/"
-      "${pad(days.toStringAsFixed(2), 5)} "
-      "days (${percent(migratedDays, days)}%), "
-      "${pad(daysLeft.toStringAsFixed(2), 5)} days left");
+      "lines (${percent(migratedLines, lines)}%)"
+      "$daysLeftString");
 }

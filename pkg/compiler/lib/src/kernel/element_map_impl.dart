@@ -4,6 +4,7 @@
 
 library dart2js.kernel.element_map;
 
+import 'package:front_end/src/api_prototype/constant_evaluator.dart' as ir;
 import 'package:front_end/src/api_unstable/dart2js.dart' as ir;
 import 'package:js_runtime/shared/embedded_names.dart';
 import 'package:kernel/ast.dart' as ir;
@@ -87,8 +88,6 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
       new EntityDataMap<IndexedMember, KMemberData>();
   final EntityDataMap<IndexedTypeVariable, KTypeVariableData> typeVariables =
       new EntityDataMap<IndexedTypeVariable, KTypeVariableData>();
-  final EntityDataMap<IndexedTypedef, KTypedefData> typedefs =
-      new EntityDataMap<IndexedTypedef, KTypedefData>();
 
   /// Set to `true` before creating the J-World from the K-World to assert that
   /// no entities are created late.
@@ -96,7 +95,6 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
 
   final Map<ir.Library, IndexedLibrary> libraryMap = {};
   final Map<ir.Class, IndexedClass> classMap = {};
-  final Map<ir.Typedef, IndexedTypedef> typedefMap = {};
 
   /// Map from [ir.TypeParameter] nodes to the corresponding
   /// [TypeVariableEntity].
@@ -119,9 +117,9 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
   KernelToElementMapImpl(
       this.reporter, this._environment, this._frontendStrategy, this.options) {
     _elementEnvironment = new KernelElementEnvironment(this);
-    _commonElements = new CommonElementsImpl(_elementEnvironment, options);
-    _typeConverter = new DartTypeConverter(this);
-    _types = new KernelDartTypes(this);
+    _typeConverter = new DartTypeConverter(options, this);
+    _types = new KernelDartTypes(this, options);
+    _commonElements = new CommonElementsImpl(_types, _elementEnvironment);
     _constantValuefier = new ConstantValuefier(this);
   }
 
@@ -242,7 +240,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
   @override
   InterfaceType createInterfaceType(
       ir.Class cls, List<ir.DartType> typeArguments) {
-    return new InterfaceType(getClass(cls), getDartTypes(typeArguments));
+    return types.interfaceType(getClass(cls), getDartTypes(typeArguments));
   }
 
   LibraryEntity getLibrary(ir.Library node) => getLibraryInternal(node);
@@ -264,19 +262,19 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
       ir.Class node = data.node;
       if (node.typeParameters.isEmpty) {
         data.thisType =
-            data.rawType = new InterfaceType(cls, const <DartType>[]);
+            data.rawType = types.interfaceType(cls, const <DartType>[]);
       } else {
-        data.thisType = new InterfaceType(
+        data.thisType = types.interfaceType(
             cls,
             new List<DartType>.generate(node.typeParameters.length,
                 (int index) {
-              return new TypeVariableType(
+              return types.typeVariableType(
                   getTypeVariableInternal(node.typeParameters[index]));
             }));
-        data.rawType = new InterfaceType(
+        data.rawType = types.interfaceType(
             cls,
             new List<DartType>.filled(
-                node.typeParameters.length, DynamicType()));
+                node.typeParameters.length, types.dynamicType()));
       }
     }
   }
@@ -289,8 +287,8 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
         _ensureThisAndRawType(cls, data);
         data.jsInteropType = data.thisType;
       } else {
-        data.jsInteropType = InterfaceType(
-            cls, List<DartType>.filled(node.typeParameters.length, AnyType()));
+        data.jsInteropType = types.interfaceType(cls,
+            List<DartType>.filled(node.typeParameters.length, types.anyType()));
       }
     }
   }
@@ -304,7 +302,9 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
         data.instantiationToBounds = data.thisType;
       } else {
         data.instantiationToBounds = getInterfaceType(ir.instantiateToBounds(
-            coreTypes.legacyRawType(node), coreTypes.objectClass));
+            coreTypes.legacyRawType(node),
+            coreTypes.objectClass,
+            node.enclosingLibrary));
       }
     }
   }
@@ -325,17 +325,38 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
         data.isMixinApplication = false;
         data.interfaces = const <InterfaceType>[];
       } else {
-        InterfaceType processSupertype(ir.Supertype node) {
-          InterfaceType supertype = _typeConverter.visitSupertype(node);
+        // Set of canonical supertypes.
+        //
+        // This is necessary to support when a class implements the same
+        // supertype in multiple non-conflicting ways, like implementing A<int*>
+        // and A<int?> or B<Object?> and B<dynamic>.
+        Set<InterfaceType> canonicalSupertypes = <InterfaceType>{};
+
+        InterfaceType processSupertype(ir.Supertype supertypeNode) {
+          supertypeNode = classHierarchy.getClassAsInstanceOf(
+              node, supertypeNode.classNode);
+          InterfaceType supertype =
+              _typeConverter.visitSupertype(supertypeNode);
+          canonicalSupertypes.add(supertype);
           IndexedClass superclass = supertype.element;
           KClassData superdata = classes.getData(superclass);
           _ensureSupertypes(superclass, superdata);
+          for (InterfaceType supertype in superdata.orderedTypeSet.supertypes) {
+            ir.Supertype canonicalSupertype = classHierarchy
+                .getClassAsInstanceOf(node, getClassNode(supertype.element));
+            if (canonicalSupertype != null) {
+              supertype = _typeConverter.visitSupertype(canonicalSupertype);
+            } else {
+              assert(supertype.typeArguments.isEmpty,
+                  "Generic synthetic supertypes are not supported");
+            }
+            canonicalSupertypes.add(supertype);
+          }
           return supertype;
         }
 
         InterfaceType supertype;
-        ir.LinkBuilder<InterfaceType> linkBuilder =
-            new ir.LinkBuilder<InterfaceType>();
+        List<InterfaceType> interfaces = <InterfaceType>[];
         if (node.isMixinDeclaration) {
           // A mixin declaration
           //
@@ -353,7 +374,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
           // so we need get the superclasses from the on-clause, A, B, and C,
           // through [superclassConstraints].
           for (ir.Supertype constraint in node.superclassConstraints()) {
-            linkBuilder.addLast(processSupertype(constraint));
+            interfaces.add(processSupertype(constraint));
           }
           // Set superclass to `Object`.
           supertype = _commonElements.objectType;
@@ -364,34 +385,28 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
           ClassEntity defaultSuperclass =
               _commonElements.getDefaultSuperclass(cls, nativeBasicData);
           data.supertype = _elementEnvironment.getRawType(defaultSuperclass);
+          assert(data.supertype.typeArguments.isEmpty,
+              "Generic default supertypes are not supported");
+          canonicalSupertypes.add(data.supertype);
         } else {
           data.supertype = supertype;
         }
         if (node.mixedInType != null) {
           data.isMixinApplication = true;
-          linkBuilder
-              .addLast(data.mixedInType = processSupertype(node.mixedInType));
+          interfaces.add(data.mixedInType = processSupertype(node.mixedInType));
         } else {
           data.isMixinApplication = false;
         }
         node.implementedTypes.forEach((ir.Supertype supertype) {
-          linkBuilder.addLast(processSupertype(supertype));
+          interfaces.add(processSupertype(supertype));
         });
-        ir.Link<InterfaceType> interfaces =
-            linkBuilder.toLink(const ir.Link<InterfaceType>());
         OrderedTypeSetBuilder setBuilder =
             new KernelOrderedTypeSetBuilder(this, cls);
-        data.orderedTypeSet = setBuilder.createOrderedTypeSet(
-            data.supertype, interfaces.reverse(const ir.Link<InterfaceType>()));
-        data.interfaces = new List<InterfaceType>.from(interfaces.toList());
+        data.orderedTypeSet =
+            setBuilder.createOrderedTypeSet(canonicalSupertypes);
+        data.interfaces = interfaces;
       }
     }
-  }
-
-  @override
-  TypedefType getTypedefType(ir.Typedef node) {
-    IndexedTypedef typedef = getTypedefInternal(node);
-    return typedefs.getData(typedef).rawType;
   }
 
   @override
@@ -473,7 +488,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
 
   @override
   TypeVariableType getTypeVariableType(ir.TypeParameterType type) =>
-      getDartType(type);
+      getDartType(type).withoutNullability;
 
   List<DartType> getDartTypes(List<ir.DartType> types) {
     List<DartType> list = <DartType>[];
@@ -485,7 +500,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
 
   @override
   InterfaceType getInterfaceType(ir.InterfaceType type) =>
-      _typeConverter.convert(type);
+      _typeConverter.convert(type).withoutNullability;
 
   @override
   FunctionType getFunctionType(ir.FunctionNode node) {
@@ -493,7 +508,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     if (node.parent is ir.Constructor) {
       // The return type on generative constructors is `void`, but we need
       // `dynamic` type to match the element model.
-      returnType = DynamicType();
+      returnType = types.dynamicType();
     } else {
       returnType = getDartType(node.returnType);
     }
@@ -501,11 +516,12 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     List<DartType> optionalParameterTypes = <DartType>[];
 
     DartType getParameterType(ir.VariableDeclaration variable) {
-      if (variable.isCovariant || variable.isGenericCovariantImpl) {
-        // A covariant parameter has type `Object` in the method signature.
-        return commonElements.objectType;
-      }
-      return getDartType(variable.type);
+      // isCovariant implies this FunctionNode is a class Procedure.
+      var isCovariant = variable.isCovariant || variable.isGenericCovariantImpl;
+      var isFromNonNullableByDefaultLibrary = isCovariant &&
+          (node.parent as ir.Procedure).enclosingLibrary.isNonNullableByDefault;
+      return types.getTearOffParameterType(getDartType(variable.type),
+          isCovariant, isFromNonNullableByDefaultLibrary);
     }
 
     for (ir.VariableDeclaration variable in node.positionalParameters) {
@@ -516,26 +532,30 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
       }
     }
     List<String> namedParameters = <String>[];
+    Set<String> requiredNamedParameters = <String>{};
     List<DartType> namedParameterTypes = <DartType>[];
     List<ir.VariableDeclaration> sortedNamedParameters =
         node.namedParameters.toList()..sort((a, b) => a.name.compareTo(b.name));
     for (ir.VariableDeclaration variable in sortedNamedParameters) {
       namedParameters.add(variable.name);
       namedParameterTypes.add(getParameterType(variable));
+      if (variable.isRequired) {
+        requiredNamedParameters.add(variable.name);
+      }
     }
     List<FunctionTypeVariable> typeVariables;
     if (node.typeParameters.isNotEmpty) {
       List<DartType> typeParameters = <DartType>[];
       for (ir.TypeParameter typeParameter in node.typeParameters) {
-        typeParameters.add(getDartType(
-            new ir.TypeParameterType(typeParameter, ir.Nullability.legacy)));
+        typeParameters.add(getDartType(new ir.TypeParameterType(
+            typeParameter, ir.Nullability.nonNullable)));
       }
       typeVariables = new List<FunctionTypeVariable>.generate(
           node.typeParameters.length,
-          (int index) => new FunctionTypeVariable(index));
+          (int index) => types.functionTypeVariable(index));
 
       DartType subst(DartType type) {
-        return type.subst(typeVariables, typeParameters);
+        return types.subst(typeVariables, typeParameters, type);
       }
 
       returnType = subst(returnType);
@@ -550,14 +570,20 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
       typeVariables = const <FunctionTypeVariable>[];
     }
 
-    return new FunctionType(returnType, parameterTypes, optionalParameterTypes,
-        namedParameters, namedParameterTypes, typeVariables);
+    return types.functionType(
+        returnType,
+        parameterTypes,
+        optionalParameterTypes,
+        namedParameters,
+        requiredNamedParameters,
+        namedParameterTypes,
+        typeVariables);
   }
 
   @override
   DartType substByContext(DartType type, InterfaceType context) {
-    return type.subst(
-        context.typeArguments, getThisType(context.element).typeArguments);
+    return types.subst(context.typeArguments,
+        getThisType(context.element).typeArguments, type);
   }
 
   /// Returns the type of the `call` method on 'type'.
@@ -759,10 +785,6 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     return classes.getData(cls).node;
   }
 
-  ir.Typedef _getTypedefNode(covariant IndexedTypedef typedef) {
-    return typedefs.getData(typedef).node;
-  }
-
   @override
   ImportEntity getImport(ir.LibraryDependency node) {
     if (node == null) return null;
@@ -795,7 +817,10 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     },
         environment: _environment.toMap(),
         enableTripleShift:
-            options.languageExperiments[ir.ExperimentalFlag.tripleShift]);
+            options.languageExperiments[ir.ExperimentalFlag.tripleShift],
+        evaluationMode: options.useLegacySubtyping
+            ? ir.EvaluationMode.weak
+            : ir.EvaluationMode.strong);
   }
 
   @override
@@ -817,13 +842,25 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
       // constructors like calling a generic method.
       {bool includeTypeParameters: true}) {
     // TODO(johnniwinther): Cache the computed function type.
-    int requiredParameters = node.requiredParameterCount;
+    int requiredPositionalParameters = node.requiredParameterCount;
     int positionalParameters = node.positionalParameters.length;
     int typeParameters = node.typeParameters.length;
-    List<String> namedParameters =
-        node.namedParameters.map((p) => p.name).toList()..sort();
-    return new ParameterStructure(requiredParameters, positionalParameters,
-        namedParameters, includeTypeParameters ? typeParameters : 0);
+    List<String> namedParameters = <String>[];
+    Set<String> requiredNamedParameters = <String>{};
+    List<ir.VariableDeclaration> sortedNamedParameters =
+        node.namedParameters.toList()..sort((a, b) => a.name.compareTo(b.name));
+    for (var variable in sortedNamedParameters) {
+      namedParameters.add(variable.name);
+      if (variable.isRequired && !options.useLegacySubtyping) {
+        requiredNamedParameters.add(variable.name);
+      }
+    }
+    return new ParameterStructure(
+        requiredPositionalParameters,
+        positionalParameters,
+        namedParameters,
+        requiredNamedParameters,
+        includeTypeParameters ? typeParameters : 0);
   }
 
   @override
@@ -877,8 +914,14 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     bool mayLookupInMain() {
       var mainUri = elementEnvironment.mainLibrary.canonicalUri;
       // Tests permit lookup outside of dart: libraries.
-      return mainUri.path.contains('tests/compiler/dart2js_native') ||
-          mainUri.path.contains('tests/compiler/dart2js_extra');
+      return mainUri.path
+              .contains(RegExp(r'(?<!generated_)tests/dart2js/internal')) ||
+          mainUri.path
+              .contains(RegExp(r'(?<!generated_)tests/dart2js/native')) ||
+          mainUri.path
+              .contains(RegExp(r'(?<!generated_)tests/dart2js_2/internal')) ||
+          mainUri.path
+              .contains(RegExp(r'(?<!generated_)tests/dart2js_2/native'));
     }
 
     DartType lookup(String typeName, {bool required}) {
@@ -1171,25 +1214,6 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     return classes.register(cls, new KClassDataImpl(node), classEnv);
   }
 
-  TypedefEntity getTypedefInternal(ir.Typedef node) {
-    return typedefMap[node] ??= _getTypedefCreate(node);
-  }
-
-  TypedefEntity _getTypedefCreate(ir.Typedef node) {
-    assert(
-        !envIsClosed,
-        "Environment of $this is closed. Trying to create "
-        "typedef for $node.");
-    IndexedLibrary library = getLibraryInternal(node.enclosingLibrary);
-    IndexedTypedef typedef = createTypedef(library, node.name);
-    TypedefType typedefType = new TypedefType(
-        typedef,
-        new List<DartType>.filled(node.typeParameters.length, DynamicType()),
-        getDartType(node.type));
-    return typedefs.register(
-        typedef, new KTypedefData(node, typedef, typedefType));
-  }
-
   TypeVariableEntity getTypeVariableInternal(ir.TypeParameter node) {
     return typeVariableMap[node] ??= _getTypeVariableCreate(node);
   }
@@ -1258,14 +1282,17 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
           isExternal: isExternal, isConst: node.isConst);
     } else if (node is ir.Procedure) {
       functionNode = node.function;
-      bool isFromEnvironment = isExternal &&
-          name.text == 'fromEnvironment' &&
-          const ['int', 'bool', 'String'].contains(enclosingClass.name);
+      // TODO(sigmund): Check more strictly than just the class name.
+      bool isEnvironmentConstructor = isExternal &&
+          (name.text == 'fromEnvironment' &&
+                  const ['int', 'bool', 'String']
+                      .contains(enclosingClass.name) ||
+              name.text == 'hasEnvironment' && enclosingClass.name == 'bool');
       constructor = createFactoryConstructor(enclosingClass, name,
           getParameterStructure(functionNode, includeTypeParameters: false),
           isExternal: isExternal,
           isConst: node.isConst,
-          isFromEnvironmentConstructor: isFromEnvironment);
+          isFromEnvironmentConstructor: isEnvironmentConstructor);
     } else {
       // TODO(johnniwinther): Convert `node.location` to a [SourceSpan].
       throw failedAt(
@@ -1500,12 +1527,7 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     if (supertype != null) {
       return true;
     }
-    return data.callType is FunctionType;
-  }
-
-  @override
-  ir.Typedef getTypedefNode(TypedefEntity typedef) {
-    return _getTypedefNode(typedef);
+    return data.callType?.withoutNullability is FunctionType;
   }
 
   @override
@@ -1584,10 +1606,6 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
     return new KClass(library, name, isAbstract: isAbstract);
   }
 
-  IndexedTypedef createTypedef(LibraryEntity library, String name) {
-    return new KTypedef(library, name);
-  }
-
   TypeVariableEntity createTypeVariable(
       Entity typeDeclaration, String name, int index) {
     return new KTypeVariable(typeDeclaration, name, index);
@@ -1600,6 +1618,8 @@ class KernelToElementMapImpl implements KernelToElementMap, IrToElementMap {
         isExternal: isExternal, isConst: isConst);
   }
 
+  // TODO(dart2js-team): Rename isFromEnvironmentConstructor to
+  // isEnvironmentConstructor: Here, and everywhere in the compiler.
   IndexedConstructor createFactoryConstructor(ClassEntity enclosingClass,
       Name name, ParameterStructure parameterStructure,
       {bool isExternal, bool isConst, bool isFromEnvironmentConstructor}) {
@@ -1652,7 +1672,7 @@ class KernelElementEnvironment extends ElementEnvironment
   KernelElementEnvironment(this.elementMap);
 
   @override
-  DartType get dynamicType => DynamicType();
+  DartType get dynamicType => elementMap.types.dynamicType();
 
   @override
   LibraryEntity get mainLibrary => elementMap._mainLibrary;
@@ -1716,7 +1736,7 @@ class KernelElementEnvironment extends ElementEnvironment
   @override
   InterfaceType createInterfaceType(
       ClassEntity cls, List<DartType> typeArguments) {
-    return new InterfaceType(cls, typeArguments);
+    return elementMap.types.interfaceType(cls, typeArguments);
   }
 
   @override
@@ -1738,9 +1758,6 @@ class KernelElementEnvironment extends ElementEnvironment
   FunctionType getLocalFunctionType(covariant KLocalFunction function) {
     return function.functionType;
   }
-
-  @override
-  DartType getUnaliasedType(DartType type) => type;
 
   @override
   ConstructorEntity lookupConstructor(ClassEntity cls, String name,
@@ -1906,14 +1923,15 @@ class KernelBehaviorBuilder extends BehaviorBuilder {
   final DiagnosticReporter reporter;
   @override
   final NativeBasicData nativeBasicData;
-  final CompilerOptions _options;
+  @override
+  final CompilerOptions options;
 
   KernelBehaviorBuilder(this.elementEnvironment, this.commonElements,
-      this.nativeBasicData, this.reporter, this._options);
+      this.nativeBasicData, this.reporter, this.options);
 
   @override
   bool get trustJSInteropTypeAnnotations =>
-      _options.trustJSInteropTypeAnnotations;
+      options.trustJSInteropTypeAnnotations;
 }
 
 class KernelNativeMemberResolver implements NativeMemberResolver {

@@ -5,12 +5,17 @@
 #ifndef RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_IA32_H_
 #define RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_IA32_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #ifndef RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_H_
 #error Do not include assembler_ia32.h directly; use assembler.h instead.
 #endif
 
 #include "platform/assert.h"
 #include "platform/utils.h"
+#include "vm/compiler/assembler/assembler_base.h"
 #include "vm/constants.h"
 #include "vm/constants_x86.h"
 #include "vm/pointer_tagging.h"
@@ -151,7 +156,8 @@ class Address : public Operand {
   }
 
   Address(Register index, ScaleFactor scale, int32_t disp) {
-    ASSERT(index != ESP);  // Illegal addressing mode.
+    ASSERT(index != ESP);       // Illegal addressing mode.
+    ASSERT(scale != TIMES_16);  // Unsupported scale factor.
     SetModRM(0, ESP);
     SetSIB(scale, index, EBP);
     SetDisp32(disp);
@@ -161,7 +167,8 @@ class Address : public Operand {
   Address(Register index, ScaleFactor scale, Register r);
 
   Address(Register base, Register index, ScaleFactor scale, int32_t disp) {
-    ASSERT(index != ESP);  // Illegal addressing mode.
+    ASSERT(index != ESP);       // Illegal addressing mode.
+    ASSERT(scale != TIMES_16);  // Unsupported scale factor.
     if (disp == 0 && base != EBP) {
       SetModRM(0, ESP);
       SetSIB(scale, index, base);
@@ -291,6 +298,8 @@ class Assembler : public AssemblerBase {
   void cmovlessl(Register dst, Register src);
 
   void rep_movsb();
+  void rep_movsw();
+  void rep_movsl();
 
   void movss(XmmRegister dst, const Address& src);
   void movss(const Address& dst, XmmRegister src);
@@ -395,6 +404,7 @@ class Assembler : public AssemblerBase {
 
   void movmskpd(Register dst, XmmRegister src);
   void movmskps(Register dst, XmmRegister src);
+  void pmovmskb(Register dst, XmmRegister src);
 
   void sqrtsd(XmmRegister dst, XmmRegister src);
   void sqrtss(XmmRegister dst, XmmRegister src);
@@ -546,8 +556,6 @@ class Assembler : public AssemblerBase {
   void int3();
   void hlt();
 
-  static uword GetBreakInstructionFiller() { return 0xCCCCCCCC; }
-
   void j(Condition condition, Label* label, bool near = kFarJump);
   void j(Condition condition, const ExternalLabel* label);
 
@@ -565,9 +573,27 @@ class Assembler : public AssemblerBase {
    * Macros for High-level operations and implemented on all architectures.
    */
 
+  void Ret() { ret(); }
   void CompareRegisters(Register a, Register b);
   void BranchIf(Condition condition, Label* label) { j(condition, label); }
-  void LoadField(Register dst, FieldAddress address) { movw(dst, address); }
+
+  void LoadField(Register dst, FieldAddress address) { movl(dst, address); }
+  void LoadMemoryValue(Register dst, Register base, int32_t offset) {
+    movl(dst, Address(base, offset));
+  }
+  void StoreMemoryValue(Register src, Register base, int32_t offset) {
+    movl(Address(base, offset), src);
+  }
+  void LoadAcquire(Register dst, Register address, int32_t offset = 0) {
+    // On intel loads have load-acquire behavior (i.e. loads are not re-ordered
+    // with other loads).
+    movl(dst, Address(address, offset));
+  }
+  void StoreRelease(Register src, Register address, int32_t offset = 0) {
+    // On intel stores have store-release behavior (i.e. stores are not
+    // re-ordered with other stores).
+    movl(Address(address, offset), src);
+  }
 
   // Issues a move instruction if 'to' is not the same as 'from'.
   void MoveRegister(Register to, Register from);
@@ -590,9 +616,21 @@ class Assembler : public AssemblerBase {
     cmpl(reg, Immediate(immediate));
   }
 
+  void LoadImmediate(Register reg, int32_t immediate) {
+    if (immediate == 0) {
+      xorl(reg, reg);
+    } else {
+      movl(reg, Immediate(immediate));
+    }
+  }
+
   void Drop(intptr_t stack_elements);
 
   void LoadIsolate(Register dst);
+
+  void LoadUniqueObject(Register dst, const Object& object) {
+    LoadObject(dst, object, /*movable_referent=*/true);
+  }
 
   void LoadObject(Register dst,
                   const Object& object,
@@ -678,7 +716,7 @@ class Assembler : public AssemblerBase {
   // However XMM0 is saved for convenience.
   void TransitionGeneratedToNative(Register destination_address,
                                    Register new_exit_frame,
-                                   Register scratch,
+                                   Register new_exit_through_ffi,
                                    bool enter_safepoint);
   void TransitionNativeToGenerated(Register scratch, bool exit_safepoint);
   void EnterSafepoint(Register scratch);
@@ -697,9 +735,9 @@ class Assembler : public AssemblerBase {
             CodeEntryKind entry_kind = CodeEntryKind::kNormal);
   void CallToRuntime();
 
-  void CallNullErrorShared(bool save_fpu_registers) { UNREACHABLE(); }
+  void Call(Address target) { call(target); }
 
-  void CallNullArgErrorShared(bool save_fpu_registers) { UNREACHABLE(); }
+  void CallCFunction(Address target) { Call(target); }
 
   void Jmp(const Code& code);
   void J(Condition condition, const Code& code);
@@ -731,9 +769,17 @@ class Assembler : public AssemblerBase {
   static Address ElementAddressForRegIndex(bool is_external,
                                            intptr_t cid,
                                            intptr_t index_scale,
+                                           bool index_unboxed,
                                            Register array,
                                            Register index,
                                            intptr_t extra_disp = 0);
+
+  void LoadFieldAddressForRegOffset(Register address,
+                                    Register instance,
+                                    Register offset_in_words_as_smi) {
+    static_assert(kSmiTagShift == 1, "adjust scale factor");
+    leal(address, FieldAddress(instance, offset_in_words_as_smi, TIMES_2, 0));
+  }
 
   static Address VMTagAddress() {
     return Address(THR, target::Thread::vm_tag_offset());
@@ -801,7 +847,15 @@ class Assembler : public AssemblerBase {
   //   pushl immediate(0)
   //   .....
   void EnterStubFrame();
+  void LeaveStubFrame();
   static const intptr_t kEnterStubFramePushedWords = 2;
+
+  // Set up a frame for calling a C function.
+  // Automatically save the pinned registers in Dart which are not callee-
+  // saved in the native calling convention.
+  // Use together with CallCFunction.
+  void EnterCFrame(intptr_t frame_space);
+  void LeaveCFrame();
 
   // Instruction pattern from entrypoint is used in dart frame prologs
   // to set up the frame and save a PC which can be used to figure out the
@@ -843,9 +897,6 @@ class Assembler : public AssemblerBase {
 
   // Debugging and bringup support.
   void Breakpoint() override { int3(); }
-  void Stop(const char* message) override;
-
-  static void InitializeMemoryWithBreakpoints(uword data, intptr_t length);
 
   // Check if the given value is an integer value that can be directly
   // emdedded into the code without additional XORing with jit_cookie.

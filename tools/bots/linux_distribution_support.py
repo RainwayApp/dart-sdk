@@ -101,7 +101,7 @@ def SrcSteps(build_info):
             sys.exit(1)
         if not "jessie" in stdout:
             print "Trying to build debian bits but not on debian Jessie"
-            print "You can't fix this, please contact whesse@"
+            print "You can't fix this, please contact dart-engprod@"
             sys.exit(1)
 
     with bot.BuildStep('Create src tarball'):
@@ -135,10 +135,6 @@ def SrcSteps(build_info):
         # Copy in the installed binary to avoid poluting /usr/bin (and having to
         # run as root)
         Run(['cp', '/usr/bin/dart', 'out/ReleaseX64/dart'])
-
-        # We currently can't run the testing script on wheezy since the checked in
-        # binary is built on precise, see issue 18742
-        # TODO(18742): Run './tools/test.py' '-mrelease' 'standalone'
 
         # Sanity check dart2js and the analyzer against a hello world program
         with utils.TempDir() as temp_dir:

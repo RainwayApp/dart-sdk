@@ -10,7 +10,6 @@ import 'package:analysis_server/src/protocol_server.dart'
         RuntimeCompletionExpression,
         RuntimeCompletionVariable,
         SourceEdit;
-import 'package:analysis_server/src/provisional/completion/completion_core.dart';
 import 'package:analysis_server/src/services/completion/completion_core.dart';
 import 'package:analysis_server/src/services/completion/completion_performance.dart';
 import 'package:analysis_server/src/services/completion/dart/completion_manager.dart';
@@ -44,8 +43,6 @@ class RuntimeCompletionComputer {
       this.expressions);
 
   Future<RuntimeCompletionResult> compute() async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     var contextResult = await analysisDriver.getResult(contextPath);
     var session = contextResult.session;
 
@@ -53,7 +50,7 @@ class RuntimeCompletionComputer {
 
     // Insert the code being completed at the context offset.
     var changeBuilder = DartChangeBuilder(session);
-    int nextImportPrefixIndex = 0;
+    var nextImportPrefixIndex = 0;
     await changeBuilder.addFileEdit(contextPath, (builder) {
       builder.addInsertion(contextOffset, (builder) {
         builder.writeln('{');
@@ -68,13 +65,13 @@ class RuntimeCompletionComputer {
     }, importPrefixGenerator: (uri) => '__prefix${nextImportPrefixIndex++}');
 
     // Compute the patched context file content.
-    String targetCode = SourceEdit.applySequence(
+    var targetCode = SourceEdit.applySequence(
       contextResult.content,
       changeBuilder.sourceChange.edits[0].edits,
     );
 
     // Insert the code being completed.
-    int targetOffset = targetCode.indexOf(codeMarker) + offset;
+    var targetOffset = targetCode.indexOf(codeMarker) + offset;
     targetCode = targetCode.replaceAll(codeMarker, code);
 
     // Update the context file content to include the code being completed.
@@ -84,13 +81,25 @@ class RuntimeCompletionComputer {
       targetResult = await analysisDriver.getResult(contextPath);
     });
 
-    CompletionContributor contributor = DartCompletionManager();
-    CompletionRequestImpl request = CompletionRequestImpl(
+    var contributor = DartCompletionManager(
+        // dartdocDirectiveInfo: server.getDartdocDirectiveInfoFor(targetResult)
+        );
+    var request = CompletionRequestImpl(
       targetResult,
       targetOffset,
+      false,
       CompletionPerformance(),
     );
-    var suggestions = await contributor.computeSuggestions(request);
+
+    var suggestions = await request.performance.runRequestOperation(
+      (performance) async {
+        return await contributor.computeSuggestions(
+          performance,
+          request,
+          enableUriContributor: true,
+        );
+      },
+    );
 
     // Remove completions with synthetic import prefixes.
     suggestions.removeWhere((s) => s.completion.startsWith('__prefix'));

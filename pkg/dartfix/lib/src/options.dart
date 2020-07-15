@@ -17,43 +17,28 @@ const overwriteOption = 'overwrite';
 const pedanticOption = 'pedantic';
 const previewDirOption = 'preview-dir';
 const previewPortOption = 'preview-port';
-const requiredOption = 'required';
 const sdkOption = 'sdk';
 
 const _binaryName = 'dartfix';
 const _colorOption = 'color';
-const _helpOption = 'help';
 
 // options only supported by server 1.22.2 and greater
-const _previewOption = 'preview';
+const _helpOption = 'help';
 const _serverSnapshot = 'server';
-const _verboseOption = 'verbose';
 
 // options not supported yet by any server
-const _dependencies = 'migrate-dependencies';
-
-/// Command line options for `dartfix upgrade`.
-class UpgradeOptions {
-  final bool dependencies;
-  final bool preview;
-
-  UpgradeOptions._fromCommand(ArgResults results)
-      : dependencies = results[_dependencies] as bool,
-        preview = results[_previewOption] as bool;
-}
+const _verboseOption = 'verbose';
 
 /// Command line options for `dartfix`.
 class Options {
   final Context context;
   Logger logger;
 
-  UpgradeOptions upgradeOptions;
   List<String> targets;
   final String sdkPath;
   final String serverSnapshot;
 
   final bool pedanticFixes;
-  final bool requiredFixes;
   final List<String> includeFixes;
   final List<String> excludeFixes;
 
@@ -69,7 +54,6 @@ class Options {
         excludeFixes = (results[excludeFixOption] as List ?? []).cast<String>(),
         overwrite = results[overwriteOption] as bool,
         pedanticFixes = results[pedanticOption] as bool,
-        requiredFixes = results[requiredOption] as bool,
         sdkPath = results[sdkOption] as String ?? _getSdkPath(),
         serverSnapshot = results[_serverSnapshot] as String,
         showHelp = results[_helpOption] as bool || results.arguments.isEmpty,
@@ -78,8 +62,6 @@ class Options {
             ? results[_colorOption] as bool
             : null,
         verbose = results[_verboseOption] as bool;
-
-  bool get isUpgrade => upgradeOptions != null;
 
   String makeAbsoluteAndNormalize(String target) {
     if (!path.isAbsolute(target)) {
@@ -97,8 +79,6 @@ class Options {
           help: 'Exclude a specific fix.', valueHelp: 'name-of-fix')
       ..addFlag(pedanticOption,
           help: 'Apply pedantic fixes.', defaultsTo: false, negatable: false)
-      ..addFlag(requiredOption,
-          help: 'Apply required fixes.', defaultsTo: false, negatable: false)
       ..addSeparator('Modifying files:')
       ..addFlag(overwriteOption,
           abbr: 'w',
@@ -132,21 +112,6 @@ class Options {
       ..addFlag(_colorOption,
           help: 'Use ansi colors when printing messages.',
           defaultsTo: Ansi.terminalSupportsAnsi);
-
-    //
-    // Commands.
-    //
-    parser.addCommand('upgrade')
-      ..addFlag(_dependencies,
-          help: 'Upgrade dependencies automatically (not yet implemented)',
-          defaultsTo: false,
-          negatable: true,
-          hide: true)
-      ..addFlag(_previewOption,
-          help: 'Open the preview tool to view changes.',
-          defaultsTo: true,
-          negatable: true,
-          hide: true);
 
     context ??= Context();
 
@@ -190,47 +155,6 @@ class Options {
     if (!context.exists(sdkPath)) {
       logger.stderr('Invalid Dart SDK path: $sdkPath');
       context.exit(19);
-    }
-
-    var command = results.command;
-    if (command != null) {
-      if (command.name == 'upgrade') {
-        options.upgradeOptions = UpgradeOptions._fromCommand(results.command);
-        var rest = command.rest;
-        if (rest.isNotEmpty) {
-          if (rest[0] == 'sdk') {
-            if (results.wasParsed(includeFixOption)) {
-              logger.stderr('Cannot define includeFixes when using upgrade.');
-              context.exit(22);
-            }
-            if (results.wasParsed(excludeFixOption)) {
-              logger.stderr('Cannot define excludeFixes when using upgrade.');
-              context.exit(22);
-            }
-            if (results.wasParsed(pedanticOption) && options.pedanticFixes) {
-              logger.stderr('Cannot use pedanticFixes when using upgrade.');
-              context.exit(22);
-            }
-            if (results.wasParsed(requiredOption) && options.requiredFixes) {
-              logger.stderr('Cannot use requiredFixes when using upgrade.');
-              context.exit(22);
-            }
-            // TODO(jcollins-g): prevent non-nullable outside of upgrade
-            // command.
-            options.includeFixes.add('non-nullable');
-            if (rest.length > 1) {
-              options.targets = command.rest.sublist(1);
-            } else {
-              options.targets = [Directory.current.path];
-            }
-          } else {
-            logger
-                .stderr('Missing or invalid specification of what to upgrade.');
-            logger.stderr("(Currently 'sdk' is the only supported option.)");
-            context.exit(22);
-          }
-        }
-      }
     }
 
     // Check for files and/or directories to analyze.

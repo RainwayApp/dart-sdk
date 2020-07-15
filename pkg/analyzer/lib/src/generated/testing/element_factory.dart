@@ -13,6 +13,7 @@ import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/src/dart/analysis/session.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/resolver/variance.dart';
 import 'package:analyzer/src/generated/constant.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -22,23 +23,17 @@ import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:meta/meta.dart';
 import 'package:path/path.dart';
 
-/**
- * The class `ElementFactory` defines utility methods used to create elements for testing
- * purposes. The elements that are created are complete in the sense that as much of the element
- * model as can be created, given the provided information, has been created.
- */
+/// The class `ElementFactory` defines utility methods used to create elements
+/// for testing purposes. The elements that are created are complete in the
+/// sense that as much of the element model as can be created, given the
+/// provided information, has been created.
 class ElementFactory {
-  /**
-   * The element representing the class 'Object'.
-   */
+  /// The element representing the class 'Object'.
   static ClassElementImpl _objectElement;
   static InterfaceType _objectType;
 
   static ClassElementImpl get object {
-    if (_objectElement == null) {
-      _objectElement = classElement("Object", null);
-    }
-    return _objectElement;
+    return _objectElement ??= classElement("Object", null);
   }
 
   static InterfaceType get objectType {
@@ -84,11 +79,12 @@ class ElementFactory {
     return element;
   }
 
-  static classTypeAlias(String typeName, InterfaceType superclassType,
+  static ClassElementImpl classTypeAlias(
+      String typeName, InterfaceType superclassType,
       [List<String> parameterNames]) {
     ClassElementImpl element =
         classElement(typeName, superclassType, parameterNames);
-    element.mixinApplication = true;
+    element.isMixinApplication = true;
     return element;
   }
 
@@ -102,9 +98,7 @@ class ElementFactory {
         NonExistingSource(fileName, toUri(fileName), UriKind.FILE_URI);
     CompilationUnitElementImpl unit = CompilationUnitElementImpl();
     unit.source = source;
-    if (librarySource == null) {
-      librarySource = source;
-    }
+    librarySource ??= source;
     unit.librarySource = librarySource;
     return unit;
   }
@@ -153,8 +147,15 @@ class ElementFactory {
           [List<DartType> argumentTypes]) =>
       constructorElement(definingClass, name, false, argumentTypes);
 
+  @deprecated
   static EnumElementImpl enumElement(TypeProvider typeProvider, String enumName,
       [List<String> constantNames]) {
+    var typeSystem = TypeSystemImpl(
+      implicitCasts: false,
+      isNonNullableByDefault: false,
+      strictInference: false,
+      typeProvider: typeProvider,
+    );
     //
     // Build the enum.
     //
@@ -198,10 +199,12 @@ class ElementFactory {
         constantElement.type = enumType;
         Map<String, DartObjectImpl> fieldMap =
             HashMap<String, DartObjectImpl>();
-        fieldMap[indexFieldName] = DartObjectImpl(intType, IntState(i));
+        fieldMap[indexFieldName] =
+            DartObjectImpl(typeSystem, intType, IntState(i));
         fieldMap[nameFieldName] =
-            DartObjectImpl(stringType, StringState(constantName));
-        DartObjectImpl value = DartObjectImpl(enumType, GenericState(fieldMap));
+            DartObjectImpl(typeSystem, stringType, StringState(constantName));
+        DartObjectImpl value =
+            DartObjectImpl(typeSystem, enumType, GenericState(fieldMap));
         constantElement.evaluationResult = EvaluationResultImpl(value);
         fields.add(constantElement);
       }
@@ -249,11 +252,9 @@ class ElementFactory {
           Identifier name) =>
       FieldFormalParameterElementImpl(name.name, name.offset);
 
-  /**
-   * Destroy any static state retained by [ElementFactory].  This should be
-   * called from the `setUp` method of any tests that use [ElementFactory], in
-   * order to ensure that state is not shared between multiple tests.
-   */
+  /// Destroy any static state retained by [ElementFactory].  This should be
+  /// called from the `setUp` method of any tests that use [ElementFactory], in
+  /// order to ensure that state is not shared between multiple tests.
   static void flushStaticState() {
     _objectElement = null;
   }
@@ -392,8 +393,7 @@ class ElementFactory {
   static FunctionElementImpl functionElementWithParameters(String functionName,
       DartType returnType, List<ParameterElement> parameters) {
     FunctionElementImpl functionElement = FunctionElementImpl(functionName, 0);
-    functionElement.returnType =
-        returnType == null ? VoidTypeImpl.instance : returnType;
+    functionElement.returnType = returnType ?? VoidTypeImpl.instance;
     functionElement.parameters = parameters;
     return functionElement;
   }
@@ -416,7 +416,7 @@ class ElementFactory {
     field.isFinal = true;
     PropertyAccessorElementImpl getter = PropertyAccessorElementImpl(name, 0);
     getter.isSynthetic = false;
-    getter.getter = true;
+    getter.isGetter = true;
     getter.variable = field;
     getter.returnType = type;
     getter.isStatic = isStatic;
@@ -567,13 +567,13 @@ class ElementFactory {
     field.isSynthetic = true;
     field.type = type;
     PropertyAccessorElementImpl getter = PropertyAccessorElementImpl(name, -1);
-    getter.getter = true;
+    getter.isGetter = true;
     getter.variable = field;
     getter.returnType = type;
     field.getter = getter;
     ParameterElementImpl parameter = requiredParameter2("a", type);
     PropertyAccessorElementImpl setter = PropertyAccessorElementImpl(name, -1);
-    setter.setter = true;
+    setter.isSetter = true;
     setter.isSynthetic = true;
     setter.variable = field;
     setter.parameters = <ParameterElement>[parameter];
@@ -600,7 +600,6 @@ class ElementFactory {
               Keyword.CONST, AstTestFactory.typeName(type.element));
       if (type is InterfaceType) {
         ConstructorElement element = type.element.unnamedConstructor;
-        initializer.staticElement = element;
         initializer.constructorName.staticElement = element;
       }
       constant.constantInitializer = initializer;

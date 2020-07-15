@@ -51,6 +51,22 @@ constexpr bool kDartUseBackgroundCompilation = true;
   R(support_disassembler, false, bool, true, "Support the disassembler.")
 #endif
 
+// List of VM-global (i.e. non-isolate specific) flags.
+//
+// The value used for those flags at snapshot generation time needs to be the
+// same as during runtime. Currently, only boolean flags are supported.
+//
+// The syntax used is the same as that for FLAG_LIST below, as these flags are
+// automatically included in FLAG_LIST.
+#define VM_GLOBAL_FLAG_LIST(P, R, C, D)                                        \
+  P(dwarf_stack_traces_mode, bool, false,                                      \
+    "Use --[no-]dwarf-stack-traces instead.")                                  \
+  P(causal_async_stacks, bool, !USING_PRODUCT, "Improved async stacks")        \
+  P(lazy_async_stacks, bool, false, "Reconstruct async stacks from listeners") \
+  P(use_bare_instructions, bool, true, "Enable bare instructions mode.")       \
+  R(dedup_instructions, true, bool, false,                                     \
+    "Canonicalize instructions when precompiling.")
+
 // List of all flags in the VM.
 // Flags can be one of four categories:
 // * P roduct flags: Can be set in any of the deployment modes, including in
@@ -67,16 +83,19 @@ constexpr bool kDartUseBackgroundCompilation = true;
 //   C(name, precompiled_value, product_value, type, default_value, comment)
 //   D(name, type, default_value, comment)
 #define FLAG_LIST(P, R, C, D)                                                  \
-  P(experimental_unsafe_mode_use_at_your_own_risk, bool, false,                \
-    "Omit runtime strong mode type checks and disable optimizations based on " \
-    "types.")                                                                  \
+  VM_GLOBAL_FLAG_LIST(P, R, C, D)                                              \
+  DISASSEMBLE_FLAGS(P, R, C, D)                                                \
   P(abort_on_oom, bool, false,                                                 \
     "Abort if memory allocation fails - use only with --old-gen-heap-size")    \
   C(async_debugger, false, false, bool, true,                                  \
     "Debugger support async functions.")                                       \
+  P(async_igoto_threshold, int, 5,                                             \
+    "Number of continuations after which igoto-based async is used."           \
+    "-1 means never.")                                                         \
   P(background_compilation, bool, kDartUseBackgroundCompilation,               \
     "Run optimizing compilation in background")                                \
-  P(causal_async_stacks, bool, !USING_PRODUCT, "Improved async stacks")        \
+  R(code_comments, false, bool, false,                                         \
+    "Include comments into code and disassembly.")                             \
   P(collect_code, bool, false, "Attempt to GC infrequently used code.")        \
   P(collect_dynamic_function_names, bool, true,                                \
     "Collects all dynamic function names to identify unique targets")          \
@@ -87,23 +106,17 @@ constexpr bool kDartUseBackgroundCompilation = true;
     "-1 means never")                                                          \
   P(concurrent_mark, bool, true, "Concurrent mark for old generation.")        \
   P(concurrent_sweep, bool, true, "Concurrent sweep for old generation.")      \
-  R(dedup_instructions, true, bool, false,                                     \
-    "Canonicalize instructions when precompiling.")                            \
   C(deoptimize_alot, false, false, bool, false,                                \
     "Deoptimizes we are about to return to Dart code from native entries.")    \
   C(deoptimize_every, 0, 0, int, 0,                                            \
     "Deoptimize on every N stack overflow checks")                             \
   R(disable_alloc_stubs_after_gc, false, bool, false, "Stress testing flag.")  \
-  DISASSEMBLE_FLAGS(P, R, C, D)                                                \
-  R(code_comments, false, bool, false,                                         \
-    "Include comments into code and disassembly.")                             \
   R(dump_megamorphic_stats, false, bool, false,                                \
     "Dump megamorphic cache statistics")                                       \
   R(dump_symbol_stats, false, bool, false, "Dump symbol table statistics")     \
-  P(dwarf_stack_traces, bool, false,                                           \
-    "Emit DWARF line number and inlining info"                                 \
-    "in dylib snapshots and don't symbolize stack traces.")                    \
   R(enable_asserts, false, bool, false, "Enable assert statements.")           \
+  R(null_assertions, false, bool, false,                                       \
+    "Enable null assertions for parameters.")                                  \
   P(enable_kernel_expression_compilation, bool, true,                          \
     "Compile expressions with the Kernel front-end.")                          \
   P(enable_mirrors, bool, true,                                                \
@@ -124,11 +137,13 @@ constexpr bool kDartUseBackgroundCompilation = true;
   P(idle_duration_micros, int, 500 * kMicrosecondsPerMillisecond,              \
     "Allow idle tasks to run for this long.")                                  \
   P(interpret_irregexp, bool, false, "Use irregexp bytecode interpreter")      \
-  P(lazy_async_stacks, bool, false, "Reconstruct async stacks from listeners") \
   P(lazy_dispatchers, bool, true, "Generate dispatchers lazily")               \
   P(link_natives_lazily, bool, false, "Link native calls lazily")              \
   R(log_marker_tasks, false, bool, false,                                      \
     "Log debugging information for old gen GC marking tasks.")                 \
+  P(scavenger_tasks, int, 2,                                                   \
+    "The number of tasks to spawn during scavenging (0 means "                 \
+    "perform all marking on main thread).")                                    \
   P(marker_tasks, int, 2,                                                      \
     "The number of tasks to spawn during old gen GC marking (0 means "         \
     "perform all marking on main thread).")                                    \
@@ -175,18 +190,16 @@ constexpr bool kDartUseBackgroundCompilation = true;
   P(reorder_basic_blocks, bool, true, "Reorder basic blocks")                  \
   C(stress_async_stacks, false, false, bool, false,                            \
     "Stress test async stack traces")                                          \
-  P(strong_non_nullable_type_checks, bool, false,                              \
-    "Enable strong non-nullable type checking mode.")                          \
-  P(use_bare_instructions, bool, true, "Enable bare instructions mode.")       \
-  P(enable_isolate_groups, bool, kDartPrecompiledRuntime,                      \
-    "Enable isolate group support.")                                           \
+  P(use_table_dispatch, bool, true, "Enable dispatch table based calls.")      \
+  P(retain_function_objects, bool, true,                                       \
+    "Serialize function objects for all code objects even if not otherwise "   \
+    "needed in the precompiled runtime.")                                      \
+  P(enable_isolate_groups, bool, false, "Enable isolate group support.")       \
   P(show_invisible_frames, bool, false,                                        \
     "Show invisible frames in stack traces.")                                  \
   R(show_invisible_isolates, false, bool, false,                               \
     "Show invisible isolates in the vm-service.")                              \
   R(support_il_printer, false, bool, true, "Support the IL printer.")          \
-  C(support_reload, false, false, bool, true, "Support isolate reload.")       \
-  R(support_service, false, bool, true, "Support the service protocol.")       \
   D(trace_cha, bool, false, "Trace CHA operations")                            \
   R(trace_field_guards, false, bool, false, "Trace changes in field's cids.")  \
   D(trace_ic, bool, false, "Trace IC handling")                                \
@@ -203,7 +216,8 @@ constexpr bool kDartUseBackgroundCompilation = true;
   R(trace_profiler, false, bool, false, "Profiler trace")                      \
   D(trace_profiler_verbose, bool, false, "Verbose profiler trace")             \
   D(trace_runtime_calls, bool, false, "Trace runtime calls.")                  \
-  D(trace_ssa_allocator, bool, false, "Trace register allocation over SSA.")   \
+  R(trace_ssa_allocator, false, bool, false,                                   \
+    "Trace register allocation over SSA.")                                     \
   P(trace_strong_mode_types, bool, false,                                      \
     "Trace optimizations based on strong mode types.")                         \
   D(trace_type_checks, bool, false, "Trace runtime type checks.")              \
@@ -219,13 +233,14 @@ constexpr bool kDartUseBackgroundCompilation = true;
     "Use class hierarchy analysis even if it can cause deoptimization.")       \
   P(use_field_guards, bool, true, "Use field guards and track field types")    \
   C(use_osr, false, true, bool, true, "Use OSR")                               \
-  P(use_strong_mode_types, bool, true, "Optimize based on strong mode types.") \
   R(verbose_gc, false, bool, false, "Enables verbose GC.")                     \
   R(verbose_gc_hdr, 40, int, 40, "Print verbose GC header interval.")          \
   R(verify_after_gc, false, bool, false,                                       \
     "Enables heap verification after GC.")                                     \
   R(verify_before_gc, false, bool, false,                                      \
     "Enables heap verification before GC.")                                    \
+  R(verify_store_buffer, false, bool, false,                                   \
+    "Enables store buffer verification before and after scavenges.")           \
   P(enable_slow_path_sharing, bool, true, "Enable sharing of slow-path code.") \
   P(shared_slow_path_triggers_gc, bool, false,                                 \
     "TESTING: slow-path triggers a GC.")                                       \
@@ -240,18 +255,5 @@ constexpr bool kDartUseBackgroundCompilation = true;
   P(verify_entry_points, bool, false,                                          \
     "Throw API error on invalid member access throuh native API. See "         \
     "entry_point_pragma.md")
-
-// List of VM-global (i.e. non-isolate specific) flags.
-//
-// The value used for those flags at snapshot generation time needs to be the
-// same as during runtime. Currently only boolean flags are supported.
-//
-// Usage:
-//   V(name, command-line-flag-name)
-#define VM_GLOBAL_FLAG_LIST(V)                                                 \
-  V(dwarf_stack_traces, FLAG_dwarf_stack_traces)                               \
-  V(causal_async_stacks, FLAG_causal_async_stacks)                             \
-  V(lazy_async_stacks, FLAG_lazy_async_stacks)                                 \
-  V(use_bare_instructions, FLAG_use_bare_instructions)
 
 #endif  // RUNTIME_VM_FLAG_LIST_H_

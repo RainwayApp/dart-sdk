@@ -6,6 +6,7 @@ analyzer:
   errors:
     # Increase the severity of the unused_import hint.
     unused_import: warning
+    unnecessary_brace_in_string_interps: warning
     # There are many pre-existing violations; this lint may not work well with
     # the Analyzer team's style.
     omit_local_variable_types: ignore
@@ -23,7 +24,7 @@ linter:
     #
     #- always_declare_return_types # 17
     - always_require_non_null_named_parameters
-    #- annotate_overrides # 4
+    - annotate_overrides
     - avoid_null_checks_in_equality_operators
     - camel_case_extensions
     #- omit_local_variable_types # 44
@@ -36,5 +37,5 @@ linter:
     #- prefer_if_null_operators # 2
     - prefer_single_quotes
     - prefer_spread_collections
-    #- unnecessary_this # 1
+    - unnecessary_this
     - use_function_type_syntax_for_parameters

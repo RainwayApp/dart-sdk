@@ -8,10 +8,10 @@ import 'package:_fe_analyzer_shared/src/messages/codes.dart'
         Message,
         MessageCode,
         messageConstConstructorWithBody,
-        messageConstructorWithReturnType,
         messageConstructorWithTypeParameters,
         messageDirectiveAfterDeclaration,
         messageExpectedStatement,
+        messageExternalField,
         messageFieldInitializerOutsideConstructor,
         messageIllegalAssignmentToNonAssignable,
         messageInterpolationInUri,
@@ -21,6 +21,7 @@ import 'package:_fe_analyzer_shared/src/messages/codes.dart'
         messageMissingAssignableSelector,
         messageNativeClauseShouldBeAnnotation,
         messageTypedefNotFunction,
+        messageOperatorWithTypeParameters,
         templateDuplicateLabelInSwitchStatement,
         templateExpectedButGot,
         templateExpectedIdentifier,
@@ -43,9 +44,9 @@ import 'package:_fe_analyzer_shared/src/parser/stack_listener.dart'
 import 'package:_fe_analyzer_shared/src/scanner/errors.dart'
     show translateErrorToken;
 import 'package:_fe_analyzer_shared/src/scanner/scanner.dart' hide StringToken;
-import 'package:_fe_analyzer_shared/src/scanner/token_constants.dart';
 import 'package:_fe_analyzer_shared/src/scanner/token.dart'
     show SyntheticStringToken, SyntheticToken;
+import 'package:_fe_analyzer_shared/src/scanner/token_constants.dart';
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/ast_factory.dart' show AstFactory;
@@ -62,6 +63,7 @@ import 'package:analyzer/src/dart/ast/ast.dart'
         TypeParameterImpl;
 import 'package:analyzer/src/fasta/error_converter.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 const _invalidCollectionElement = _InvalidCollectionElement._();
 
@@ -77,11 +79,6 @@ class AstBuilder extends StackListener {
 
   @override
   final Uri uri;
-
-  @override
-  dynamic internalProblem(Message message, int charOffset, Uri uri) {
-    throw UnsupportedError(message.message);
-  }
 
   /// The parser that uses this listener, used to parse optional parts, e.g.
   /// `native` support.
@@ -178,6 +175,9 @@ class AstBuilder extends StackListener {
   }
 
   @override
+  void beginAsOperatorType(Token asOperator) {}
+
+  @override
   void beginCascade(Token token) {
     assert(optional('..', token) || optional('?..', token));
     debugEvent("beginCascade");
@@ -258,6 +258,9 @@ class AstBuilder extends StackListener {
   void beginIfControlFlow(Token ifToken) {
     push(ifToken);
   }
+
+  @override
+  void beginIsOperatorType(Token asOperator) {}
 
   @override
   void beginLiteralString(Token literalString) {
@@ -543,6 +546,11 @@ class AstBuilder extends StackListener {
   }
 
   @override
+  void endAsOperatorType(Token asOperator) {
+    debugEvent("AsOperatorType");
+  }
+
+  @override
   void endAssert(Token assertKeyword, Assert kind, Token leftParenthesis,
       Token comma, Token semicolon) {
     assert(optional('assert', assertKeyword));
@@ -608,11 +616,15 @@ class AstBuilder extends StackListener {
       reportErrorIfSuper(right);
       push(ast.binaryExpression(left, operatorToken, right));
       if (!enableTripleShift && operatorToken.type == TokenType.GT_GT_GT) {
+        var feature = ExperimentalFeatures.triple_shift;
         handleRecoverableError(
-            templateExperimentNotEnabled
-                .withArguments(EnableString.triple_shift),
-            operatorToken,
-            operatorToken);
+          templateExperimentNotEnabled.withArguments(
+            feature.enableString,
+            _versionAsString(ExperimentStatus.currentVersion),
+          ),
+          operatorToken,
+          operatorToken,
+        );
       }
     }
   }
@@ -672,7 +684,7 @@ class AstBuilder extends StackListener {
     FormalParameterList parameters = pop();
     TypeParameterList typeParameters = pop();
     var name = pop();
-    TypeAnnotation returnType = pop();
+    pop(); // return type
     _Modifiers modifiers = pop();
     List<Annotation> metadata = pop();
     Comment comment = _findComment(metadata, beginToken);
@@ -704,6 +716,8 @@ class AstBuilder extends StackListener {
       prefixOrName = name.prefix;
       period = name.period;
       nameOrNull = name.identifier;
+    } else if (name is _OperatorName) {
+      prefixOrName = name.name;
     } else {
       throw UnimplementedError(
           'name is an instance of ${name.runtimeType} in endClassConstructor');
@@ -721,11 +735,6 @@ class AstBuilder extends StackListener {
       Token bodyToken = body.beginToken ?? modifiers.constKeyword;
       handleRecoverableError(
           messageConstConstructorWithBody, bodyToken, bodyToken);
-    }
-    if (returnType != null) {
-      // This error is also reported in OutlineBuilder.endMethod
-      handleRecoverableError(messageConstructorWithReturnType,
-          returnType.beginToken, returnType.beginToken);
     }
     ConstructorDeclaration constructor = ast.constructorDeclaration(
         comment,
@@ -826,10 +835,22 @@ class AstBuilder extends StackListener {
   }
 
   @override
-  void endClassFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token semicolon) {
+  void endClassFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token semicolon) {
     assert(optional(';', semicolon));
     debugEvent("Fields");
+
+    if (externalToken != null) {
+      handleRecoverableError(
+          messageExternalField, externalToken, externalToken);
+    }
 
     List<VariableDeclaration> variables = popTypedList(count);
     TypeAnnotation type = pop();
@@ -892,6 +913,10 @@ class AstBuilder extends StackListener {
     } else if (name is _OperatorName) {
       operatorKeyword = name.operatorKeyword;
       nameId = name.name;
+      if (typeParameters != null) {
+        handleRecoverableError(messageOperatorWithTypeParameters,
+            typeParameters.beginToken, typeParameters.endToken);
+      }
     } else {
       throw UnimplementedError(
           'name is an instance of ${name.runtimeType} in endClassMethod');
@@ -1179,6 +1204,7 @@ class AstBuilder extends StackListener {
 
   @override
   void endExtensionFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -1192,8 +1218,8 @@ class AstBuilder extends StackListener {
       // an error at this point, but we include them in order to get navigation,
       // search, etc.
     }
-    endClassFields(staticToken, covariantToken, lateToken, varFinalOrConst,
-        count, beginToken, endToken);
+    endClassFields(externalToken, staticToken, covariantToken, lateToken,
+        varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -1469,6 +1495,12 @@ class AstBuilder extends StackListener {
       TypeAnnotation returnType = pop();
       List<Annotation> metadata = pop();
       Comment comment = _findComment(metadata, typedefKeyword);
+
+      // TODO(scheglov) https://github.com/dart-lang/sdk/issues/41023
+      if (parameters == null) {
+        throw StateError('FunctionTypeAlias without parameters.');
+      }
+
       declarations.add(ast.functionTypeAlias(comment, metadata, typedefKeyword,
           returnType, name, typeParameters, parameters, semicolon));
     } else {
@@ -1497,6 +1529,9 @@ class AstBuilder extends StackListener {
   @override
   void endFunctionTypedFormalParameter(Token nameToken, Token question) {
     debugEvent("FunctionTypedFormalParameter");
+    if (!enableNonNullable) {
+      reportErrorIfNullableType(question);
+    }
 
     FormalParameterList formalParameters = pop();
     TypeAnnotation returnType = pop();
@@ -1651,6 +1686,18 @@ class AstBuilder extends StackListener {
   }
 
   @override
+  void endInvalidYieldStatement(Token yieldKeyword, Token starToken,
+      Token endToken, MessageCode errorCode) {
+    debugEvent("InvalidYieldStatement");
+    endYieldStatement(yieldKeyword, starToken, endToken);
+  }
+
+  @override
+  void endIsOperatorType(Token asOperator) {
+    debugEvent("IsOperatorType");
+  }
+
+  @override
   void endLabeledStatement(int labelCount) {
     debugEvent("LabeledStatement");
 
@@ -1794,10 +1841,17 @@ class AstBuilder extends StackListener {
   }
 
   @override
-  void endMixinFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
-    endClassFields(staticToken, covariantToken, lateToken, varFinalOrConst,
-        count, beginToken, endToken);
+  void endMixinFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
+    endClassFields(externalToken, staticToken, covariantToken, lateToken,
+        varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -2065,6 +2119,7 @@ class AstBuilder extends StackListener {
 
   @override
   void endTopLevelFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -2074,6 +2129,11 @@ class AstBuilder extends StackListener {
       Token semicolon) {
     assert(optional(';', semicolon));
     debugEvent("TopLevelFields");
+
+    if (externalToken != null) {
+      handleRecoverableError(
+          messageExternalField, externalToken, externalToken);
+    }
 
     List<VariableDeclaration> variables = popTypedList(count);
     TypeAnnotation type = pop();
@@ -2272,10 +2332,15 @@ class AstBuilder extends StackListener {
     }
     push(ast.assignmentExpression(lhs, token, rhs));
     if (!enableTripleShift && token.type == TokenType.GT_GT_GT_EQ) {
+      var feature = ExperimentalFeatures.triple_shift;
       handleRecoverableError(
-          templateExperimentNotEnabled.withArguments(EnableString.triple_shift),
-          token,
-          token);
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(ExperimentStatus.currentVersion),
+        ),
+        token,
+        token,
+      );
     }
   }
 
@@ -2673,7 +2738,7 @@ class AstBuilder extends StackListener {
       }
     } else if (context == IdentifierContext.enumValueDeclaration) {
       List<Annotation> metadata = pop();
-      Comment comment = _findComment(null, token);
+      Comment comment = _findComment(metadata, token);
       push(ast.enumConstantDeclaration(comment, metadata, identifier));
     } else {
       push(identifier);
@@ -2705,11 +2770,16 @@ class AstBuilder extends StackListener {
   }
 
   @override
-  void handleIndexedExpression(Token leftBracket, Token rightBracket) {
+  void handleIndexedExpression(
+      Token question, Token leftBracket, Token rightBracket) {
     assert(optional('[', leftBracket) ||
         (enableNonNullable && optional('?.[', leftBracket)));
     assert(optional(']', rightBracket));
     debugEvent("IndexedExpression");
+
+    if (!enableNonNullable) {
+      reportErrorIfNullableType(question);
+    }
 
     Expression index = pop();
     Expression target = pop();
@@ -2717,13 +2787,21 @@ class AstBuilder extends StackListener {
       CascadeExpression receiver = pop();
       Token token = peek();
       push(receiver);
-      IndexExpression expression = ast.indexExpressionForCascade(
-          token, leftBracket, index, rightBracket);
+      IndexExpression expression = ast.indexExpressionForCascade2(
+          period: token,
+          question: question,
+          leftBracket: leftBracket,
+          index: index,
+          rightBracket: rightBracket);
       assert(expression.isCascaded);
       push(expression);
     } else {
-      push(ast.indexExpressionForTarget(
-          target, leftBracket, index, rightBracket));
+      push(ast.indexExpressionForTarget2(
+          target: target,
+          question: question,
+          leftBracket: leftBracket,
+          index: index,
+          rightBracket: rightBracket));
     }
   }
 
@@ -3287,17 +3365,21 @@ class AstBuilder extends StackListener {
       push(ast.spreadElement(
           spreadOperator: spreadToken, expression: expression));
     } else {
+      var feature = Feature.spread_collections;
       handleRecoverableError(
-          templateExperimentNotEnabled
-              .withArguments(EnableString.spread_collections),
-          spreadToken,
-          spreadToken);
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(feature.firstSupportedVersion),
+        ),
+        spreadToken,
+        spreadToken,
+      );
       push(_invalidCollectionElement);
     }
   }
 
   @override
-  void handleStringJuxtaposition(int literalCount) {
+  void handleStringJuxtaposition(Token startToken, int literalCount) {
     debugEvent("StringJuxtaposition");
 
     push(ast.adjacentStrings(popTypedList(literalCount)));
@@ -3419,6 +3501,24 @@ class AstBuilder extends StackListener {
     handleType(voidKeyword, null);
   }
 
+  @override
+  void handleVoidKeywordWithTypeArguments(Token voidKeyword) {
+    assert(optional('void', voidKeyword));
+    debugEvent("VoidKeywordWithTypeArguments");
+    TypeArgumentList arguments = pop();
+
+    // TODO(paulberry): is this sufficient, or do we need to hook the "void"
+    // keyword up to an element?
+    handleIdentifier(voidKeyword, IdentifierContext.typeReference);
+    push(arguments);
+    handleType(voidKeyword, null);
+  }
+
+  @override
+  dynamic internalProblem(Message message, int charOffset, Uri uri) {
+    throw UnsupportedError(message.message);
+  }
+
   /// Return `true` if [token] is either `null` or is the symbol or keyword
   /// [value].
   bool optionalOrNull(String value, Token token) {
@@ -3488,11 +3588,15 @@ class AstBuilder extends StackListener {
         body: entry as CollectionElement,
       ));
     } else {
+      var feature = Feature.control_flow_collections;
       handleRecoverableError(
-          templateExperimentNotEnabled
-              .withArguments(EnableString.control_flow_collections),
-          forToken,
-          forToken);
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(feature.firstSupportedVersion),
+        ),
+        forToken,
+        forToken,
+      );
       push(_invalidCollectionElement);
     }
   }
@@ -3517,12 +3621,31 @@ class AstBuilder extends StackListener {
         elseElement: elseElement,
       ));
     } else {
+      var feature = ExperimentalFeatures.control_flow_collections;
       handleRecoverableError(
-          templateExperimentNotEnabled
-              .withArguments(EnableString.control_flow_collections),
-          ifToken,
-          ifToken);
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(feature.firstSupportedVersion),
+        ),
+        ifToken,
+        ifToken,
+      );
       push(_invalidCollectionElement);
+    }
+  }
+
+  void reportErrorIfNullableType(Token questionMark) {
+    if (questionMark != null) {
+      assert(optional('?', questionMark));
+      var feature = ExperimentalFeatures.non_nullable;
+      handleRecoverableError(
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(ExperimentStatus.currentVersion),
+        ),
+        questionMark,
+        questionMark,
+      );
     }
   }
 
@@ -3532,6 +3655,32 @@ class AstBuilder extends StackListener {
       handleRecoverableError(messageMissingAssignableSelector,
           expression.beginToken, expression.endToken);
     }
+  }
+
+  void reportNonNullableModifierError(Token modifierToken) {
+    if (modifierToken != null) {
+      var feature = ExperimentalFeatures.non_nullable;
+      handleRecoverableError(
+        templateExperimentNotEnabled.withArguments(
+          feature.enableString,
+          _versionAsString(ExperimentStatus.currentVersion),
+        ),
+        modifierToken,
+        modifierToken,
+      );
+    }
+  }
+
+  void reportNonNullAssertExpressionNotEnabled(Token bang) {
+    var feature = ExperimentalFeatures.non_nullable;
+    handleRecoverableError(
+      templateExperimentNotEnabled.withArguments(
+        feature.enableString,
+        _versionAsString(ExperimentStatus.currentVersion),
+      ),
+      bang,
+      bang,
+    );
   }
 
   Comment _findComment(List<Annotation> metadata, Token tokenAfterMetadata) {
@@ -3603,6 +3752,10 @@ class AstBuilder extends StackListener {
       return ParameterKind.REQUIRED;
     }
   }
+
+  static String _versionAsString(Version version) {
+    return '${version.major}.${version.minor}.${version.patch}';
+  }
 }
 
 class _ConstructorNameWithInvalidTypeArgs {
@@ -3622,7 +3775,7 @@ class _InvalidCollectionElement implements CollectionElement {
   const _InvalidCollectionElement._();
 
   @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 /// Data structure placed on the stack to represent a non-empty sequence

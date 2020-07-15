@@ -2,11 +2,12 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/error/hint_codes.dart';
 import 'package:analyzer/src/dart/error/syntactic_errors.dart';
 import 'package:analyzer/src/generated/engine.dart';
-import 'package:analyzer/src/generated/type_system.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -23,8 +24,10 @@ main() {
 class NonNullableTest extends DriverResolutionTest {
   // TODO(danrubel): Implement a more fine grained way to specify non-nullable.
   @override
-  AnalysisOptionsImpl get analysisOptions =>
-      AnalysisOptionsImpl()..enabledExperiments = [EnableString.non_nullable];
+  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.non_nullable],
+    );
 
   @override
   bool get typeToStringWithNullability => true;
@@ -150,27 +153,6 @@ main() {
     assertType(findNode.methodInvocation('c?.x()'), 'bool?');
   }
 
-  test_local_nullCoalesce_nullableInt_int() async {
-    await assertNoErrorsInCode(r'''
-main() {
-  int? x;
-  int y = 0;
-  x ?? y;
-}
-''');
-    assertType(findNode.binary('x ?? y'), 'int');
-  }
-
-  test_local_nullCoalesce_nullableInt_nullableInt() async {
-    await assertNoErrorsInCode(r'''
-main() {
-  int? x;
-  x ?? x;
-}
-''');
-    assertType(findNode.binary('x ?? x'), 'int?');
-  }
-
   test_local_nullCoalesceAssign_nullableInt_int() async {
     await assertNoErrorsInCode(r'''
 main() {
@@ -274,45 +256,6 @@ mixin X2 implements A {} // 2
     assertType(findNode.typeName('A {} // 2'), 'A');
   }
 
-  test_nonNullPromotion_typeParameter() async {
-    await assertErrorsInCode(r'''
-class C<T> {
-  void foo(T? t) {
-    T temp = t!;
-  }
-  T bar(T? t) {
-    return t!;
-  }
-}
-''', [
-      error(HintCode.UNUSED_LOCAL_VARIABLE, 38, 4),
-    ]);
-  }
-
-  test_null_assertion_operator_changes_null_to_never() async {
-    await assertErrorsInCode('''
-main() {
-  Null x = null;
-  x!;
-}
-''', [
-      error(HintCode.UNUSED_LOCAL_VARIABLE, 16, 1),
-    ]);
-    assertType(findNode.postfix('x!'), 'Never');
-  }
-
-  test_null_assertion_operator_removes_nullability() async {
-    await assertErrorsInCode('''
-main() {
-  Object? x = null;
-  x!;
-}
-''', [
-      error(HintCode.UNUSED_LOCAL_VARIABLE, 19, 1),
-    ]);
-    assertType(findNode.postfix('x!'), 'Object');
-  }
-
   test_parameter_functionTyped() async {
     await assertNoErrorsInCode('''
 void f1(void p1()) {}
@@ -413,24 +356,6 @@ main(C? c) {
 ''');
 
     assertType(findNode.methodInvocation('c?.x()'), 'bool?');
-  }
-
-  test_parameter_nullCoalesce_nullableInt_int() async {
-    await assertNoErrorsInCode(r'''
-main(int? x, int y) {
-  x ?? y;
-}
-''');
-    assertType(findNode.binary('x ?? y'), 'int');
-  }
-
-  test_parameter_nullCoalesce_nullableInt_nullableInt() async {
-    await assertNoErrorsInCode(r'''
-main(int? x) {
-  x ?? x;
-}
-''');
-    assertType(findNode.binary('x ?? x'), 'int?');
   }
 
   test_parameter_nullCoalesceAssign_nullableInt_int() async {

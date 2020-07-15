@@ -259,11 +259,11 @@ class Configuration {
         isMinified: boolOption("minified"),
         useAnalyzerCfe: boolOption("use-cfe"),
         useAnalyzerFastaParser: boolOption("analyzer-use-fasta-parser"),
-        useBlobs: boolOption("use-blobs"),
         useElf: boolOption("use-elf"),
         useHotReload: boolOption("hot-reload"),
         useHotReloadRollback: boolOption("hot-reload-rollback"),
-        useSdk: boolOption("use-sdk"));
+        useSdk: boolOption("use-sdk"),
+        useQemu: boolOption("use-qemu"));
 
     // Should have consumed the whole map.
     if (optionsCopy.isNotEmpty) {
@@ -329,14 +329,14 @@ class Configuration {
   final bool useAnalyzerCfe;
   final bool useAnalyzerFastaParser;
 
-  // TODO(rnystrom): What is this?
-  final bool useBlobs;
   final bool useElf;
 
   final bool useHotReload;
   final bool useHotReloadRollback;
 
   final bool useSdk;
+
+  final bool useQemu;
 
   Configuration(this.name, this.architecture, this.compiler, this.mode,
       this.runtime, this.system,
@@ -356,11 +356,11 @@ class Configuration {
       bool isMinified,
       bool useAnalyzerCfe,
       bool useAnalyzerFastaParser,
-      bool useBlobs,
       bool useElf,
       bool useHotReload,
       bool useHotReloadRollback,
-      bool useSdk})
+      bool useSdk,
+      bool useQemu})
       : nnbdMode = nnbdMode ?? NnbdMode.legacy,
         sanitizer = sanitizer ?? Sanitizer.none,
         babel = babel ?? "",
@@ -377,11 +377,11 @@ class Configuration {
         isMinified = isMinified ?? false,
         useAnalyzerCfe = useAnalyzerCfe ?? false,
         useAnalyzerFastaParser = useAnalyzerFastaParser ?? false,
-        useBlobs = useBlobs ?? false,
         useElf = useElf ?? false,
         useHotReload = useHotReload ?? false,
         useHotReloadRollback = useHotReloadRollback ?? false,
-        useSdk = useSdk ?? false;
+        useSdk = useSdk ?? false,
+        useQemu = useQemu ?? false;
 
   /// Returns `true` if this configuration's options all have the same values
   /// as [other].
@@ -407,11 +407,11 @@ class Configuration {
       isMinified == other.isMinified &&
       useAnalyzerCfe == other.useAnalyzerCfe &&
       useAnalyzerFastaParser == other.useAnalyzerFastaParser &&
-      useBlobs == other.useBlobs &&
       useElf == other.useElf &&
       useHotReload == other.useHotReload &&
       useHotReloadRollback == other.useHotReloadRollback &&
-      useSdk == other.useSdk;
+      useSdk == other.useSdk &&
+      useQemu == other.useQemu;
 
   /// Whether [a] and [b] contain the same strings, regardless of order.
   bool _listsEqual(List<String> a, List<String> b) {
@@ -456,11 +456,11 @@ class Configuration {
         isMinified,
         useAnalyzerCfe,
         useAnalyzerFastaParser,
-        useBlobs,
         useElf,
         useHotReload,
         useHotReloadRollback,
-        useSdk
+        useSdk,
+        useQemu
       ]);
 
   String toString() {
@@ -496,10 +496,10 @@ class Configuration {
     if (isMinified) fields.add("minified");
     if (useAnalyzerCfe) fields.add("use-cfe");
     if (useAnalyzerFastaParser) fields.add("analyzer-use-fasta-parser");
-    if (useBlobs) fields.add("use-blobs");
     if (useHotReload) fields.add("hot-reload");
     if (useHotReloadRollback) fields.add("hot-reload-rollback");
     if (useSdk) fields.add("use-sdk");
+    if (useQemu) fields.add("use-qemu");
 
     buffer.write(fields.join(", "));
     buffer.write(")");
@@ -553,12 +553,12 @@ class Configuration {
     boolField("use-cfe", useAnalyzerCfe, other.useAnalyzerCfe);
     boolField("analyzer-use-fasta-parser", useAnalyzerFastaParser,
         other.useAnalyzerFastaParser);
-    boolField("use-blobs", useBlobs, other.useBlobs);
     boolField("host-checked", isHostChecked, other.isHostChecked);
     boolField("hot-reload", useHotReload, other.useHotReload);
     boolField("hot-reload-rollback", useHotReloadRollback,
         other.useHotReloadRollback);
     boolField("use-sdk", useSdk, other.useSdk);
+    boolField("use-qemu", useQemu, other.useQemu);
 
     buffer.write(fields.join("\n   "));
     buffer.write("\n");

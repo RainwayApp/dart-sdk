@@ -23,8 +23,16 @@ class FindNode {
     return _node(search, (n) => true);
   }
 
+  AsExpression as_(String search) {
+    return _node(search, (n) => n is AsExpression);
+  }
+
   AssignmentExpression assignment(String search) {
     return _node(search, (n) => n is AssignmentExpression);
+  }
+
+  AwaitExpression awaitExpression(String search) {
+    return _node(search, (n) => n is AwaitExpression);
   }
 
   BinaryExpression binary(String search) {
@@ -45,6 +53,10 @@ class FindNode {
 
   CascadeExpression cascade(String search) {
     return _node(search, (n) => n is CascadeExpression);
+  }
+
+  CatchClause catchClause(String search) {
+    return _node(search, (n) => n is CatchClause);
   }
 
   ClassDeclaration classDeclaration(String search) {
@@ -145,6 +157,10 @@ class FindNode {
 
   GenericFunctionType genericFunctionType(String search) {
     return _node(search, (n) => n is GenericFunctionType);
+  }
+
+  IfElement ifElement(String search) {
+    return _node(search, (n) => n is IfElement);
   }
 
   ImportDirective import(String search) {
@@ -290,6 +306,10 @@ class FindNode {
 
   TypeAnnotation typeAnnotation(String search) {
     return _node(search, (n) => n is TypeAnnotation);
+  }
+
+  TypedLiteral typedLiteral(String search) {
+    return _node(search, (n) => n is TypedLiteral);
   }
 
   TypeName typeName(String search) {

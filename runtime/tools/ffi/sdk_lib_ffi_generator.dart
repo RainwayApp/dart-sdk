@@ -170,15 +170,13 @@ void generatePublicExtension(StringBuffer buffer, Config config) {
 $alignment  external $typedListType asTypedList(int length);
 """;
 
-  // TODO(38892): Stop generating documentation on setter.
   buffer.write("""
 /// Extension on [Pointer] specialized for the type argument [$nativeType].
 extension ${nativeType}Pointer on Pointer<$nativeType> {
   /// The $property at [address].
 $platform$truncate$alignment  external $dartType get value;
 
-  /// The $property at [address].
-$platform$truncate$alignment  external void set value($dartType value);
+  external void set value($dartType value);
 
   /// The $property at `address + ${sizeTimes}index`.
 $platform$truncate$alignment  external $dartType operator [](int index);
@@ -196,6 +194,10 @@ void generatePatchExtension(StringBuffer buffer, Config config) {
   final nativeType = config.nativeType;
   final dartType = config.dartType;
   final typedListType = config.typedListType;
+  final elementSize = config.elementSize;
+
+  final sizeTimes =
+      elementSize != 1 ? '${sizeOfIntPtrSize(elementSize)} * ' : '';
 
   final asTypedList = typedListType == kDoNotEmit
       ? ""
@@ -213,10 +215,10 @@ extension ${nativeType}Pointer on Pointer<$nativeType> {
   set value($dartType value) => _store$nativeType(this, 0, value);
 
   @patch
-  $dartType operator [](int index) => _load$nativeType(this, index);
+  $dartType operator [](int index) => _load$nativeType(this, ${sizeTimes}index);
 
   @patch
-  operator []=(int index, $dartType value) => _store$nativeType(this, index, value);
+  operator []=(int index, $dartType value) => _store$nativeType(this, ${sizeTimes}index, value);
 
 $asTypedList
 }
@@ -256,6 +258,15 @@ String sizeOfBits(int size) {
       return "32 or 64";
     default:
       return "${size * 8}";
+  }
+}
+
+String sizeOfIntPtrSize(int size) {
+  switch (size) {
+    case kIntPtrElementSize:
+      return "_intPtrSize";
+    default:
+      return "$size";
   }
 }
 

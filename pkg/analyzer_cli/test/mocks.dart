@@ -65,7 +65,7 @@ class MockCommandLineOptions implements CommandLineOptions {
   bool color = false;
 
   @override
-  noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class MockErrorCode implements ErrorCode {
@@ -90,6 +90,9 @@ class MockErrorCode implements ErrorCode {
 
   @override
   bool get hasPublishedDocs => false;
+
+  @override
+  bool get isIgnorable => true;
 
   @override
   bool get isUnresolvedIdentifier => false;

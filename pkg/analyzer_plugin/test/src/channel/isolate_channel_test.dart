@@ -38,7 +38,7 @@ class PluginIsolateChannelTest {
 
   @failingTest
   Future<void> test_close() async {
-    bool done = false;
+    var done = false;
     channel.listen((Request request) {}, onDone: () {
       done = true;
     });
@@ -50,7 +50,7 @@ class PluginIsolateChannelTest {
   }
 
   Future<void> test_listen() async {
-    Request sentRequest = PluginShutdownParams().toRequest('5');
+    var sentRequest = PluginShutdownParams().toRequest('5');
     Request receivedRequest;
     channel.listen((Request request) {
       receivedRequest = request;
@@ -61,25 +61,22 @@ class PluginIsolateChannelTest {
   }
 
   void test_sendNotification() {
-    Notification notification =
-        PluginErrorParams(false, '', '').toNotification();
+    var notification = PluginErrorParams(false, '', '').toNotification();
     channel.sendNotification(notification);
     expect(sendPort.sentMessages, hasLength(1));
     expect(sendPort.sentMessages[0], notification.toJson());
   }
 
   void test_sendResponse() {
-    Response response = PluginShutdownResult().toResponse('3', 1);
+    var response = PluginShutdownResult().toResponse('3', 1);
     channel.sendResponse(response);
     expect(sendPort.sentMessages, hasLength(1));
     expect(sendPort.sentMessages[0], response.toJson());
   }
 
-  /**
-   * Returns a [Future] that completes after pumping the event queue [times]
-   * times. By default, this should pump the event queue enough times to allow
-   * any code to run, as long as it's not waiting on some external event.
-   */
+  /// Returns a [Future] that completes after pumping the event queue [times]
+  /// times. By default, this should pump the event queue enough times to allow
+  /// any code to run, as long as it's not waiting on some external event.
   Future<void> _pumpEventQueue([int times = 5000]) {
     if (times == 0) return Future.value();
     // We use a delayed future to allow microtask events to finish. The
@@ -90,18 +87,12 @@ class PluginIsolateChannelTest {
   }
 }
 
-/**
- * A send port used in tests.
- */
+/// A send port used in tests.
 class TestSendPort implements SendPort {
-  /**
-   * The receive port used to receive messages from the server.
-   */
+  /// The receive port used to receive messages from the server.
   SendPort receivePort;
 
-  /**
-   * The messages sent to the server.
-   */
+  /// The messages sent to the server.
   List<Object> sentMessages = <Object>[];
 
   @override

@@ -42,11 +42,8 @@ abstract class IrToElementMap {
   /// Returns the [FunctionType] of the [node].
   FunctionType getFunctionType(ir.FunctionNode node);
 
-  /// Returns the [TypedefType] corresponding to raw type of the typedef [node].
-  TypedefType getTypedefType(ir.Typedef node);
-
   /// Return the [InterfaceType] corresponding to the [cls] with the given
-  /// [typeArguments].
+  /// [typeArguments] and [nullability].
   InterfaceType createInterfaceType(
       ir.Class cls, List<ir.DartType> typeArguments);
 

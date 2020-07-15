@@ -28,14 +28,21 @@ class ParseBase with ResourceProviderMixin {
 
     var reader = CharSequenceReader(content);
     var scanner = Scanner(source, reader, errorListener)
-      ..configureFeatures(featureSet);
+      ..configureFeatures(
+        featureSetForOverriding: featureSet,
+        featureSet: featureSet,
+      );
 
     var token = scanner.tokenize();
     featureSet = scanner.featureSet;
 
     var useFasta = analysisOptions.useFastaParser;
-    var parser = Parser(source, errorListener,
-        featureSet: featureSet, useFasta: useFasta);
+    var parser = Parser(
+      source,
+      errorListener,
+      featureSet: featureSet,
+      useFasta: useFasta,
+    );
     parser.enableOptionalNewAndConst = true;
 
     var unit = parser.parseCompilationUnit(token);

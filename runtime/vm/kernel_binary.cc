@@ -3,16 +3,19 @@
 // BSD-style license that can be found in the LICENSE file.
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
+#include "vm/kernel_binary.h"
+
 #include <memory>
 
-#include "vm/kernel_binary.h"
 #include "platform/globals.h"
 #include "vm/compiler/frontend/kernel_to_il.h"
 #include "vm/dart_api_impl.h"
 #include "vm/flags.h"
 #include "vm/growable_array.h"
 #include "vm/kernel.h"
+#include "vm/object.h"
 #include "vm/os.h"
+#include "vm/version.h"
 
 namespace dart {
 
@@ -31,7 +34,7 @@ const char* Reader::TagName(Tag tag) {
   return "Unknown";
 }
 
-RawTypedData* Reader::ReadLineStartsData(intptr_t line_start_count) {
+TypedDataPtr Reader::ReadLineStartsData(intptr_t line_start_count) {
   TypedData& line_starts_data = TypedData::Handle(
       TypedData::New(kTypedDataInt8ArrayCid, line_start_count, Heap::kOld));
 
@@ -82,21 +85,26 @@ const char* kKernelInvalidBinaryFormatVersion =
     "Invalid kernel binary format version";
 const char* kKernelInvalidSizeIndicated =
     "Invalid kernel binary: Indicated size is invalid";
+const char* kKernelInvalidSdkHash = "Invalid SDK hash";
+
+const int kSdkHashSizeInBytes = 10;
+const char* kSdkHashNull = "0000000000";
 
 std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
-  if (reader->size() < 60) {
-    // A kernel file currently contains at least the following:
+  if (reader->size() < 70) {
+    // A kernel file (v43) currently contains at least the following:
     //   * Magic number (32)
     //   * Kernel version (32)
+    //   * SDK Hash (10 * 8)
     //   * List of problems (8)
     //   * Length of source map (32)
     //   * Length of canonical name table (8)
     //   * Metadata length (32)
     //   * Length of string table (8)
     //   * Length of constant table (8)
-    //   * Component index (10 * 32)
+    //   * Component index (11 * 32)
     //
-    // so is at least 60 bytes.
+    // so is at least 74 bytes.
     // (Technically it will also contain an empty entry in both source map and
     // string table, taking up another 8 bytes.)
     if (error != nullptr) {
@@ -122,6 +130,18 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
     return nullptr;
   }
 
+  uint8_t sdkHash[kSdkHashSizeInBytes + 1];
+  reader->ReadBytes(sdkHash, kSdkHashSizeInBytes);
+  sdkHash[kSdkHashSizeInBytes] = 0;  // Null terminate.
+  if (strcmp(Version::SdkHash(), kSdkHashNull) != 0 &&
+      strcmp((const char*)sdkHash, kSdkHashNull) != 0 &&
+      strcmp((const char*)sdkHash, Version::SdkHash()) != 0) {
+    if (error != nullptr) {
+      *error = kKernelInvalidSdkHash;
+    }
+    return nullptr;
+  }
+
   std::unique_ptr<Program> program(new Program());
   program->binary_version_ = formatVersion;
   program->typed_data_ = reader->typed_data();
@@ -135,7 +155,7 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
   while (reader->offset() > 0) {
     intptr_t size = reader->ReadUInt32();
     intptr_t start = reader->offset() - size;
-    if (start < 0) {
+    if (start < 0 || size <= 0) {
       if (error != nullptr) {
         *error = kKernelInvalidSizeIndicated;
       }
@@ -150,10 +170,12 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
   // Read backwards at the end.
   program->library_count_ = reader->ReadFromIndexNoReset(
       reader->size_, LibraryCountFieldCountFromEnd, 1, 0);
+  intptr_t count_from_first_library_offset =
+      SourceTableFieldCountFromFirstLibraryOffset41Plus;
   program->source_table_offset_ = reader->ReadFromIndexNoReset(
       reader->size_,
       LibraryCountFieldCountFromEnd + 1 + program->library_count_ + 1 +
-          SourceTableFieldCountFromFirstLibraryOffset,
+          count_from_first_library_offset,
       1, 0);
   program->name_table_offset_ = reader->ReadUInt32();
   program->metadata_payloads_offset_ = reader->ReadUInt32();
@@ -162,6 +184,9 @@ std::unique_ptr<Program> Program::ReadFrom(Reader* reader, const char** error) {
   program->constant_table_offset_ = reader->ReadUInt32();
 
   program->main_method_reference_ = NameIndex(reader->ReadUInt32() - 1);
+  NNBDCompiledMode compilation_mode =
+      static_cast<NNBDCompiledMode>(reader->ReadUInt32());
+  program->compilation_mode_ = compilation_mode;
 
   return program;
 }
@@ -181,29 +206,16 @@ std::unique_ptr<Program> Program::ReadFromFile(
   const String& uri = String::Handle(String::New(script_uri));
   const Object& ret = Object::Handle(
       isolate->CallTagHandler(Dart_kKernelTag, Object::null_object(), uri));
-  Api::Scope api_scope(thread);
-  Dart_Handle retval = Api::NewHandle(thread, ret.raw());
-  {
-    TransitionVMToNative transition(thread);
-    if (!Dart_IsError(retval)) {
-      Dart_TypedData_Type data_type;
-      uint8_t* data;
-      ASSERT(Dart_IsTypedData(retval));
-
-      uint8_t* kernel_buffer;
-      intptr_t kernel_buffer_size;
-      Dart_Handle val = Dart_TypedDataAcquireData(
-          retval, &data_type, reinterpret_cast<void**>(&data),
-          &kernel_buffer_size);
-      ASSERT(!Dart_IsError(val));
-      ASSERT(data_type == Dart_TypedData_kUint8);
-      kernel_buffer = reinterpret_cast<uint8_t*>(malloc(kernel_buffer_size));
-      memmove(kernel_buffer, data, kernel_buffer_size);
-      Dart_TypedDataReleaseData(retval);
-
-      kernel_program = kernel::Program::ReadFromBuffer(
-          kernel_buffer, kernel_buffer_size, error);
-    } else if (error != nullptr) {
+  if (ret.IsExternalTypedData()) {
+    const auto& typed_data = ExternalTypedData::Handle(
+        thread->zone(), ExternalTypedData::RawCast(ret.raw()));
+    kernel_program = kernel::Program::ReadFromTypedData(typed_data);
+    return kernel_program;
+  } else if (error != nullptr) {
+    Api::Scope api_scope(thread);
+    Dart_Handle retval = Api::NewHandle(thread, ret.raw());
+    {
+      TransitionVMToNative transition(thread);
       *error = Dart_GetError(retval);
     }
   }

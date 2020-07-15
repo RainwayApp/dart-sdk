@@ -20,7 +20,6 @@ main(List<String> args) async {
       'data'));
   await runTests<String>(dataDir,
       args: args,
-      supportedMarkers: cfeAnalyzerMarkers,
       createUriForFileName: createUriForFileName,
       onFailure: onFailure,
       runTest: runTestFor(
@@ -36,7 +35,10 @@ class DefiniteAssignmentDataComputer extends DataComputer<String> {
   /// Function that computes a data mapping for [member].
   ///
   /// Fills [actualMap] with the data.
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<String>> actualMap,
       {bool verbose}) {
     MemberBuilderImpl memberBuilder =
@@ -44,6 +46,11 @@ class DefiniteAssignmentDataComputer extends DataComputer<String> {
     member.accept(new DefiniteAssignmentDataExtractor(compilerResult, actualMap,
         memberBuilder.dataForTesting.inferenceData.flowAnalysisResult));
   }
+
+  /// Errors are supported for testing erroneous code. The reported errors are
+  /// not tested.
+  @override
+  bool get supportsErrors => true;
 }
 
 class DefiniteAssignmentDataExtractor extends CfeDataExtractor<String> {
@@ -53,14 +60,14 @@ class DefiniteAssignmentDataExtractor extends CfeDataExtractor<String> {
   DefiniteAssignmentDataExtractor(InternalCompilerResult compilerResult,
       Map<Id, ActualData<String>> actualMap, this._flowResult)
       : _sourceLoaderDataForTesting =
-      compilerResult.kernelTargetForTesting.loader.dataForTesting,
+            compilerResult.kernelTargetForTesting.loader.dataForTesting,
         super(compilerResult, actualMap);
 
   @override
   String computeNodeValue(Id id, TreeNode node) {
     if (node is VariableGet) {
       TreeNode alias = _sourceLoaderDataForTesting.toOriginal(node);
-      if (_flowResult.unassignedNodes.contains(alias)) {
+      if (_flowResult.potentiallyUnassignedNodes.contains(alias)) {
         return 'unassigned';
       }
     }

@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 #include "vm/compiler/frontend/flow_graph_builder.h"
 
 #include "vm/compiler/backend/branch_optimizer.h"
@@ -275,9 +273,9 @@ void InlineExitCollector::ReplaceCall(BlockEntryInstr* callee_entry) {
     call_->previous()->AppendInstruction(branch);
     call_block->set_last_instruction(branch);
 
-    // Replace uses of the return value with null to maintain valid
-    // SSA form - even though the rest of the caller is unreachable.
-    call_->ReplaceUsesWith(caller_graph_->constant_null());
+    // Replace uses of the return value with sentinel constant to maintain
+    // valid SSA form - even though the rest of the caller is unreachable.
+    call_->ReplaceUsesWith(caller_graph_->GetConstant(Object::sentinel()));
 
     // Update dominator tree.
     for (intptr_t i = 0, n = callee_entry->dominated_blocks().length(); i < n;
@@ -380,7 +378,9 @@ bool SimpleInstanceOfType(const AbstractType& type) {
     // type arguments, then we can still use the _simpleInstanceOf
     // implementation (see also runtime/lib/object.cc:Object_SimpleInstanceOf).
     const auto& rare_type = AbstractType::Handle(type_class.RareType());
-    return rare_type.IsEquivalent(type, /* syntactically = */ true);
+    // TODO(regis): Revisit the usage of TypeEquality::kSyntactical when
+    // implementing strong mode.
+    return rare_type.IsEquivalent(type, TypeEquality::kSyntactical);
   }
 
   // Finally a simple class for instance of checking.
@@ -388,5 +388,3 @@ bool SimpleInstanceOfType(const AbstractType& type) {
 }
 
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

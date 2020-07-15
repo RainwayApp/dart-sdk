@@ -19,8 +19,8 @@
 #include "vm/base_isolate.h"
 #include "vm/class_table.h"
 #include "vm/constants_kbc.h"
+#include "vm/dispatch_table.h"
 #include "vm/exceptions.h"
-#include "vm/ffi_callback_trampolines.h"
 #include "vm/field_table.h"
 #include "vm/fixed_cache.h"
 #include "vm/growable_array.h"
@@ -33,9 +33,14 @@
 #include "vm/random.h"
 #include "vm/tags.h"
 #include "vm/thread.h"
+#include "vm/thread_pool.h"
 #include "vm/thread_stack_resource.h"
 #include "vm/token_position.h"
 #include "vm/virtual_memory.h"
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/ffi_callback_trampolines.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
 
@@ -54,6 +59,7 @@ class ICData;
 #if !defined(DART_PRECOMPILED_RUNTIME)
 class Interpreter;
 #endif
+class IsolateObjectStore;
 class IsolateProfilerData;
 class IsolateReloadContext;
 class IsolateSpawnState;
@@ -66,21 +72,10 @@ class Object;
 class ObjectIdRing;
 class ObjectPointerVisitor;
 class ObjectStore;
-class RawInstance;
-class RawArray;
-class RawContext;
-class RawDouble;
-class RawError;
-class RawField;
-class RawGrowableObjectArray;
-class RawMint;
-class RawObject;
-class RawInteger;
-class RawFloat32x4;
-class RawInt32x4;
-class RawUserTag;
+class PersistentHandle;
 class ReversePcLookupCache;
 class RwLock;
+class SafepointRwLock;
 class SafepointHandler;
 class SampleBuffer;
 class SendPort;
@@ -94,6 +89,17 @@ class StubCode;
 class ThreadRegistry;
 class UserTag;
 class WeakTable;
+
+/*
+ * Possible values of null safety flag
+  0 - not specified
+  1 - weak mode
+  2 - strong mode)
+*/
+constexpr int kNullSafetyOptionUnspecified = 0;
+constexpr int kNullSafetyOptionWeak = 1;
+constexpr int kNullSafetyOptionStrong = 2;
+extern int FLAG_sound_null_safety;
 
 class PendingLazyDeopt {
  public:
@@ -158,10 +164,7 @@ typedef FixedCache<intptr_t, CatchEntryMovesRefPtr, 16> CatchEntryMovesCache;
   V(NONPRODUCT, use_field_guards, UseFieldGuards, use_field_guards,            \
     FLAG_use_field_guards)                                                     \
   V(NONPRODUCT, use_osr, UseOsr, use_osr, FLAG_use_osr)                        \
-  V(PRECOMPILER, obfuscate, Obfuscate, obfuscate, false_by_default)            \
-  V(PRODUCT, unsafe_trust_strong_mode_types, UnsafeTrustStrongModeTypes,       \
-    unsafe_trust_strong_mode_types,                                            \
-    FLAG_experimental_unsafe_mode_use_at_your_own_risk)
+  V(PRECOMPILER, obfuscate, Obfuscate, obfuscate, false_by_default)
 
 // Represents the information used for spawning the first isolate within an
 // isolate group.
@@ -189,15 +192,20 @@ class IsolateGroupSource {
                      intptr_t kernel_buffer_size,
                      Dart_IsolateFlags flags)
       : script_uri(script_uri),
-        name(strdup(name)),
+        name(Utils::StrDup(name)),
         snapshot_data(snapshot_data),
         snapshot_instructions(snapshot_instructions),
         kernel_buffer(kernel_buffer),
         kernel_buffer_size(kernel_buffer_size),
         flags(flags),
         script_kernel_buffer(nullptr),
-        script_kernel_size(-1) {}
+        script_kernel_size(-1),
+        loaded_blobs_(nullptr),
+        num_blob_loads_(0) {}
   ~IsolateGroupSource() { free(name); }
+
+  void add_loaded_blob(Zone* zone_,
+                       const ExternalTypedData& external_typed_data);
 
   // The arguments used for spawning in
   // `Dart_CreateIsolateGroupFromKernel` / `Dart_CreateIsolate`.
@@ -212,6 +220,15 @@ class IsolateGroupSource {
   // The kernel buffer used in `Dart_LoadScriptFromKernel`.
   const uint8_t* script_kernel_buffer;
   intptr_t script_kernel_size;
+
+  // During AppJit training we perform a permutation of the class ids before
+  // invoking the "main" script.
+  // Any newly spawned isolates need to use this permutation map.
+  std::unique_ptr<intptr_t[]> cid_permutation_map;
+
+  // List of weak pointers to external typed data for loaded blobs.
+  ArrayPtr loaded_blobs_;
+  intptr_t num_blob_loads_;
 };
 
 // Tracks idle time and notifies heap when idle time expired.
@@ -258,23 +275,111 @@ class DisableIdleTimerScope : public ValueObject {
   IdleTimeHandler* handler_;
 };
 
+class MutatorThreadPool : public ThreadPool {
+ public:
+  MutatorThreadPool(IsolateGroup* isolate_group, intptr_t max_pool_size)
+      : ThreadPool(max_pool_size), isolate_group_(isolate_group) {}
+  virtual ~MutatorThreadPool() {}
+
+ protected:
+  virtual void OnEnterIdleLocked(MonitorLocker* ml);
+
+ private:
+  void NotifyIdle();
+
+  IsolateGroup* isolate_group_ = nullptr;
+};
+
 // Represents an isolate group and is shared among all isolates within a group.
 class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
  public:
-  IsolateGroup(std::unique_ptr<IsolateGroupSource> source, void* embedder_data);
+  IsolateGroup(std::shared_ptr<IsolateGroupSource> source,
+               void* embedder_data,
+               ObjectStore* object_store);
+  IsolateGroup(std::shared_ptr<IsolateGroupSource> source, void* embedder_data);
   ~IsolateGroup();
 
   IsolateGroupSource* source() const { return source_.get(); }
+  std::shared_ptr<IsolateGroupSource> shareable_source() const {
+    return source_;
+  }
   void* embedder_data() const { return embedder_data_; }
 
+  bool initial_spawn_successful() { return initial_spawn_successful_; }
   void set_initial_spawn_successful() { initial_spawn_successful_ = true; }
 
+  Heap* heap() const { return heap_.get(); }
+
+  IdleTimeHandler* idle_time_handler() { return &idle_time_handler_; }
+
+  // Returns true if this is the first isolate registered.
   void RegisterIsolate(Isolate* isolate);
+  void RegisterIsolateLocked(Isolate* isolate);
   void UnregisterIsolate(Isolate* isolate);
+  // Returns `true` if this was the last isolate and the caller is responsible
+  // for deleting the isolate group.
+  bool UnregisterIsolateDecrementCount(Isolate* isolate);
+
+  bool ContainsOnlyOneIsolate();
+
+  void RunWithLockedGroup(std::function<void()> fun);
 
   Monitor* threads_lock() const;
   ThreadRegistry* thread_registry() const { return thread_registry_.get(); }
   SafepointHandler* safepoint_handler() { return safepoint_handler_.get(); }
+
+  void CreateHeap(bool is_vm_isolate, bool is_service_or_kernel_isolate);
+  void Shutdown();
+
+#define ISOLATE_METRIC_ACCESSOR(type, variable, name, unit)                    \
+  type* Get##variable##Metric() { return &metric_##variable##_; }
+  ISOLATE_GROUP_METRIC_LIST(ISOLATE_METRIC_ACCESSOR);
+#undef ISOLATE_METRIC_ACCESSOR
+
+#if !defined(PRODUCT)
+  void UpdateLastAllocationProfileAccumulatorResetTimestamp() {
+    last_allocationprofile_accumulator_reset_timestamp_ =
+        OS::GetCurrentTimeMillis();
+  }
+
+  int64_t last_allocationprofile_accumulator_reset_timestamp() const {
+    return last_allocationprofile_accumulator_reset_timestamp_;
+  }
+
+  void UpdateLastAllocationProfileGCTimestamp() {
+    last_allocationprofile_gc_timestamp_ = OS::GetCurrentTimeMillis();
+  }
+
+  int64_t last_allocationprofile_gc_timestamp() const {
+    return last_allocationprofile_gc_timestamp_;
+  }
+#endif  // !defined(PRODUCT)
+
+  DispatchTable* dispatch_table() const { return dispatch_table_.get(); }
+  void set_dispatch_table(DispatchTable* table) {
+    dispatch_table_.reset(table);
+  }
+
+  SharedClassTable* shared_class_table() const {
+    return shared_class_table_.get();
+  }
+  StoreBuffer* store_buffer() const { return store_buffer_.get(); }
+  ClassTable* class_table() const { return class_table_.get(); }
+  ObjectStore* object_store() const { return object_store_.get(); }
+  SafepointRwLock* symbols_lock() { return symbols_lock_.get(); }
+  Mutex* type_canonicalization_mutex() { return &type_canonicalization_mutex_; }
+  Mutex* type_arguments_canonicalization_mutex() {
+    return &type_arguments_canonicalization_mutex_;
+  }
+  Mutex* subtype_test_cache_mutex() { return &subtype_test_cache_mutex_; }
+
+#if defined(DART_PRECOMPILED_RUNTIME)
+  Mutex* unlinked_call_map_mutex() { return &unlinked_call_map_mutex_; }
+#endif
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+  Mutex* initializer_functions_mutex() { return &initializer_functions_mutex_; }
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
   static inline IsolateGroup* Current() {
     Thread* thread = Thread::Current();
@@ -296,6 +401,9 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
                         bool is_mutator,
                         bool bypass_safepoint = false);
 
+  void IncreaseMutatorCount(Isolate* mutator);
+  void DecreaseMutatorCount(Isolate* mutator);
+
   Dart_LibraryTagHandler library_tag_handler() const {
     return library_tag_handler_;
   }
@@ -303,11 +411,31 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
     library_tag_handler_ = handler;
   }
 
+  intptr_t GetClassSizeForHeapWalkAt(intptr_t cid);
+
+  // Prepares all threads in an isolate for Garbage Collection.
+  void ReleaseStoreBuffers();
+  void EnableIncrementalBarrier(MarkingStack* marking_stack,
+                                MarkingStack* deferred_marking_stack);
+  void DisableIncrementalBarrier();
+
+  MarkingStack* marking_stack() const { return marking_stack_; }
+  MarkingStack* deferred_marking_stack() const {
+    return deferred_marking_stack_;
+  }
+
   // Runs the given [function] on every isolate in the isolate group.
   //
-  // During the duration of this function, no new isolates can be added to the
-  // isolate group.
-  void ForEachIsolate(std::function<void(Isolate* isolate)> function);
+  // During the duration of this function, no new isolates can be added or
+  // removed.
+  //
+  // If [at_safepoint] is `true`, then the entire isolate group must be in a
+  // safepoint. There is therefore no reason to guard against other threads
+  // adding/removing isolates, so no locks will be held.
+  void ForEachIsolate(std::function<void(Isolate* isolate)> function,
+                      bool at_safepoint = false);
+  Isolate* FirstIsolate() const;
+  Isolate* FirstIsolateLocked() const;
 
   // Ensures mutators are stopped during execution of the provided function.
   //
@@ -323,8 +451,9 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
                               std::function<void()> otherwise,
                               bool use_force_growth_in_otherwise = false);
 
-  void RunWithStoppedMutators(std::function<void()> function) {
-    RunWithStoppedMutators(function, function);
+  void RunWithStoppedMutators(std::function<void()> function,
+                              bool use_force_growth = false) {
+    RunWithStoppedMutators(function, function, use_force_growth);
   }
 
 #ifndef PRODUCT
@@ -380,29 +509,179 @@ class IsolateGroup : public IntrusiveDListEntry<IsolateGroup> {
   static void RegisterIsolateGroup(IsolateGroup* isolate_group);
   static void UnregisterIsolateGroup(IsolateGroup* isolate_group);
 
+  static bool HasApplicationIsolateGroups();
+  static bool HasOnlyVMIsolateGroup();
+  static bool IsVMInternalIsolateGroup(const IsolateGroup* group);
+
+  int64_t UptimeMicros() const;
+
+  ApiState* api_state() const { return api_state_.get(); }
+
+  // Visit all object pointers. Caller must ensure concurrent sweeper is not
+  // running, and the visitor must not allocate.
+  void VisitObjectPointers(ObjectPointerVisitor* visitor,
+                           ValidationPolicy validate_frames);
+  void VisitStackPointers(ObjectPointerVisitor* visitor,
+                          ValidationPolicy validate_frames);
+  void VisitObjectIdRingPointers(ObjectPointerVisitor* visitor);
+  void VisitWeakPersistentHandles(HandleVisitor* visitor);
+
+  bool compaction_in_progress() const {
+    return CompactionInProgressBit::decode(isolate_group_flags_);
+  }
+  void set_compaction_in_progress(bool value) {
+    isolate_group_flags_ =
+        CompactionInProgressBit::update(value, isolate_group_flags_);
+  }
+
+  uword FindPendingDeoptAtSafepoint(uword fp);
+
+  void RememberLiveTemporaries();
+  void DeferredMarkLiveTemporaries();
+
+  ArrayPtr saved_unlinked_calls() const { return saved_unlinked_calls_; }
+  void set_saved_unlinked_calls(const Array& saved_unlinked_calls);
+
+  // Returns the pc -> code lookup cache object for this isolate.
+  ReversePcLookupCache* reverse_pc_lookup_cache() const {
+    return reverse_pc_lookup_cache_;
+  }
+
+  // Sets the pc -> code lookup cache object for this isolate.
+  void set_reverse_pc_lookup_cache(ReversePcLookupCache* table) {
+    ASSERT(reverse_pc_lookup_cache_ == nullptr);
+    reverse_pc_lookup_cache_ = table;
+  }
+
+  FieldTable* saved_initial_field_table() const {
+    return saved_initial_field_table_.get();
+  }
+  std::shared_ptr<FieldTable> saved_initial_field_table_shareable() {
+    return saved_initial_field_table_;
+  }
+  void set_saved_initial_field_table(std::shared_ptr<FieldTable> field_table) {
+    saved_initial_field_table_ = field_table;
+  }
+
+  MutatorThreadPool* thread_pool() { return thread_pool_.get(); }
+
  private:
+  friend class Dart;  // For `object_store_ = ` in Dart::Init
+  friend class Heap;
+  friend class StackFrame;  // For `[isolates_].First()`.
+  // For `object_store_shared_ptr()`, `class_table_shared_ptr()`
+  friend class Isolate;
+
+#define ISOLATE_GROUP_FLAG_BITS(V) V(CompactionInProgress)
+
+  // Isolate specific flags.
+  enum FlagBits {
+#define DECLARE_BIT(Name) k##Name##Bit,
+    ISOLATE_GROUP_FLAG_BITS(DECLARE_BIT)
+#undef DECLARE_BIT
+  };
+
+#define DECLARE_BITFIELD(Name)                                                 \
+  class Name##Bit : public BitField<uint32_t, bool, k##Name##Bit, 1> {};
+  ISOLATE_GROUP_FLAG_BITS(DECLARE_BITFIELD)
+#undef DECLARE_BITFIELD
+
+  void set_heap(std::unique_ptr<Heap> value);
+
+  const std::shared_ptr<ClassTable>& class_table_shared_ptr() const {
+    return class_table_;
+  }
+  const std::shared_ptr<ObjectStore>& object_store_shared_ptr() const {
+    return object_store_;
+  }
+
+  bool is_vm_isolate_heap_ = false;
   void* embedder_data_ = nullptr;
 
-  std::unique_ptr<RwLock> isolates_rwlock_;
+  IdleTimeHandler idle_time_handler_;
+  std::unique_ptr<MutatorThreadPool> thread_pool_;
+  std::unique_ptr<SafepointRwLock> isolates_lock_;
   IntrusiveDList<Isolate> isolates_;
   intptr_t isolate_count_ = 0;
   bool initial_spawn_successful_ = false;
   Dart_LibraryTagHandler library_tag_handler_ = nullptr;
+  int64_t start_time_micros_;
 
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
   int64_t last_reload_timestamp_;
   std::shared_ptr<IsolateGroupReloadContext> group_reload_context_;
 #endif
 
-  std::unique_ptr<IsolateGroupSource> source_;
+#define ISOLATE_METRIC_VARIABLE(type, variable, name, unit)                    \
+  type metric_##variable##_;
+  ISOLATE_GROUP_METRIC_LIST(ISOLATE_METRIC_VARIABLE);
+#undef ISOLATE_METRIC_VARIABLE
+
+#if !defined(PRODUCT)
+  // Timestamps of last operation via service.
+  int64_t last_allocationprofile_accumulator_reset_timestamp_ = 0;
+  int64_t last_allocationprofile_gc_timestamp_ = 0;
+
+#endif  // !defined(PRODUCT)
+
+  MarkingStack* marking_stack_ = nullptr;
+  MarkingStack* deferred_marking_stack_ = nullptr;
+  std::shared_ptr<IsolateGroupSource> source_;
+  std::unique_ptr<ApiState> api_state_;
   std::unique_ptr<ThreadRegistry> thread_registry_;
   std::unique_ptr<SafepointHandler> safepoint_handler_;
 
   static RwLock* isolate_groups_rwlock_;
   static IntrusiveDList<IsolateGroup>* isolate_groups_;
+  static Random* isolate_group_random_;
 
-  Random isolate_group_random_;
-  uint64_t id_ = isolate_group_random_.NextUInt64();
+  uint64_t id_ = 0;
+
+  std::unique_ptr<SharedClassTable> shared_class_table_;
+  std::shared_ptr<ObjectStore> object_store_;  // nullptr in JIT mode
+  std::shared_ptr<ClassTable> class_table_;    // nullptr in JIT mode
+  std::unique_ptr<StoreBuffer> store_buffer_;
+  std::unique_ptr<Heap> heap_;
+  std::unique_ptr<DispatchTable> dispatch_table_;
+  ReversePcLookupCache* reverse_pc_lookup_cache_ = nullptr;
+  ArrayPtr saved_unlinked_calls_;
+  std::shared_ptr<FieldTable> saved_initial_field_table_;
+  uint32_t isolate_group_flags_ = 0;
+
+  std::unique_ptr<SafepointRwLock> symbols_lock_;
+  Mutex type_canonicalization_mutex_;
+  Mutex type_arguments_canonicalization_mutex_;
+  Mutex subtype_test_cache_mutex_;
+
+#if defined(DART_PRECOMPILED_RUNTIME)
+  Mutex unlinked_call_map_mutex_;
+#endif
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+  Mutex initializer_functions_mutex_;
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
+
+  // Allow us to ensure the number of active mutators is limited by a maximum.
+  std::unique_ptr<Monitor> active_mutators_monitor_;
+  intptr_t active_mutators_ = 0;
+  intptr_t waiting_mutators_ = 0;
+  intptr_t max_active_mutators_ = 0;
+};
+
+// When an isolate sends-and-exits this class represent things that it passed
+// to the beneficiary.
+class Bequest {
+ public:
+  Bequest(PersistentHandle* handle, Dart_Port beneficiary)
+      : handle_(handle), beneficiary_(beneficiary) {}
+  ~Bequest();
+
+  PersistentHandle* handle() { return handle_; }
+  Dart_Port beneficiary() { return beneficiary_; }
+
+ private:
+  PersistentHandle* handle_;
+  Dart_Port beneficiary_;
 };
 
 class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
@@ -453,39 +732,51 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   void ValidateConstants();
 #endif
 
-  // Visits weak object pointers.
-  void VisitWeakPersistentHandles(HandleVisitor* visitor);
-
-  // Prepares all threads in an isolate for Garbage Collection.
-  void ReleaseStoreBuffers();
-  void EnableIncrementalBarrier(MarkingStack* marking_stack,
-                                MarkingStack* deferred_marking_stack);
-  void DisableIncrementalBarrier();
-
-  StoreBuffer* store_buffer() const { return store_buffer_; }
-  MarkingStack* marking_stack() const { return marking_stack_; }
-  MarkingStack* deferred_marking_stack() const {
-    return deferred_marking_stack_;
-  }
-
   ThreadRegistry* thread_registry() const { return group()->thread_registry(); }
 
   SafepointHandler* safepoint_handler() const {
     return group()->safepoint_handler();
   }
 
-  SharedClassTable* shared_class_table() { return shared_class_table_.get(); }
+  ClassTable* class_table() { return class_table_.get(); }
 
-  ClassTable* class_table() { return &class_table_; }
-  static intptr_t class_table_offset() {
-    return OFFSET_OF(Isolate, class_table_);
+  ClassPtr* cached_class_table_table() { return cached_class_table_table_; }
+  void set_cached_class_table_table(ClassPtr* cached_class_table_table) {
+    cached_class_table_table_ = cached_class_table_table;
+  }
+  static intptr_t cached_class_table_table_offset() {
+    return OFFSET_OF(Isolate, cached_class_table_table_);
+  }
+
+  SharedClassTable* shared_class_table() const { return shared_class_table_; }
+  // Used during isolate creation to re-register isolate with right group.
+  void set_shared_class_table(SharedClassTable* table) {
+    shared_class_table_ = table;
+  }
+  // Used by the generated code.
+  static intptr_t shared_class_table_offset() {
+    return OFFSET_OF(Isolate, shared_class_table_);
+  }
+
+  ObjectStore* object_store() const { return object_store_shared_ptr_.get(); }
+  void set_object_store(ObjectStore* object_store);
+  static intptr_t cached_object_store_offset() {
+    return OFFSET_OF(Isolate, cached_object_store_);
   }
 
   FieldTable* field_table() const { return field_table_; }
+  void set_field_table(Thread* T, FieldTable* field_table) {
+    delete field_table_;
+    field_table_ = field_table;
+    T->field_table_values_ = field_table->table();
+  }
+
+  IsolateObjectStore* isolate_object_store() const {
+    return isolate_object_store_.get();
+  }
 
   // Prefers old classes when we are in the middle of a reload.
-  RawClass* GetClassForHeapWalkAt(intptr_t cid);
-  intptr_t GetClassSizeForHeapWalkAt(intptr_t cid);
+  ClassPtr GetClassForHeapWalkAt(intptr_t cid);
 
   static intptr_t ic_miss_code_offset() {
     return OFFSET_OF(Isolate, ic_miss_code_);
@@ -497,6 +788,10 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 
   void set_message_notify_callback(Dart_MessageNotifyCallback value) {
     message_notify_callback_ = value;
+  }
+
+  void bequeath(std::unique_ptr<Bequest> bequest) {
+    bequest_ = std::move(bequest);
   }
 
   IsolateGroupSource* source() const { return isolate_group_->source(); }
@@ -516,11 +811,8 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
     ASSERT(main_port_ == 0);  // Only set main port once.
     main_port_ = port;
   }
-  Dart_Port origin_id() const { return origin_id_; }
-  void set_origin_id(Dart_Port id) {
-    ASSERT((id == main_port_ && origin_id_ == 0) || (origin_id_ == main_port_));
-    origin_id_ = id;
-  }
+  Dart_Port origin_id();
+  void set_origin_id(Dart_Port id);
   void set_pause_capability(uint64_t value) { pause_capability_ = value; }
   uint64_t pause_capability() const { return pause_capability_; }
   void set_terminate_capability(uint64_t value) {
@@ -530,22 +822,7 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 
   void SendInternalLibMessage(LibMsgId msg_id, uint64_t capability);
 
-  IdleTimeHandler* idle_time_handler() { return &idle_time_handler_; }
-
-  Heap* heap() const { return heap_; }
-  void set_heap(Heap* value) {
-    idle_time_handler_.InitializeWithHeap(value);
-    heap_ = value;
-  }
-
-  ObjectStore* object_store() const { return object_store_; }
-  void set_object_store(ObjectStore* value) { object_store_ = value; }
-  static intptr_t object_store_offset() {
-    return OFFSET_OF(Isolate, object_store_);
-  }
-
-  ApiState* api_state() const { return api_state_; }
-  void set_api_state(ApiState* value) { api_state_ = value; }
+  Heap* heap() const { return isolate_group_->heap(); }
 
   void set_init_callback_data(void* value) { init_callback_data_ = value; }
   void* init_callback_data() const { return init_callback_data_; }
@@ -566,9 +843,9 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   bool HasTagHandler() const {
     return group()->library_tag_handler() != nullptr;
   }
-  RawObject* CallTagHandler(Dart_LibraryTag tag,
-                            const Object& arg1,
-                            const Object& arg2);
+  ObjectPtr CallTagHandler(Dart_LibraryTag tag,
+                           const Object& arg1,
+                           const Object& arg2);
 
   void SetupImagePage(const uint8_t* snapshot_buffer, bool is_executable);
 
@@ -590,21 +867,12 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 #endif
   }
 
-  bool compaction_in_progress() const {
-    return CompactionInProgressBit::decode(isolate_flags_);
-  }
-  void set_compaction_in_progress(bool value) {
-    isolate_flags_ = CompactionInProgressBit::update(value, isolate_flags_);
-  }
-
   IsolateSpawnState* spawn_state() const { return spawn_state_.get(); }
   void set_spawn_state(std::unique_ptr<IsolateSpawnState> value) {
     spawn_state_ = std::move(value);
   }
 
   Mutex* mutex() { return &mutex_; }
-  Mutex* symbols_mutex() { return &symbols_mutex_; }
-  Mutex* type_canonicalization_mutex() { return &type_canonicalization_mutex_; }
   Mutex* constant_canonicalization_mutex() {
     return &constant_canonicalization_mutex_;
   }
@@ -621,7 +889,6 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 
 #if !defined(PRODUCT)
   Debugger* debugger() const {
-    ASSERT(debugger_ != nullptr);
     return debugger_;
   }
 
@@ -723,8 +990,8 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   }
 
 #if !defined(PRODUCT)
-  void set_object_id_ring(ObjectIdRing* ring) { object_id_ring_ = ring; }
-  ObjectIdRing* object_id_ring() { return object_id_ring_; }
+  ObjectIdRing* object_id_ring() const { return object_id_ring_; }
+  ObjectIdRing* EnsureObjectIdRing();
 #endif  // !defined(PRODUCT)
 
   void AddPendingDeopt(uword fp, uword pc);
@@ -747,25 +1014,6 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   BackgroundCompiler* optimizing_background_compiler() const {
     return optimizing_background_compiler_;
   }
-
-#if !defined(PRODUCT)
-  void UpdateLastAllocationProfileAccumulatorResetTimestamp() {
-    last_allocationprofile_accumulator_reset_timestamp_ =
-        OS::GetCurrentTimeMillis();
-  }
-
-  int64_t last_allocationprofile_accumulator_reset_timestamp() const {
-    return last_allocationprofile_accumulator_reset_timestamp_;
-  }
-
-  void UpdateLastAllocationProfileGCTimestamp() {
-    last_allocationprofile_gc_timestamp_ = OS::GetCurrentTimeMillis();
-  }
-
-  int64_t last_allocationprofile_gc_timestamp() const {
-    return last_allocationprofile_gc_timestamp_;
-  }
-#endif  // !defined(PRODUCT)
 
   intptr_t BlockClassFinalization() {
     ASSERT(defer_finalization_count_ >= 0);
@@ -825,7 +1073,7 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   }
 #endif  // !defined(PRODUCT)
 
-  RawError* PausePostRequest();
+  ErrorPtr PausePostRequest();
 
   uword user_tag() const { return user_tag_; }
   static intptr_t user_tag_offset() { return OFFSET_OF(Isolate, user_tag_); }
@@ -845,40 +1093,28 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 
   static intptr_t IsolateListLength();
 
-  RawGrowableObjectArray* tag_table() const { return tag_table_; }
+  GrowableObjectArrayPtr tag_table() const { return tag_table_; }
   void set_tag_table(const GrowableObjectArray& value);
 
-  RawUserTag* current_tag() const { return current_tag_; }
+  UserTagPtr current_tag() const { return current_tag_; }
   void set_current_tag(const UserTag& tag);
 
-  RawUserTag* default_tag() const { return default_tag_; }
+  UserTagPtr default_tag() const { return default_tag_; }
   void set_default_tag(const UserTag& tag);
 
   void set_ic_miss_code(const Code& code);
 
-#if !defined(PRODUCT)
-  Metric* metrics_list_head() { return metrics_list_head_; }
-  void set_metrics_list_head(Metric* metric) { metrics_list_head_ = metric; }
-#endif  // !defined(PRODUCT)
-
-  RawGrowableObjectArray* deoptimized_code_array() const {
+  GrowableObjectArrayPtr deoptimized_code_array() const {
     return deoptimized_code_array_;
   }
   void set_deoptimized_code_array(const GrowableObjectArray& value);
   void TrackDeoptimizedCode(const Code& code);
 
   // Also sends a paused at exit event over the service protocol.
-  void SetStickyError(RawError* sticky_error);
+  void SetStickyError(ErrorPtr sticky_error);
 
-  RawError* sticky_error() const { return sticky_error_; }
-  DART_WARN_UNUSED_RESULT RawError* StealStickyError();
-
-  bool compilation_allowed() const {
-    return CompilationAllowedBit::decode(isolate_flags_);
-  }
-  void set_compilation_allowed(bool allowed) {
-    isolate_flags_ = CompilationAllowedBit::update(allowed, isolate_flags_);
-  }
+  ErrorPtr sticky_error() const { return sticky_error_; }
+  DART_WARN_UNUSED_RESULT ErrorPtr StealStickyError();
 
   // In precompilation we finalize all regular classes before compiling.
   bool all_classes_finalized() const {
@@ -899,10 +1135,10 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   // deoptimization in the mutator thread.
   void AddDeoptimizingBoxedField(const Field& field);
   // Returns Field::null() if none available in the list.
-  RawField* GetDeoptimizingBoxedField();
+  FieldPtr GetDeoptimizingBoxedField();
 
 #ifndef PRODUCT
-  RawError* InvokePendingServiceExtensionCalls();
+  ErrorPtr InvokePendingServiceExtensionCalls();
   void AppendServiceExtensionCall(const Instance& closure,
                                   const String& method_name,
                                   const Array& parameter_keys,
@@ -911,7 +1147,7 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
                                   const Instance& id);
   void RegisterServiceExtensionHandler(const String& name,
                                        const Instance& closure);
-  RawInstance* LookupServiceExtensionHandler(const String& name);
+  InstancePtr LookupServiceExtensionHandler(const String& name);
 #endif
 
   static void VisitIsolates(IsolateVisitor* visitor);
@@ -922,10 +1158,10 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 #endif
 
   void AddClosureFunction(const Function& function) const;
-  RawFunction* LookupClosureFunction(const Function& parent,
-                                     TokenPosition token_pos) const;
+  FunctionPtr LookupClosureFunction(const Function& parent,
+                                    TokenPosition token_pos) const;
   intptr_t FindClosureIndex(const Function& needle) const;
-  RawFunction* ClosureFunctionFromIndex(intptr_t idx) const;
+  FunctionPtr ClosureFunctionFromIndex(intptr_t idx) const;
 
   bool is_service_isolate() const {
     return IsServiceIsolateBit::decode(isolate_flags_);
@@ -939,10 +1175,6 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   }
   void set_is_kernel_isolate(bool value) {
     isolate_flags_ = IsKernelIsolateBit::update(value, isolate_flags_);
-  }
-
-  bool can_use_strong_mode_types() const {
-    return FLAG_use_strong_mode_types && !unsafe_trust_strong_mode_types();
   }
 
   // Whether it's possible for unoptimized code to optimize immediately on entry
@@ -966,15 +1198,8 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   void set_obfuscation_map(const char** map) { obfuscation_map_ = map; }
   const char** obfuscation_map() const { return obfuscation_map_; }
 
-  // Returns the pc -> code lookup cache object for this isolate.
-  ReversePcLookupCache* reverse_pc_lookup_cache() const {
-    return reverse_pc_lookup_cache_;
-  }
-
-  // Sets the pc -> code lookup cache object for this isolate.
-  void set_reverse_pc_lookup_cache(ReversePcLookupCache* table) {
-    ASSERT(reverse_pc_lookup_cache_ == nullptr);
-    reverse_pc_lookup_cache_ = table;
+  const DispatchTable* dispatch_table() const {
+    return group()->dispatch_table();
   }
 
   // Isolate-specific flag handling.
@@ -1016,12 +1241,17 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   }
 #endif  // defined(PRODUCT)
 
-  // Convenience flag tester indicating whether incoming function arguments
-  // should be type checked.
-  bool argument_type_checks() const { return should_emit_strong_mode_checks(); }
+  bool null_safety_not_set() const {
+    return !NullSafetySetBit::decode(isolate_flags_);
+  }
 
-  bool should_emit_strong_mode_checks() const {
-    return !unsafe_trust_strong_mode_types();
+  bool null_safety() const {
+    ASSERT(!null_safety_not_set());
+    return NullSafetyBit::decode(isolate_flags_);
+  }
+  void set_null_safety(bool null_safety) {
+    isolate_flags_ = NullSafetySetBit::update(true, isolate_flags_);
+    isolate_flags_ = NullSafetyBit::update(null_safety, isolate_flags_);
   }
 
   bool has_attempted_stepping() const {
@@ -1045,7 +1275,9 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   static void DisableIsolateCreation();
   static void EnableIsolateCreation();
   static bool IsolateCreationEnabled();
-  static bool IsVMInternalIsolate(const Isolate* isolate);
+  static bool IsVMInternalIsolate(const Isolate* isolate) {
+    return IsolateGroup::IsVMInternalIsolateGroup(isolate->group());
+  }
 
 #if !defined(PRODUCT)
   intptr_t reload_every_n_stack_overflow_checks() const {
@@ -1071,9 +1303,23 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 
   static void NotifyLowMemory();
 
+  void RememberLiveTemporaries();
+  void DeferredMarkLiveTemporaries();
+
+  std::unique_ptr<VirtualMemory> TakeRegexpBacktrackStack() {
+    return std::move(regexp_backtracking_stack_cache_);
+  }
+
+  void CacheRegexpBacktrackStack(std::unique_ptr<VirtualMemory> stack) {
+    regexp_backtracking_stack_cache_ = std::move(stack);
+  }
+
  private:
   friend class Dart;                  // Init, InitOnce, Shutdown.
   friend class IsolateKillerVisitor;  // Kill().
+  friend Isolate* CreateWithinExistingIsolateGroup(IsolateGroup* g,
+                                                   const char* n,
+                                                   char** e);
 
   Isolate(IsolateGroup* group, const Dart_IsolateFlags& api_flags);
 
@@ -1083,11 +1329,16 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
                               const Dart_IsolateFlags& api_flags,
                               bool is_vm_isolate = false);
 
-  // The isolates_list_monitor_ should be held when calling Kill().
+  // The isolate_creation_monitor_ should be held when calling Kill().
   void KillLocked(LibMsgId msg_id);
 
-  void LowLevelShutdown();
   void Shutdown();
+  void LowLevelShutdown();
+
+  // Unregister the [isolate] from the thread, remove it from the isolate group,
+  // invoke the cleanup function (if any), delete the isolate and possibly
+  // delete the isolate group (if it's the last isolate in the group).
+  static void LowLevelCleanup(Isolate* isolate);
 
   void BuildName(const char* name_prefix);
 
@@ -1103,19 +1354,18 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   void set_user_tag(uword tag) { user_tag_ = tag; }
 
 #if !defined(PRODUCT)
-  RawGrowableObjectArray* GetAndClearPendingServiceExtensionCalls();
-  RawGrowableObjectArray* pending_service_extension_calls() const {
+  GrowableObjectArrayPtr GetAndClearPendingServiceExtensionCalls();
+  GrowableObjectArrayPtr pending_service_extension_calls() const {
     return pending_service_extension_calls_;
   }
   void set_pending_service_extension_calls(const GrowableObjectArray& value);
-  RawGrowableObjectArray* registered_service_extension_handlers() const {
+  GrowableObjectArrayPtr registered_service_extension_handlers() const {
     return registered_service_extension_handlers_;
   }
   void set_registered_service_extension_handlers(
       const GrowableObjectArray& value);
 #endif  // !defined(PRODUCT)
 
-  Monitor* threads_lock() { return isolate_group_->threads_lock(); }
   Thread* ScheduleThread(bool is_mutator, bool bypass_safepoint = false);
   void UnscheduleThread(Thread* thread,
                         bool is_mutator,
@@ -1135,22 +1385,25 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   // We use only word-sized fields to avoid differences in struct packing on the
   // different architectures. See also CheckOffsets in dart.cc.
   uword user_tag_ = 0;
-  RawUserTag* current_tag_;
-  RawUserTag* default_tag_;
-  RawCode* ic_miss_code_;
-  std::unique_ptr<SharedClassTable> shared_class_table_;
-  ObjectStore* object_store_ = nullptr;
-  ClassTable class_table_;
+  UserTagPtr current_tag_;
+  UserTagPtr default_tag_;
+  CodePtr ic_miss_code_;
+  // Cached value of object_store_shared_ptr_, here for generated code access
+  ObjectStore* cached_object_store_ = nullptr;
+  SharedClassTable* shared_class_table_ = nullptr;
+  // Cached value of class_table_->table_, here for generated code access
+  ClassPtr* cached_class_table_table_ = nullptr;
   FieldTable* field_table_ = nullptr;
   bool single_step_ = false;
   // End accessed from generated code.
 
-  StoreBuffer* store_buffer_ = nullptr;
-  MarkingStack* marking_stack_ = nullptr;
-  MarkingStack* deferred_marking_stack_ = nullptr;
-  Heap* heap_ = nullptr;
-  IsolateGroup* isolate_group_ = nullptr;
+  IsolateGroup* isolate_group_;
   IdleTimeHandler idle_time_handler_;
+  std::unique_ptr<IsolateObjectStore> isolate_object_store_;
+  // shared in AOT(same pointer as on IsolateGroup), not shared in JIT
+  std::shared_ptr<ObjectStore> object_store_shared_ptr_;
+  // shared in AOT(same pointer as on IsolateGroup), not shared in JIT
+  std::shared_ptr<ClassTable> class_table_;
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   NativeCallbackTrampolines native_callback_trampolines_;
@@ -1161,7 +1414,6 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   V(IsRunnable)                                                                \
   V(IsServiceIsolate)                                                          \
   V(IsKernelIsolate)                                                           \
-  V(CompilationAllowed)                                                        \
   V(AllClassesFinalized)                                                       \
   V(RemappingCids)                                                             \
   V(ResumeRequest)                                                             \
@@ -1172,9 +1424,9 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   V(UseFieldGuards)                                                            \
   V(UseOsr)                                                                    \
   V(Obfuscate)                                                                 \
-  V(CompactionInProgress)                                                      \
   V(ShouldLoadVmService)                                                       \
-  V(UnsafeTrustStrongModeTypes)
+  V(NullSafety)                                                                \
+  V(NullSafetySet)
 
   // Isolate specific flags.
   enum FlagBits {
@@ -1202,24 +1454,18 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   Debugger* debugger_ = nullptr;
   int64_t last_resume_timestamp_;
 
-  // Timestamps of last operation via service.
-  int64_t last_allocationprofile_accumulator_reset_timestamp_ = 0;
-  int64_t last_allocationprofile_gc_timestamp_ = 0;
-
   VMTagCounters vm_tag_counters_;
 
   // We use 6 list entries for each pending service extension calls.
   enum {kPendingHandlerIndex = 0, kPendingMethodNameIndex, kPendingKeysIndex,
         kPendingValuesIndex,      kPendingReplyPortIndex,  kPendingIdIndex,
         kPendingEntrySize};
-  RawGrowableObjectArray* pending_service_extension_calls_;
+  GrowableObjectArrayPtr pending_service_extension_calls_;
 
   // We use 2 list entries for each registered extension handler.
   enum {kRegisteredNameIndex = 0, kRegisteredHandlerIndex,
         kRegisteredEntrySize};
-  RawGrowableObjectArray* registered_service_extension_handlers_;
-
-  Metric* metrics_list_head_ = nullptr;
+  GrowableObjectArrayPtr registered_service_extension_handlers_;
 
   // Used to wake the isolate when it is in the pause event loop.
   Monitor* pause_loop_monitor_ = nullptr;
@@ -1245,16 +1491,14 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   Dart_Port main_port_ = 0;
   // Isolates created by Isolate.spawn have the same origin id.
   Dart_Port origin_id_ = 0;
+  Mutex origin_id_mutex_;
   uint64_t pause_capability_ = 0;
   uint64_t terminate_capability_ = 0;
   void* init_callback_data_ = nullptr;
   Dart_EnvironmentCallback environment_callback_ = nullptr;
-  ApiState* api_state_ = nullptr;
   Random random_;
   Simulator* simulator_ = nullptr;
   Mutex mutex_;          // Protects compiler stats.
-  Mutex symbols_mutex_;  // Protects concurrent access to the symbol table.
-  Mutex type_canonicalization_mutex_;      // Protects type canonicalization.
   Mutex constant_canonicalization_mutex_;  // Protects const canonicalization.
   Mutex megamorphic_mutex_;  // Protects the table of megamorphic caches and
                              // their entries.
@@ -1267,19 +1511,19 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   MallocGrowableArray<PendingLazyDeopt>* pending_deopts_;
   DeoptContext* deopt_context_ = nullptr;
 
-  RawGrowableObjectArray* tag_table_;
+  GrowableObjectArrayPtr tag_table_;
 
-  RawGrowableObjectArray* deoptimized_code_array_;
+  GrowableObjectArrayPtr deoptimized_code_array_;
 
-  RawError* sticky_error_;
+  ErrorPtr sticky_error_;
 
-  // Isolate list next pointer.
-  Isolate* next_ = nullptr;
+  std::unique_ptr<Bequest> bequest_;
+  Dart_Port beneficiary_ = 0;
 
   // Protect access to boxed_field_list_.
   Mutex field_list_mutex_;
   // List of fields that became boxed and that trigger deoptimization.
-  RawGrowableObjectArray* boxed_field_list_;
+  GrowableObjectArrayPtr boxed_field_list_;
 
   // This guards spawn_count_. An isolate cannot complete shutdown and be
   // destroyed while there are child isolates in the midst of a spawn.
@@ -1292,11 +1536,18 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
   Dart_QualifiedFunctionName* embedder_entry_points_ = nullptr;
   const char** obfuscation_map_ = nullptr;
 
-  ReversePcLookupCache* reverse_pc_lookup_cache_ = nullptr;
+  DispatchTable* dispatch_table_ = nullptr;
 
   // Used during message sending of messages between isolates.
   std::unique_ptr<WeakTable> forward_table_new_;
   std::unique_ptr<WeakTable> forward_table_old_;
+
+  // Signals whether the isolate can receive messages (e.g. KillAllIsolates can
+  // send a kill message).
+  // This is protected by [isolate_creation_monitor_].
+  bool accepts_messages_ = false;
+
+  std::unique_ptr<VirtualMemory> regexp_backtracking_stack_cache_ = nullptr;
 
   static Dart_IsolateGroupCreateCallback create_group_callback_;
   static Dart_InitializeIsolateCallback initialize_callback_;
@@ -1309,12 +1560,16 @@ class Isolate : public BaseIsolate, public IntrusiveDListEntry<Isolate> {
 #endif
 
   // Manage list of existing isolates.
-  static bool AddIsolateToList(Isolate* isolate);
-  static void RemoveIsolateFromList(Isolate* isolate);
+  static bool TryMarkIsolateReady(Isolate* isolate);
+  static void UnMarkIsolateReady(Isolate* isolate);
+  static void MaybeNotifyVMShutdown();
+  bool AcceptsMessagesLocked() {
+    ASSERT(isolate_creation_monitor_->IsOwnedByCurrentThread());
+    return accepts_messages_;
+  }
 
-  // This monitor protects isolates_list_head_, and creation_enabled_.
-  static Monitor* isolates_list_monitor_;
-  static Isolate* isolates_list_head_;
+  // This monitor protects [creation_enabled_].
+  static Monitor* isolate_creation_monitor_;
   static bool creation_enabled_;
 
 #define REUSABLE_FRIEND_DECLARATION(name)                                      \
@@ -1379,6 +1634,26 @@ class StartIsolateScope {
   DISALLOW_COPY_AND_ASSIGN(StartIsolateScope);
 };
 
+class EnterIsolateGroupScope {
+ public:
+  explicit EnterIsolateGroupScope(IsolateGroup* isolate_group)
+      : isolate_group_(isolate_group) {
+    ASSERT(IsolateGroup::Current() == nullptr);
+    const bool result = Thread::EnterIsolateGroupAsHelper(
+        isolate_group_, Thread::kUnknownTask, /*bypass_safepoint=*/false);
+    ASSERT(result);
+  }
+
+  ~EnterIsolateGroupScope() {
+    Thread::ExitIsolateGroupAsHelper(/*bypass_safepoint=*/false);
+  }
+
+ private:
+  IsolateGroup* isolate_group_;
+
+  DISALLOW_COPY_AND_ASSIGN(EnterIsolateGroupScope);
+};
+
 class IsolateSpawnState {
  public:
   IsolateSpawnState(Dart_Port parent_port,
@@ -1424,9 +1699,9 @@ class IsolateSpawnState {
   bool errors_are_fatal() const { return errors_are_fatal_; }
   Dart_IsolateFlags* isolate_flags() { return &isolate_flags_; }
 
-  RawObject* ResolveFunction();
-  RawInstance* BuildArgs(Thread* thread);
-  RawInstance* BuildMessage(Thread* thread);
+  ObjectPtr ResolveFunction();
+  InstancePtr BuildArgs(Thread* thread);
+  InstancePtr BuildMessage(Thread* thread);
 
   IsolateGroup* isolate_group() const { return isolate_group_; }
 

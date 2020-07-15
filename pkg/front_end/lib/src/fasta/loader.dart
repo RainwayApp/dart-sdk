@@ -10,7 +10,8 @@ import 'dart:collection' show Queue;
 
 import 'package:_fe_analyzer_shared/src/messages/severity.dart' show Severity;
 
-import 'package:kernel/ast.dart' show Class, DartType, Library;
+import 'package:kernel/ast.dart' show Class, DartType, Library, Version;
+import 'package:package_config/package_config.dart';
 
 import 'scope.dart';
 
@@ -104,7 +105,11 @@ abstract class Loader {
   /// directive. If [accessor] isn't allowed to access [uri], it's a
   /// compile-time error.
   LibraryBuilder read(Uri uri, int charOffset,
-      {Uri fileUri, LibraryBuilder accessor, LibraryBuilder origin}) {
+      {Uri fileUri,
+      LibraryBuilder accessor,
+      LibraryBuilder origin,
+      Library referencesFrom,
+      bool referenceIsPartOwner}) {
     LibraryBuilder builder = builders.putIfAbsent(uri, () {
       if (fileUri != null &&
           (fileUri.scheme == "dart" ||
@@ -112,7 +117,7 @@ abstract class Loader {
               fileUri.scheme == "dart-ext")) {
         fileUri = null;
       }
-      String packageFragment;
+      Package packageForLanguageVersion;
       if (fileUri == null) {
         switch (uri.scheme) {
           case "package":
@@ -121,60 +126,53 @@ abstract class Loader {
                 new Uri(
                     scheme: untranslatableUriScheme,
                     path: Uri.encodeComponent("$uri"));
-            packageFragment = target.uriTranslator.getPackageFragment(uri);
+            if (uri.scheme == "package") {
+              packageForLanguageVersion = target.uriTranslator.getPackage(uri);
+            } else {
+              packageForLanguageVersion =
+                  target.uriTranslator.packages.packageOf(fileUri);
+            }
             break;
 
           default:
             fileUri = uri;
-            // Check for empty package name entry (redirecting to package name
-            // from which we should get the fragment part).
-            packageFragment = target.uriTranslator?.getDefaultPackageFragment();
+            packageForLanguageVersion =
+                target.uriTranslator.packages.packageOf(fileUri);
             break;
         }
+      } else {
+        packageForLanguageVersion =
+            target.uriTranslator.packages.packageOf(fileUri);
       }
       bool hasPackageSpecifiedLanguageVersion = false;
-      int packageSpecifiedLanguageVersionMajor;
-      int packageSpecifiedLanguageVersionMinor;
-      if (packageFragment != null) {
-        List<String> properties = packageFragment.split("&");
-        int foundEntries = 0;
-        for (int i = 0; i < properties.length; ++i) {
-          String property = properties[i];
-          if (property.startsWith("dart=")) {
-            if (++foundEntries > 1) {
-              // Force error to be issued if more than one "dart=" entry.
-              // (The error will be issued in library.setLanguageVersion below
-              // when giving it `null` version numbers.)
-              packageSpecifiedLanguageVersionMajor = null;
-              packageSpecifiedLanguageVersionMinor = null;
-              break;
-            }
-
-            hasPackageSpecifiedLanguageVersion = true;
-            String languageVersionString = property.substring(5);
-
-            // Verify that the version is x.y[whatever]
-            List<String> dotSeparatedParts = languageVersionString.split(".");
-            if (dotSeparatedParts.length >= 2) {
-              packageSpecifiedLanguageVersionMajor =
-                  int.tryParse(dotSeparatedParts[0]);
-              packageSpecifiedLanguageVersionMinor =
-                  int.tryParse(dotSeparatedParts[1]);
-            }
+      Version version;
+      Uri packageUri;
+      if (packageForLanguageVersion != null) {
+        Uri importUri = origin?.importUri ?? uri;
+        if (importUri.scheme != 'dart' &&
+            importUri.scheme != 'package' &&
+            packageForLanguageVersion.name != null) {
+          packageUri =
+              new Uri(scheme: 'package', path: packageForLanguageVersion.name);
+        }
+        if (packageForLanguageVersion.languageVersion != null) {
+          hasPackageSpecifiedLanguageVersion = true;
+          if (packageForLanguageVersion.languageVersion
+              is! InvalidLanguageVersion) {
+            version = new Version(
+                packageForLanguageVersion.languageVersion.major,
+                packageForLanguageVersion.languageVersion.minor);
           }
         }
       }
-      LibraryBuilder library =
-          target.createLibraryBuilder(uri, fileUri, origin);
+      LibraryBuilder library = target.createLibraryBuilder(uri, fileUri,
+          packageUri, origin, referencesFrom, referenceIsPartOwner);
       if (library == null) {
         throw new StateError("createLibraryBuilder for uri $uri, "
             "fileUri $fileUri returned null.");
       }
-
       if (hasPackageSpecifiedLanguageVersion) {
-        library.setLanguageVersion(packageSpecifiedLanguageVersionMajor,
-            packageSpecifiedLanguageVersionMinor,
-            explicit: false);
+        library.setLanguageVersion(version, explicit: false);
       }
       if (uri.scheme == "dart" && uri.path == "core") {
         coreLibrary = library;
@@ -198,7 +196,8 @@ abstract class Loader {
       if (coreLibrary == library) {
         target.loadExtraRequiredLibraries(this);
       }
-      if (target.backendTarget.mayDefineRestrictedType(origin?.uri ?? uri)) {
+      if (target.backendTarget
+          .mayDefineRestrictedType(origin?.importUri ?? uri)) {
         library.mayImplementRestrictedTypes = true;
       }
       if (uri.scheme == "dart") {
@@ -216,7 +215,7 @@ abstract class Loader {
       if (!accessor.isPatch &&
           !accessor.isPart &&
           !target.backendTarget
-              .allowPlatformPrivateLibraryAccess(accessor.uri, uri)) {
+              .allowPlatformPrivateLibraryAccess(accessor.importUri, uri)) {
         accessor.addProblem(messagePlatformPrivateLibraryAccess, charOffset,
             noLength, accessor.fileUri);
       }
@@ -239,7 +238,7 @@ abstract class Loader {
     assert(coreLibrary != null);
     for (LibraryBuilder library in builders.values) {
       if (library.loader == this) {
-        currentUriForCrashReporting = library.uri;
+        currentUriForCrashReporting = library.importUri;
         await buildBody(library);
       }
     }
@@ -251,7 +250,7 @@ abstract class Loader {
     ensureCoreLibrary();
     while (unparsedLibraries.isNotEmpty) {
       LibraryBuilder library = unparsedLibraries.removeFirst();
-      currentUriForCrashReporting = library.uri;
+      currentUriForCrashReporting = library.importUri;
       await buildOutline(library);
     }
     currentUriForCrashReporting = null;

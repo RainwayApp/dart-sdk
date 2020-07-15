@@ -2,13 +2,14 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import "package:expect/matchers_lite.dart";
+import "package:expect/minitest.dart";
 
 import "package:kernel/ast.dart";
 import "package:kernel/class_hierarchy.dart";
 import "package:kernel/core_types.dart";
 import "package:kernel/testing/mock_sdk_component.dart";
 import "package:kernel/text/ast_to_text.dart";
+import "package:kernel/src/text_util.dart";
 
 main() {
   new ClosedWorldClassHierarchyTest().test_applyTreeChanges();
@@ -117,7 +118,7 @@ class B extends test::A {}
 ''');
 
     // No updated classes, the same hierarchy.
-    expect(hierarchy.applyTreeChanges([], []), same(hierarchy));
+    expect(hierarchy.applyTreeChanges([], [], []), same(hierarchy));
 
     // Has updated classes, still the same hierarchy (instance). Can answer
     // queries about the new classes.
@@ -128,12 +129,13 @@ class B extends test::A {}
     component.libraries.add(libWithC);
     libWithC.addClass(c);
 
-    expect(hierarchy.applyTreeChanges([libWithB], [libWithC]), same(hierarchy));
+    expect(hierarchy.applyTreeChanges([libWithB], [libWithC], []),
+        same(hierarchy));
     expect(hierarchy.isSubclassOf(a, c), false);
     expect(hierarchy.isSubclassOf(c, a), true);
 
     // Remove so A should no longer be a super of anything.
-    expect(hierarchy.applyTreeChanges([libWithC], []), same(hierarchy));
+    expect(hierarchy.applyTreeChanges([libWithC], [], []), same(hierarchy));
   }
 
   void test_applyMemberChanges() {
@@ -386,7 +388,7 @@ class E = self::D with self::A implements self::B {}
 ''');
 
     _assertOverridePairs(c, []);
-    _assertOverridePairs(e, ['test::A::foo overrides test::B::foo']);
+    _assertOverridePairs(e, ['test::A.foo overrides test::B.foo']);
   }
 
   /// An abstract member declared in the class is overridden by a member in
@@ -422,8 +424,8 @@ class D extends self::B {}
 class E extends self::C {}
 ''');
 
-    _assertOverridePairs(b, ['test::B::foo overrides test::A::foo']);
-    _assertOverridePairs(c, ['test::C::foo overrides test::A::foo']);
+    _assertOverridePairs(b, ['test::B.foo overrides test::A.foo']);
+    _assertOverridePairs(c, ['test::C.foo overrides test::A.foo']);
     _assertOverridePairs(d, []);
     _assertOverridePairs(e, []);
   }
@@ -452,7 +454,7 @@ class B extends self::A {
 
     // The documentation says:
     // It is possible for two methods to override one another in both directions.
-    _assertOverridePairs(b, ['test::B::foo overrides test::A::foo']);
+    _assertOverridePairs(b, ['test::B.foo overrides test::A.foo']);
   }
 
   /// 1. A member declared in the class overrides a member inheritable through
@@ -484,8 +486,8 @@ class C extends self::B {
 }
 ''');
 
-    _assertOverridePairs(b, ['test::B::foo overrides test::A::foo']);
-    _assertOverridePairs(c, ['test::C::bar overrides test::A::bar']);
+    _assertOverridePairs(b, ['test::B.foo overrides test::A.foo']);
+    _assertOverridePairs(c, ['test::C.bar overrides test::A.bar']);
   }
 
   /// 1. A member declared in the class overrides a member inheritable through
@@ -517,8 +519,8 @@ class C extends self::B {
 }
 ''');
 
-    _assertOverridePairs(b, ['test::B::foo= overrides test::A::foo=']);
-    _assertOverridePairs(c, ['test::C::bar= overrides test::A::bar=']);
+    _assertOverridePairs(b, ['test::B.foo= overrides test::A.foo=']);
+    _assertOverridePairs(c, ['test::C.bar= overrides test::A.bar=']);
   }
 
   void test_getClassAsInstanceOf_generic_extends() {
@@ -744,8 +746,8 @@ abstract class B extends self::A {}
         ]));
     expect(hierarchy.getDeclaredMembers(a, setters: true),
         unorderedEquals([setter, abstractSetter, nonFinalField]));
-    expect(hierarchy.getDeclaredMembers(b), isEmpty);
-    expect(hierarchy.getDeclaredMembers(b, setters: true), isEmpty);
+    expect(hierarchy.getDeclaredMembers(b).isEmpty, isTrue);
+    expect(hierarchy.getDeclaredMembers(b, setters: true).isEmpty, isTrue);
   }
 
   void test_getDispatchTarget() {
@@ -1226,8 +1228,12 @@ class B<T*> extends self::A<self::B::T*, core::bool*> {}
     void callback(
         Member declaredMember, Member interfaceMember, bool isSetter) {
       var suffix = isSetter ? '=' : '';
-      String declaredName = '$declaredMember$suffix';
-      String interfaceName = '$interfaceMember$suffix';
+      String declaredName =
+          '${qualifiedMemberNameToString(declaredMember, includeLibraryName: true)}'
+          '$suffix';
+      String interfaceName =
+          '${qualifiedMemberNameToString(interfaceMember, includeLibraryName: true)}'
+          '$suffix';
       var desc = '$declaredName overrides $interfaceName';
       overrideDescriptions.add(desc);
     }

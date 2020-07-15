@@ -92,8 +92,7 @@ ${ownType} is not a subtype of ${superType}
       } else {
         final DartType ownType = getterType(host, ownMember);
         final DartType superType = getterType(host, superMember);
-        if (!environment.isSubtypeOf(
-            ownType, superType, SubtypeCheckMode.ignoringNullabilities)) {
+        if (!_isSubtypeOf(ownType, superType)) {
           return failures.reportInvalidOverride(ownMember, superMember, '''
 ${ownType} is not a subtype of ${superType}
 ''');
@@ -109,8 +108,15 @@ ${ownType} is not a subtype of ${superType}
 
   /// Check if [subtype] is subtype of [supertype] after applying
   /// type parameter [substitution].
-  bool _isSubtypeOf(DartType subtype, DartType supertype) => environment
-      .isSubtypeOf(subtype, supertype, SubtypeCheckMode.ignoringNullabilities);
+  bool _isSubtypeOf(DartType subtype, DartType supertype) {
+    if (subtype is InvalidType || supertype is InvalidType) {
+      return true;
+    }
+    // TODO(dmitryas): Find a way to tell the weak mode from strong mode to use
+    // [SubtypeCheckMode.withNullabilities] where necessary.
+    return environment.isSubtypeOf(
+        subtype, supertype, SubtypeCheckMode.ignoringNullabilities);
+  }
 
   Substitution _makeSubstitutionForMember(Class host, Member member) {
     final hostType =
@@ -125,6 +131,13 @@ ${ownType} is not a subtype of ${superType}
   /// but it additionally accounts for parameter covariance.
   String _checkFunctionOverride(
       Class host, Member ownMember, Member superMember) {
+    if (ownMember is Procedure &&
+        (ownMember.isMemberSignature ||
+            (ownMember.isForwardingStub && !ownMember.isForwardingSemiStub))) {
+      // Synthesized members are not obligated to override super members.
+      return null;
+    }
+
     final FunctionNode ownFunction = ownMember.function;
     final FunctionNode superFunction = superMember.function;
     Substitution ownSubstitution = _makeSubstitutionForMember(host, ownMember);
@@ -235,11 +248,7 @@ super method declares ${superParameter.type}
   @override
   void checkAssignable(TreeNode where, DartType from, DartType to) {
     // Note: we permit implicit downcasts.
-    if (from != to &&
-        !environment.isSubtypeOf(
-            from, to, SubtypeCheckMode.ignoringNullabilities) &&
-        !environment.isSubtypeOf(
-            to, from, SubtypeCheckMode.ignoringNullabilities)) {
+    if (from != to && !_isSubtypeOf(from, to) && !_isSubtypeOf(to, from)) {
       failures.reportNotAssignable(where, from, to);
     }
   }
@@ -247,6 +256,16 @@ super method declares ${superParameter.type}
   @override
   void checkUnresolvedInvocation(DartType receiver, TreeNode where) {
     if (receiver is DynamicType) {
+      return;
+    }
+    if (receiver is InvalidType) {
+      return;
+    }
+    if (receiver is BottomType) {
+      return;
+    }
+    if (receiver is NeverType &&
+        receiver.nullability == Nullability.nonNullable) {
       return;
     }
 

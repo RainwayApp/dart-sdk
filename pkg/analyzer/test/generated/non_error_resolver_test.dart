@@ -700,105 +700,6 @@ f() {
     ]);
   }
 
-  test_caseBlockNotTerminated() async {
-    await assertNoErrorsInCode(r'''
-f(int p) {
-  for (int i = 0; i < 10; i++) {
-    switch (p) {
-      case 0:
-        break;
-      case 1:
-        continue;
-      case 2:
-        return;
-      case 3:
-        throw new Object();
-      case 4:
-      case 5:
-        return;
-      case 6:
-      default:
-        return;
-    }
-  }
-}
-''');
-  }
-
-  test_caseBlockNotTerminated_lastCase() async {
-    await assertNoErrorsInCode(r'''
-f(int p) {
-  switch (p) {
-    case 0:
-      p = p + 1;
-  }
-}
-''');
-  }
-
-  test_caseExpressionTypeImplementsEquals() async {
-    await assertNoErrorsInCode(r'''
-print(p) {}
-
-abstract class B {
-  final id;
-  const B(this.id);
-  String toString() => 'C($id)';
-  /** Equality is identity equality, the id isn't used. */
-  bool operator==(Object other);
-  }
-
-class C extends B {
-  const C(id) : super(id);
-}
-
-void doSwitch(c) {
-  switch (c) {
-  case const C(0): print('Switch: 0'); break;
-  case const C(1): print('Switch: 1'); break;
-  }
-}
-''');
-  }
-
-  test_caseExpressionTypeImplementsEquals_int() async {
-    await assertNoErrorsInCode(r'''
-f(int i) {
-  switch(i) {
-    case(1) : return 1;
-    default: return 0;
-  }
-}
-''');
-  }
-
-  test_caseExpressionTypeImplementsEquals_Object() async {
-    await assertNoErrorsInCode(r'''
-class IntWrapper {
-  final int value;
-  const IntWrapper(this.value);
-}
-
-f(IntWrapper intWrapper) {
-  switch(intWrapper) {
-    case(const IntWrapper(1)) : return 1;
-    default: return 0;
-  }
-}
-''');
-  }
-
-  test_caseExpressionTypeImplementsEquals_String() async {
-    await assertNoErrorsInCode(r'''
-f(String s) {
-  switch(s) {
-    case('1') : return 1;
-    default: return 0;
-  }
-}
-''');
-  }
-
   test_class_type_alias_documentationComment() async {
     await assertNoErrorsInCode('''
 /**
@@ -1721,19 +1622,6 @@ main() {
 ''');
   }
 
-  test_inconsistentCaseExpressionTypes() async {
-    await assertNoErrorsInCode(r'''
-f(var p) {
-  switch (p) {
-    case 1:
-      break;
-    case 2:
-      break;
-  }
-}
-''');
-  }
-
   test_inconsistentMethodInheritance_accessors_typeParameter2() async {
     await assertNoErrorsInCode(r'''
 abstract class A<E> {
@@ -2529,7 +2417,7 @@ class B extends Object with A {}
   test_mixinDeclaresConstructor_factory() async {
     await assertNoErrorsInCode(r'''
 class A {
-  factory A() => null;
+  factory A() => throw 0;
 }
 class B extends Object with A {}
 ''');
@@ -2746,35 +2634,6 @@ class A {
 }
 class B extends A {
   const B({b}) : super(a: b);
-}
-''');
-  }
-
-  test_nonConstCaseExpression_constField() async {
-    await assertErrorsInCode(r'''
-f(double p) {
-  switch (p) {
-    case double.INFINITY:
-      return true;
-    default:
-      return false;
-  }
-}
-''', [
-      error(CompileTimeErrorCode.CASE_EXPRESSION_TYPE_IMPLEMENTS_EQUALS, 16, 6),
-    ]);
-  }
-
-  test_nonConstCaseExpression_typeLiteral() async {
-    await assertNoErrorsInCode(r'''
-f(Type t) {
-  switch (t) {
-    case bool:
-    case int:
-      return true;
-    default:
-      return false;
-  }
 }
 ''');
   }
@@ -3528,16 +3387,6 @@ main() {
 ''');
   }
 
-  @failingTest
-  test_undefinedEnumConstant() async {
-    await assertNoErrorsInCode(r'''
-enum E { ONE }
-E e() {
-  return E.TWO;
-}
-''');
-  }
-
   test_undefinedSuperMethod_field() async {
     await assertNoErrorsInCode(r'''
 class A {
@@ -3569,185 +3418,6 @@ class B extends A {
 import 'dart:core' as core;
 
 core.dynamic dynamicVariable;
-''');
-  }
-
-  test_yield_async_to_dynamic_type() async {
-    await assertNoErrorsInCode('''
-dynamic f() async* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_async_to_generic_type() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-Stream f() async* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_async_to_parameterized_type() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-Stream<int> f() async* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_async_to_untyped() async {
-    await assertNoErrorsInCode('''
-f() async* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_each_async_dynamic_to_dynamic() async {
-    await assertNoErrorsInCode('''
-f() async* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_async_dynamic_to_stream() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-Stream f() async* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_async_dynamic_to_typed_stream() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-Stream<int> f() async* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_async_stream_to_dynamic() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-f() async* {
-  yield* g();
-}
-Stream g() => null;
-''');
-  }
-
-  test_yield_each_async_typed_stream_to_dynamic() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-f() async* {
-  yield* g();
-}
-Stream<int> g() => null;
-''');
-  }
-
-  test_yield_each_async_typed_stream_to_typed_stream() async {
-    await assertNoErrorsInCode('''
-import 'dart:async';
-Stream<int> f() async* {
-  yield* g();
-}
-Stream<int> g() => null;
-''');
-  }
-
-  test_yield_each_sync_dynamic_to_dynamic() async {
-    await assertNoErrorsInCode('''
-f() sync* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_sync_dynamic_to_iterable() async {
-    await assertNoErrorsInCode('''
-Iterable f() sync* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_sync_dynamic_to_typed_iterable() async {
-    await assertNoErrorsInCode('''
-Iterable<int> f() sync* {
-  yield* g();
-}
-g() => null;
-''');
-  }
-
-  test_yield_each_sync_iterable_to_dynamic() async {
-    await assertNoErrorsInCode('''
-f() sync* {
-  yield* g();
-}
-Iterable g() => null;
-''');
-  }
-
-  test_yield_each_sync_typed_iterable_to_dynamic() async {
-    await assertNoErrorsInCode('''
-f() sync* {
-  yield* g();
-}
-Iterable<int> g() => null;
-''');
-  }
-
-  test_yield_each_sync_typed_iterable_to_typed_iterable() async {
-    await assertNoErrorsInCode('''
-Iterable<int> f() sync* {
-  yield* g();
-}
-Iterable<int> g() => null;
-''');
-  }
-
-  test_yield_sync_to_dynamic_type() async {
-    await assertNoErrorsInCode('''
-dynamic f() sync* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_sync_to_generic_type() async {
-    await assertNoErrorsInCode('''
-Iterable f() sync* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_sync_to_parameterized_type() async {
-    await assertNoErrorsInCode('''
-Iterable<int> f() sync* {
-  yield 3;
-}
-''');
-  }
-
-  test_yield_sync_to_untyped() async {
-    await assertNoErrorsInCode('''
-f() sync* {
-  yield 3;
-}
 ''');
   }
 }

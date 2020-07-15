@@ -6,6 +6,9 @@
 # Comments can also be inline like 'correct # this is ok'.
 # Note that at least one space before the hash is required.
 
+# Comments on a line by itself will be considered a header of the file and
+# automatic tools might move it to the top of the file.
+
 a
 abbreviations
 ability
@@ -68,6 +71,8 @@ adds
 adjacent
 adjust
 adjusted
+admit
+admitted
 adopt
 advance
 advanced
@@ -82,6 +87,7 @@ again
 against
 aggregate
 aggressively
+agnostic
 ahead
 algebra
 algorithm
@@ -97,6 +103,7 @@ allocation
 allow
 allowed
 allowing
+allowlisted
 allows
 almost
 alone
@@ -124,13 +131,16 @@ analysis
 analyze
 analyzed
 analyzer
+analyzer's
 analyzing
 ancestor
 ancillary
 and
 angle
 annotatable
+annotatables
 annotated
+annotating
 annotation
 annotations
 annotator
@@ -166,10 +176,12 @@ appropriate
 appropriately
 approximately
 arbitrary
+archive
 are
 aren't
 argument
 arguments
+arises
 arithmetic
 arose
 around
@@ -231,6 +243,7 @@ awaiter
 aware
 awareness
 away
+axiom
 back
 backend
 backends
@@ -285,9 +298,9 @@ bit
 bits
 bitwise
 black
-blacklisted
 block
 blocks
+blogs
 blue
 bodies
 body
@@ -348,6 +361,7 @@ calculates
 calculation
 calculator
 call
+callable
 callback
 called
 caller
@@ -383,8 +397,10 @@ cascade
 cascaded
 cascading
 case
+cased
 cases
 casting
+cat
 catch
 catches
 categories
@@ -455,6 +471,7 @@ closed
 closer
 closers
 closes
+closest
 closing
 closure
 closures
@@ -494,6 +511,7 @@ common
 commonly
 compact
 comparable
+comparator
 compare
 comparing
 comparison
@@ -553,6 +571,7 @@ conflicting
 conflicts
 conform
 conformed
+confuse
 confused
 connect
 connected
@@ -570,6 +589,7 @@ consistently
 consisting
 consists
 console
+consolidated
 const
 constant
 constants
@@ -589,6 +609,7 @@ constructs
 constuctor
 consume
 consumed
+consumer
 consuming
 contain
 contained
@@ -639,7 +660,9 @@ correction
 correctly
 correctness
 correspond
+correspondence
 corresponding
+correspondingly
 corresponds
 cost
 could
@@ -665,6 +688,7 @@ created
 creates
 creating
 creation
+creations
 crossed
 curly
 current
@@ -751,6 +775,8 @@ denote
 denoted
 denotes
 denoting
+deny
+denylisted
 depend
 dependence
 dependencies
@@ -841,10 +867,12 @@ dispatches
 display
 displayed
 displaying
+disregard
 distance
 distinct
 distinction
 distinguish
+distinguishes
 divide
 division
 divisor
@@ -891,10 +919,12 @@ dynamic
 each
 eagerly
 earlier
+earliest
 early
 easier
 easiest
 easily
+eat
 edge
 edges
 edit
@@ -910,7 +940,9 @@ elapsed
 element
 elements
 eligible
+eliminate
 eliminated
+eliminates
 elimination
 eliminator
 else
@@ -974,6 +1006,7 @@ environment
 equal
 equality
 equals
+equate
 equivalence
 equivalent
 equivalents
@@ -1018,6 +1051,7 @@ exceptions
 exclamation
 exclude
 excluded
+excludes
 excluding
 exclusive
 executable
@@ -1026,6 +1060,7 @@ executes
 executing
 execution
 exercise
+exhaustive
 exist
 existing
 exists
@@ -1034,6 +1069,8 @@ exited
 exits
 expand
 expanding
+expands
+expansion
 expect
 expectation
 expectations
@@ -1046,6 +1083,7 @@ experimental
 experimentally
 experiments
 expired
+explain
 explanation
 explicit
 explicitly
@@ -1059,6 +1097,7 @@ exporting
 exports
 exposed
 exposes
+expressed
 expression
 expressions
 extend
@@ -1094,6 +1133,7 @@ fake
 fall
 fallback
 falls
+fallthrough
 false
 far
 fashion
@@ -1109,8 +1149,10 @@ fetch
 few
 fewer
 field
+field's
 fieldname
 fields
+fifth
 figure
 file
 filename
@@ -1120,6 +1162,7 @@ filled
 fills
 filter
 filtered
+filtering
 final
 finalization
 finalize
@@ -1129,6 +1172,7 @@ finalizes
 finalizing
 finally
 find
+finder
 finding
 finds
 fine
@@ -1144,12 +1188,14 @@ fixed
 fixes
 fixing
 flag
+flagged
 flags
 flat
 flatten
 flattened
 flexibility
 flexible
+float
 flow
 flow's
 flush
@@ -1163,6 +1209,7 @@ follow
 followed
 following
 follows
+food
 for
 force
 forced
@@ -1305,6 +1352,7 @@ hexadecimal
 hidden
 hide
 hides
+hiding
 hierarchies
 hierarchy
 high
@@ -1313,6 +1361,8 @@ highest
 highlighted
 hint
 historically
+hoist
+hoisted
 hold
 holder
 holding
@@ -1325,6 +1375,7 @@ hostnames
 how
 however
 http
+hungry
 hybrid
 idea
 ideally
@@ -1335,7 +1386,9 @@ identifier
 identifiers
 identify
 identity
+ie
 if
+ignorable
 ignorant
 ignore
 ignored
@@ -1351,6 +1404,7 @@ implement
 implementation
 implementations
 implemented
+implementer
 implementing
 implements
 implication
@@ -1370,12 +1424,14 @@ impossible
 improve
 improved
 in
+inability
 inappropriate
 inbound
 include
 included
 includes
 including
+inclusion
 inclusive
 incoming
 incompatible
@@ -1412,6 +1468,7 @@ inferrer
 inferring
 infers
 infinite
+infinity
 infix
 info
 inform
@@ -1424,6 +1481,7 @@ inherit
 inheritable
 inheritance
 inherited
+inheriting
 inherits
 initial
 initialization
@@ -1466,6 +1524,7 @@ instructions
 instrumentation
 instrumented
 int
+intact
 integer
 integers
 integrated
@@ -1476,6 +1535,7 @@ intent
 interaction
 intercept
 interceptors
+interdependent
 interest
 interesting
 interests
@@ -1496,6 +1556,7 @@ interpreted
 interpreter
 interpreting
 intersect
+intersecting
 intersection
 intertwined
 into
@@ -1668,6 +1729,7 @@ logger
 logging
 logic
 logical
+lone
 long
 longer
 longest
@@ -1690,6 +1752,7 @@ lowercase
 lowered
 lowering
 lowerings
+lowest
 machine
 made
 magenta
@@ -1718,7 +1781,6 @@ markers
 marking
 marks
 mask
-master
 match
 matched
 matcher
@@ -1730,6 +1792,7 @@ mathematical
 matter
 maturity
 max
+maximal
 maximum
 may
 maybe
@@ -1777,11 +1840,13 @@ misleading
 mismatch
 mismatches
 missing
+misused
 mix
 mixed
 mixes
 mixin
 mixin's
+mixing
 mixins
 mock
 mode
@@ -1803,6 +1868,7 @@ modules
 modulo
 moment
 mongolian
+monotonous
 more
 moreover
 most
@@ -1837,6 +1903,7 @@ namely
 names
 namespace
 naming
+nan
 narrow
 narrower
 native
@@ -1892,6 +1959,7 @@ noticed
 notifies
 now
 null
+nullability
 nullable
 num
 number
@@ -1902,6 +1970,7 @@ object's
 objects
 oblivious
 observation
+observations
 observed
 obtain
 obtained
@@ -1947,6 +2016,7 @@ opted
 optimistically
 optimization
 optimize
+optimized
 option
 optional
 optionally
@@ -2042,6 +2112,9 @@ patching
 paths
 pattern
 peek
+peel
+peeled
+peeling
 pending
 percent
 percolate
@@ -2081,6 +2154,7 @@ platform's
 platforms
 please
 plethora
+plumbed
 plus
 point
 pointer
@@ -2160,6 +2234,7 @@ previous
 previously
 primary
 primitive
+primitiveness
 principle
 print
 printed
@@ -2199,14 +2274,18 @@ promotable
 promote
 promoted
 promoter
+promotes
 promotion
 promotions
 propagate
+propagates
 propagating
+propagation
 proper
 properly
 properties
 property
+proposition
 prototype
 proves
 provide
@@ -2248,6 +2327,7 @@ quote
 quotes
 quoting
 raise
+raising
 random
 range
 rare
@@ -2281,6 +2361,8 @@ recognized
 recognizes
 recommend
 recommendations
+recomputation
+recomputes
 record
 recorded
 recording
@@ -2295,6 +2377,7 @@ recurse
 recursing
 recursive
 recursively
+recursor
 redirect
 redirected
 redirecting
@@ -2315,6 +2398,7 @@ referred
 refers
 refine
 refinement
+refinements
 reflecting
 regardless
 region
@@ -2340,6 +2424,7 @@ relationship
 relationships
 relative
 release
+releases
 relevant
 relied
 relies
@@ -2348,6 +2433,7 @@ rely
 relying
 remain
 remainder
+remained
 remaining
 remains
 remember
@@ -2362,6 +2448,7 @@ removing
 rename
 renamed
 renaming
+repeat
 repeated
 repeatedly
 repetitions
@@ -2511,6 +2598,7 @@ searches
 searching
 second
 section
+security
 see
 seeing
 seem
@@ -2555,6 +2643,7 @@ setting
 settings
 settled
 setup
+seventh
 several
 severity
 shadow
@@ -2613,6 +2702,7 @@ sink
 sites
 situation
 situations
+sixth
 skip
 skipped
 skipping
@@ -2647,6 +2737,8 @@ sorted
 sorting
 sorts
 sought
+sound
+soundness
 source
 sources
 space
@@ -2733,6 +2825,7 @@ sublist
 subsequence
 subsequent
 subset
+subsets
 substitute
 substituted
 substituting
@@ -2766,6 +2859,7 @@ suffix
 suffixes
 suggested
 suitable
+suites
 summaries
 summarize
 summarizes
@@ -2826,6 +2920,9 @@ targeted
 targeting
 targets
 task
+tasks
+tear
+tearing
 technically
 technique
 template
@@ -2875,6 +2972,7 @@ third
 this
 those
 though
+threaded
 three
 threshold
 threw
@@ -2892,6 +2990,7 @@ timeline
 times
 timing
 tip
+title
 to
 today
 together
@@ -2905,7 +3004,9 @@ top
 topologically
 tortoise
 total
+totally
 touched
+towards
 trace
 traces
 tracing
@@ -2920,6 +3021,7 @@ transformation
 transformations
 transformed
 transformer
+transforms
 transient
 transition
 transitional
@@ -2931,6 +3033,7 @@ translated
 translates
 translating
 translator
+traveling
 traversed
 treat
 treated
@@ -2942,6 +3045,7 @@ tri
 trick
 tried
 tries
+trigger
 triggered
 trim
 trimmed
@@ -2956,6 +3060,8 @@ true
 truly
 truncate
 truncating
+trust
+trusts
 truth
 try
 trying
@@ -2973,12 +3079,16 @@ typedefs
 types
 typically
 typing
+ultimate
+ultimately
 unable
 unalias
 unaliased
+unaliasing
 unambiguous
 unary
 unassignable
+unassigned
 unbalanced
 unbind
 uncertain
@@ -3049,6 +3159,7 @@ until
 untranslatable
 untyped
 unused
+unwanted
 unwrap
 unwrapped
 up
@@ -3060,6 +3171,7 @@ updates
 updating
 upon
 upper
+uppercase
 upwards
 uri
 uris
@@ -3119,6 +3231,7 @@ visit
 visited
 visiting
 visitor
+visitor's
 visual
 vm
 void
@@ -3127,6 +3240,7 @@ wait
 walk
 walked
 want
+wanted
 warn
 warning
 warnings
@@ -3157,7 +3271,6 @@ whether
 which
 while
 white
-whitelisted
 whitespace
 whole
 whose

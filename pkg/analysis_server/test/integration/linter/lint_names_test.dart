@@ -20,7 +20,7 @@ import 'package:meta/meta.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
-main() {
+void main() {
   // Set prefix for local or bot execution.
   final pathPrefix =
       FileSystemEntity.isDirectorySync(path.join('test', 'integration'))
@@ -69,11 +69,18 @@ class CompilationUnitParser {
     var errorListener = _ErrorListener();
     var featureSet = FeatureSet.forTesting(sdkVersion: '2.2.2');
     var scanner = Scanner(stringSource, reader, errorListener)
-      ..configureFeatures(featureSet);
+      ..configureFeatures(
+        featureSetForOverriding: featureSet,
+        featureSet: featureSet,
+      );
     var startToken = scanner.tokenize();
     errorListener.throwIfErrors();
 
-    var parser = Parser(stringSource, errorListener, featureSet: featureSet);
+    var parser = Parser(
+      stringSource,
+      errorListener,
+      featureSet: featureSet,
+    );
     var cu = parser.parseCompilationUnit(startToken);
     errorListener.throwIfErrors();
 

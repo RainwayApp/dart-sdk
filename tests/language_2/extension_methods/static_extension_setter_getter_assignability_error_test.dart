@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// SharedOptions=--enable-experiment=extension-methods
-
 // It is an error to have a setter and a getter in an extension where
 // the return type of the getter is not assignable to the argument type
 // of the setter.
@@ -12,7 +10,7 @@ extension E1 on int {
   //     ^^
   // [cfe] unspecified
   //             ^^^^^^^^
-  // [analyzer] STATIC_WARNING.MISMATCHED_GETTER_AND_SETTER_TYPES
+  // [analyzer] STATIC_WARNING.GETTER_NOT_ASSIGNABLE_SETTER_TYPES
   static void set property(String value) {}
   //                       ^^
   // [cfe] unspecified
@@ -20,7 +18,7 @@ extension E1 on int {
   //  ^^
   // [cfe] unspecified
   //      ^^^^^^^^^
-  // [analyzer] STATIC_WARNING.MISMATCHED_GETTER_AND_SETTER_TYPES
+  // [analyzer] STATIC_WARNING.GETTER_NOT_ASSIGNABLE_SETTER_TYPES
   void set property2(String x) {}
   //                 ^^
   // [cfe] unspecified

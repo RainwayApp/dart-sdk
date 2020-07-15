@@ -2,125 +2,108 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:_fe_analyzer_shared/src/sdk/allowed_experiments.dart';
 import 'package:analyzer/dart/analysis/features.dart';
-import 'package:analyzer/file_system/file_system.dart';
-import 'package:analyzer/src/context/context_root.dart';
 import 'package:analyzer/src/context/packages.dart';
+import 'package:analyzer/src/dart/analysis/experiments.dart';
+import 'package:analyzer/src/generated/sdk.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:meta/meta.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 class FeatureSetProvider {
-  static final _preNonNullableVersion = Version(2, 7, 0);
+  /// This flag will be turned to `true` and inlined when we un-fork SDK,
+  /// so that the only SDK is the Null Safe SDK.
+  static const isNullSafetySdk = true;
 
-  final FeatureSet _sdkFeatureSet;
+  final AllowedExperiments _allowedExperiments;
   final Packages _packages;
-  final FeatureSet _defaultFeatureSet;
+  final FeatureSet _packageDefaultFeatureSet;
+  final FeatureSet _nonPackageDefaultFeatureSet;
 
   FeatureSetProvider._({
-    FeatureSet sdkFeatureSet,
-    Packages packages,
-    FeatureSet defaultFeatureSet,
-  })  : _sdkFeatureSet = sdkFeatureSet,
+    @required AllowedExperiments allowedExperiments,
+    @required Packages packages,
+    @required FeatureSet packageDefaultFeatureSet,
+    @required FeatureSet nonPackageDefaultFeatureSet,
+  })  : _allowedExperiments = allowedExperiments,
         _packages = packages,
-        _defaultFeatureSet = defaultFeatureSet;
+        _packageDefaultFeatureSet = packageDefaultFeatureSet,
+        _nonPackageDefaultFeatureSet = nonPackageDefaultFeatureSet;
 
-  /// Return the [FeatureSet] for the Dart file with the given [uri].
+  /// Return the [FeatureSet] for the package that contains the file.
   FeatureSet getFeatureSet(String path, Uri uri) {
     if (uri.isScheme('dart')) {
-      return _sdkFeatureSet;
-    }
-
-    for (var package in _packages.packages) {
-      if (package.rootFolder.contains(path)) {
-        var languageVersion = package.languageVersion;
-        if (languageVersion == null) {
-          _defaultFeatureSet;
-        } else {
-          return _defaultFeatureSet.restrictToVersion(languageVersion);
-        }
+      var pathSegments = uri.pathSegments;
+      if (pathSegments.isNotEmpty) {
+        var libraryName = pathSegments.first;
+        var experiments = _allowedExperiments.forSdkLibrary(libraryName);
+        return FeatureSet.fromEnableFlags(experiments);
+      } else {
+        return FeatureSet.fromEnableFlags([]);
       }
     }
 
-    return _defaultFeatureSet;
+    var package = _packages.packageForPath(path);
+    if (package != null) {
+      var experiments = _allowedExperiments.forPackage(package.name);
+      if (experiments != null) {
+        return FeatureSet.fromEnableFlags(experiments);
+      }
+
+      return _packageDefaultFeatureSet;
+    }
+
+    return _nonPackageDefaultFeatureSet;
+  }
+
+  /// Return the language version for the package that contains the file.
+  ///
+  /// Each individual file might use `// @dart` to override this version, to
+  /// be either lower, or higher than the package language version.
+  Version getLanguageVersion(String path, Uri uri) {
+    if (uri.isScheme('dart')) {
+      return ExperimentStatus.currentVersion;
+    }
+
+    var package = _packages.packageForPath(path);
+    if (package != null) {
+      var languageVersion = package.languageVersion;
+      if (languageVersion != null) {
+        return languageVersion;
+      }
+    }
+
+    return ExperimentStatus.currentVersion;
   }
 
   static FeatureSetProvider build({
-    @required ResourceProvider resourceProvider,
-    @required ContextRoot contextRoot,
     @required SourceFactory sourceFactory,
-    @required FeatureSet defaultFeatureSet,
+    @required Packages packages,
+    @required FeatureSet packageDefaultFeatureSet,
+    @required FeatureSet nonPackageDefaultFeatureSet,
   }) {
-    var sdkFeatureSet = _determineSdkFeatureSet(
-      resourceProvider,
-      sourceFactory,
-      defaultFeatureSet,
-    );
-
-    var packages = _findPackages(resourceProvider, contextRoot);
-
+    var allowedExperiments = _experimentsForSdk(sourceFactory.dartSdk);
     return FeatureSetProvider._(
-      sdkFeatureSet: sdkFeatureSet,
+      allowedExperiments: allowedExperiments,
       packages: packages,
-      defaultFeatureSet: defaultFeatureSet,
+      packageDefaultFeatureSet: packageDefaultFeatureSet,
+      nonPackageDefaultFeatureSet: nonPackageDefaultFeatureSet,
     );
   }
 
-  /// Read `dart:core` file and determine if SDK in non-nullable by default.
-  ///
-  /// If it is, use the [defaultFeatureSet], which might have enabled
-  /// [Feature.non_nullable], so SDK will be parsed and resolved as
-  /// non-nullable.
-  ///
-  /// Otherwise, restrict the SDK language to the maximum known now.
-  static FeatureSet _determineSdkFeatureSet(
-    ResourceProvider resourceProvider,
-    SourceFactory sourceFactory,
-    FeatureSet defaultFeatureSet,
-  ) {
-    var objectSource = sourceFactory.forUri('dart:core/object.dart');
-    if (objectSource == null) {
-      objectSource = sourceFactory.forUri('dart:core');
-    }
-
-    try {
-      var objectFile = resourceProvider.getFile(objectSource.fullName);
-      var objectContent = objectFile.readAsStringSync();
-      if (!objectContent.contains('bool operator ==(Object other)')) {
-        return defaultFeatureSet.restrictToVersion(_preNonNullableVersion);
-      }
-    } catch (_) {}
-
-    return defaultFeatureSet;
-  }
-
-  static Packages _findPackages(
-    ResourceProvider resourceProvider,
-    ContextRoot contextRoot,
-  ) {
-    if (contextRoot == null) {
-      return Packages(const {});
-    }
-
-    var current = resourceProvider.getFolder(contextRoot.root);
-    for (; current != null; current = current.parent) {
+  static AllowedExperiments _experimentsForSdk(DartSdk sdk) {
+    var experimentsContent = sdk.allowedExperimentsJson;
+    if (experimentsContent != null) {
       try {
-        var jsonFile = current
-            .getChildAssumingFolder('.dart_tool')
-            .getChildAssumingFile('package_config.json');
-        if (jsonFile.exists) {
-          return parsePackageConfigJsonFile(resourceProvider, jsonFile);
-        }
-      } catch (_) {}
-
-      try {
-        var dotFile = current.getChildAssumingFile('.packages');
-        if (dotFile.exists) {
-          return parseDotPackagesFile(resourceProvider, dotFile);
-        }
+        return parseAllowedExperiments(experimentsContent);
       } catch (_) {}
     }
 
-    return Packages(const {});
+    return AllowedExperiments(
+      sdkDefaultExperiments: [],
+      sdkLibraryExperiments: {},
+      packageExperiments: {},
+    );
   }
 }

@@ -18,6 +18,7 @@ String platformPath() => computePlatformBinariesLocation()
 const String mainScript = 'pkg/vm/bin/gen_kernel.dart';
 const String mainScriptPackageUri = 'package:vm/kernel_front_end.dart';
 const String packagesFile = '.packages';
+const String packageConfigFile = '.dart_tool/package_config.json';
 
 void testCompile(List<String> args) async {
   final compilerExitCode =
@@ -37,6 +38,7 @@ main() {
   });
 
   String outputDill() => new File('${tempDir.path}/foo.dill').path;
+  String outputManifest() => new File('${tempDir.path}/foo.manifest').path;
 
   test('compile-simple', () async {
     await testCompile([
@@ -48,7 +50,7 @@ main() {
       outputDill(),
       '$sdkDir/$mainScript',
     ]);
-  });
+  }, timeout: Timeout.none);
 
   test('compile-multi-root', () async {
     await testCompile([
@@ -64,7 +66,7 @@ main() {
       outputDill(),
       'test-filesystem-scheme:///$mainScript',
     ]);
-  });
+  }, timeout: Timeout.none);
 
   test('compile-multi-root-with-package-uri-main', () async {
     await testCompile([
@@ -80,7 +82,7 @@ main() {
       outputDill(),
       '$mainScriptPackageUri',
     ]);
-  });
+  }, timeout: Timeout.none);
 
   test('compile-package-split', () async {
     await testCompile([
@@ -91,9 +93,13 @@ main() {
       '--output',
       outputDill(),
       '--split-output-by-packages',
+      '--manifest',
+      outputManifest(),
+      '--component-name',
+      'foo_component',
       '$sdkDir/$mainScript',
     ]);
-  });
+  }, timeout: Timeout.none);
 
   test('compile-bytecode', () async {
     await testCompile([
@@ -107,7 +113,7 @@ main() {
       '--drop-ast',
       '$sdkDir/$mainScript',
     ]);
-  });
+  }, timeout: Timeout.none);
 
   test('compile-bytecode-package-split', () async {
     await testCompile([
@@ -120,7 +126,39 @@ main() {
       '--gen-bytecode',
       '--drop-ast',
       '--split-output-by-packages',
+      '--manifest',
+      outputManifest(),
+      '--component-name',
+      'foo_component',
       '$sdkDir/$mainScript',
     ]);
-  });
+  }, timeout: Timeout.none);
+
+  test('compile-package-config', () async {
+    await testCompile([
+      '--platform',
+      platformPath(),
+      '--packages',
+      '$sdkDir/$packageConfigFile',
+      '--output',
+      outputDill(),
+      '$sdkDir/$mainScript',
+    ]);
+  }, timeout: Timeout.none);
+
+  test('compile-multi-root-package-config', () async {
+    await testCompile([
+      '--platform',
+      platformPath(),
+      '--filesystem-scheme',
+      'test-filesystem-scheme',
+      '--filesystem-root',
+      sdkDir,
+      '--packages',
+      'test-filesystem-scheme:///$packageConfigFile',
+      '--output',
+      outputDill(),
+      'test-filesystem-scheme:///$mainScript',
+    ]);
+  }, timeout: Timeout.none);
 }

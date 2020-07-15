@@ -5,10 +5,9 @@
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/element.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/resolver/scope.dart';
-import 'package:analyzer/src/generated/resolver.dart'
-    show InferenceContext, Scope;
-import 'package:analyzer/src/generated/type_system.dart';
+import 'package:analyzer/src/generated/resolver.dart' show InferenceContext;
 import 'package:analyzer/src/summary2/ast_resolver.dart';
 import 'package:analyzer/src/summary2/link.dart';
 import 'package:analyzer/src/summary2/linking_node_scope.dart';
@@ -16,6 +15,7 @@ import 'package:analyzer/src/summary2/linking_node_scope.dart';
 class DefaultValueResolver {
   final Linker _linker;
   final LibraryElementImpl _libraryElement;
+  final TypeSystemImpl _typeSystem;
 
   ClassElement _classElement;
   CompilationUnitElement _unitElement;
@@ -24,7 +24,8 @@ class DefaultValueResolver {
 
   AstResolver _astResolver;
 
-  DefaultValueResolver(this._linker, this._libraryElement);
+  DefaultValueResolver(this._linker, this._libraryElement)
+      : _typeSystem = _libraryElement.typeSystem;
 
   void resolve() {
     for (CompilationUnitElementImpl unit in _libraryElement.units) {
@@ -100,8 +101,7 @@ class DefaultValueResolver {
     var node = _defaultParameter(parameter);
     if (node == null) return;
 
-    var contextType = TypeVariableEliminator(_libraryElement.typeProvider)
-        .substituteType(parameter.type);
+    var contextType = _typeSystem.eliminateTypeVariables(parameter.type);
 
     _astResolver ??= AstResolver(_linker, _unitElement, _scope);
     _astResolver.resolve(

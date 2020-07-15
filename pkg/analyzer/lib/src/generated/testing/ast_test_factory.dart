@@ -14,18 +14,19 @@ import 'package:analyzer/src/generated/testing/token_factory.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:meta/meta.dart';
 
-/**
- * The class `AstTestFactory` defines utility methods that can be used to create AST nodes. The
- * nodes that are created are complete in the sense that all of the tokens that would have been
- * associated with the nodes by a parser are also created, but the token stream is not constructed.
- * None of the nodes are resolved.
- *
- * The general pattern is for the name of the factory method to be the same as the name of the class
- * of AST node being created. There are two notable exceptions. The first is for methods creating
- * nodes that are part of a cascade expression. These methods are all prefixed with 'cascaded'. The
- * second is places where a shorter name seemed unambiguous and easier to read, such as using
- * 'identifier' rather than 'prefixedIdentifier', or 'integer' rather than 'integerLiteral'.
- */
+/// The class `AstTestFactory` defines utility methods that can be used to
+/// create AST nodes. The nodes that are created are complete in the sense that
+/// all of the tokens that would have been
+/// associated with the nodes by a parser are also created, but the token stream
+/// is not constructed. None of the nodes are resolved.
+///
+/// The general pattern is for the name of the factory method to be the same as
+/// the name of the class of AST node being created. There are two notable
+/// exceptions. The first is for methods creating nodes that are part of a
+/// cascade expression. These methods are all prefixed with 'cascaded'. The
+/// second is places where a shorter name seemed unambiguous and easier to read,
+/// such as using 'identifier' rather than 'prefixedIdentifier', or 'integer'
+/// rather than 'integerLiteral'.
 class AstTestFactory {
   static AdjacentStrings adjacentStrings(List<StringLiteral> strings) =>
       astFactory.adjacentStrings(strings);
@@ -138,11 +139,13 @@ class AstTestFactory {
           identifier3(label), TokenFactory.tokenFromType(TokenType.SEMICOLON));
 
   static IndexExpression cascadedIndexExpression(Expression index) =>
-      astFactory.indexExpressionForCascade(
-          TokenFactory.tokenFromType(TokenType.PERIOD_PERIOD),
-          TokenFactory.tokenFromType(TokenType.OPEN_SQUARE_BRACKET),
-          index,
-          TokenFactory.tokenFromType(TokenType.CLOSE_SQUARE_BRACKET));
+      astFactory.indexExpressionForCascade2(
+          period: TokenFactory.tokenFromType(TokenType.PERIOD_PERIOD),
+          leftBracket:
+              TokenFactory.tokenFromType(TokenType.OPEN_SQUARE_BRACKET),
+          index: index,
+          rightBracket:
+              TokenFactory.tokenFromType(TokenType.CLOSE_SQUARE_BRACKET));
 
   static MethodInvocation cascadedMethodInvocation(String methodName,
           [List<Expression> arguments]) =>
@@ -160,8 +163,11 @@ class AstTestFactory {
           identifier3(propertyName));
 
   static CascadeExpression cascadeExpression(Expression target,
-          [List<Expression> cascadeSections]) =>
-      astFactory.cascadeExpression(target, cascadeSections);
+      [List<Expression> cascadeSections]) {
+    var cascade = astFactory.cascadeExpression(target, cascadeSections);
+    cascade.target.endToken.next = cascadeSections.first.beginToken;
+    return cascade;
+  }
 
   static CatchClause catchClause(String exceptionParameter,
           [List<Statement> statements]) =>
@@ -772,21 +778,36 @@ class AstTestFactory {
           [List<Combinator> combinators]) =>
       importDirective(null, uri, false, prefix, combinators);
 
-  static IndexExpression indexExpression(Expression array, Expression index,
-          [TokenType leftBracket = TokenType.OPEN_SQUARE_BRACKET]) =>
-      astFactory.indexExpressionForTarget(
-          array,
-          TokenFactory.tokenFromType(leftBracket),
-          index,
-          TokenFactory.tokenFromType(TokenType.CLOSE_SQUARE_BRACKET));
+  static IndexExpression indexExpression({
+    @required Expression target,
+    bool hasQuestion = false,
+    @required Expression index,
+  }) {
+    return astFactory.indexExpressionForTarget2(
+      target: target,
+      question: hasQuestion
+          ? TokenFactory.tokenFromType(
+              TokenType.QUESTION,
+            )
+          : null,
+      leftBracket: TokenFactory.tokenFromType(
+        TokenType.OPEN_SQUARE_BRACKET,
+      ),
+      index: index,
+      rightBracket: TokenFactory.tokenFromType(
+        TokenType.CLOSE_SQUARE_BRACKET,
+      ),
+    );
+  }
 
   static IndexExpression indexExpressionForCascade(Expression array,
           Expression index, TokenType period, TokenType leftBracket) =>
-      astFactory.indexExpressionForCascade(
-          TokenFactory.tokenFromType(period),
-          TokenFactory.tokenFromType(leftBracket),
-          index,
-          TokenFactory.tokenFromType(TokenType.CLOSE_SQUARE_BRACKET));
+      astFactory.indexExpressionForCascade2(
+          period: TokenFactory.tokenFromType(period),
+          leftBracket: TokenFactory.tokenFromType(leftBracket),
+          index: index,
+          rightBracket:
+              TokenFactory.tokenFromType(TokenType.CLOSE_SQUARE_BRACKET));
 
   static InstanceCreationExpression instanceCreationExpression(
           Keyword keyword, ConstructorName name,
@@ -1313,13 +1334,11 @@ class AstTestFactory {
         types, TokenFactory.tokenFromType(TokenType.GT));
   }
 
-  /**
-   * Create a type name whose name has been resolved to the given [element] and
-   * whose type has been resolved to the type of the given element.
-   *
-   * <b>Note:</b> This method does not correctly handle class elements that have
-   * type parameters.
-   */
+  /// Create a type name whose name has been resolved to the given [element] and
+  /// whose type has been resolved to the type of the given element.
+  ///
+  /// <b>Note:</b> This method does not correctly handle class elements that
+  /// have type parameters.
   static TypeName typeName(ClassElement element,
       [List<TypeAnnotation> arguments]) {
     SimpleIdentifier name = identifier3(element.name);

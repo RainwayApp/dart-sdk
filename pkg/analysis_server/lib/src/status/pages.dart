@@ -16,7 +16,8 @@ String printInteger(int value) => numberFormat.format(value);
 
 String printMilliseconds(num value) => '${numberFormat.format(value)} ms';
 
-String printPercentage(num value) => '${(value * 100).toStringAsFixed(1)}%';
+String printPercentage(num value, [fractionDigits = 1]) =>
+    '${(value * 100).toStringAsFixed(fractionDigits)}%';
 
 /// An entity that knows how to serve itself over http.
 abstract class Page {
@@ -30,9 +31,7 @@ abstract class Page {
 
   String get path => '/$id';
 
-  Future<void> asyncDiv(void gen(), {String classes}) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
+  Future<void> asyncDiv(void Function() gen, {String classes}) async {
     if (classes != null) {
       buf.writeln('<div class="$classes">');
     } else {
@@ -48,7 +47,7 @@ abstract class Page {
     div(() => buf.writeln(str), classes: 'blankslate');
   }
 
-  void div(void gen(), {String classes}) {
+  void div(void Function() gen, {String classes}) {
     if (classes != null) {
       buf.writeln('<div class="$classes">');
     } else {
@@ -59,8 +58,6 @@ abstract class Page {
   }
 
   Future<String> generate(Map<String, String> params) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     buf.clear();
     // TODO(brianwilkerson) Determine if await is necessary, if so, change the
     // return type of [generatePage] to `Future<void>`.
@@ -90,9 +87,9 @@ abstract class Page {
     buf.writeln('<h4>${raw ? text : escape(text)}</h4>');
   }
 
-  void inputList<T>(Iterable<T> items, void gen(T item)) {
+  void inputList<T>(Iterable<T> items, void Function(T item) gen) {
     buf.writeln('<select size="8" style="width: 100%">');
-    for (T item in items) {
+    for (var item in items) {
       buf.write('<option>');
       gen(item);
       buf.write('</option>');
@@ -103,7 +100,7 @@ abstract class Page {
   bool isCurrentPage(String pathToTest) => path == pathToTest;
 
   void p(String text, {String style, bool raw = false, String classes}) {
-    String c = classes == null ? '' : ' class="$classes"';
+    var c = classes == null ? '' : ' class="$classes"';
 
     if (style != null) {
       buf.writeln('<p$c style="$style">${raw ? text : escape(text)}</p>');
@@ -112,7 +109,7 @@ abstract class Page {
     }
   }
 
-  void pre(void gen(), {String classes}) {
+  void pre(void Function() gen, {String classes}) {
     if (classes != null) {
       buf.write('<pre class="$classes">');
     } else {
@@ -129,9 +126,9 @@ abstract class Page {
     });
   }
 
-  void ul<T>(Iterable<T> items, void gen(T item), {String classes}) {
+  void ul<T>(Iterable<T> items, void Function(T item) gen, {String classes}) {
     buf.writeln('<ul${classes == null ? '' : ' class=$classes'}>');
-    for (T item in items) {
+    for (var item in items) {
       buf.write('<li>');
       gen(item);
       buf.write('</li>');
@@ -154,19 +151,17 @@ abstract class Site {
   Page createUnknownPage(String unknownPath);
 
   Future<void> handleGetRequest(HttpRequest request) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     try {
-      String path = request.uri.path;
+      var path = request.uri.path;
 
       if (path == '/') {
         respondRedirect(request, pages.first.path);
         return;
       }
 
-      for (Page page in pages) {
+      for (var page in pages) {
         if (page.path == path) {
-          HttpResponse response = request.response;
+          var response = request.response;
           response.headers.contentType = ContentType.html;
           response.write(await page.generate(request.uri.queryParameters));
           response.close();
@@ -180,7 +175,7 @@ abstract class Site {
         await respond(request, createExceptionPage('$e', st),
             HttpStatus.internalServerError);
       } catch (e, st) {
-        HttpResponse response = request.response;
+        var response = request.response;
         response.statusCode = HttpStatus.internalServerError;
         response.headers.contentType = ContentType.text;
         response.write('$e\n\n$st');
@@ -189,20 +184,46 @@ abstract class Site {
     }
   }
 
-  Future<void> respond(HttpRequest request, Page page,
-      [int code = HttpStatus.ok]) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
-    HttpResponse response = request.response;
+  Future<void> respond(
+    HttpRequest request,
+    Page page, [
+    int code = HttpStatus.ok,
+  ]) async {
+    var response = request.response;
     response.statusCode = code;
     response.headers.contentType = ContentType.html;
     response.write(await page.generate(request.uri.queryParameters));
-    response.close();
+    await response.close();
   }
 
-  void respondRedirect(HttpRequest request, String pathFragment) {
-    HttpResponse response = request.response;
+  Future<void> respondJson(
+    HttpRequest request,
+    Map<String, Object> json, [
+    int code = HttpStatus.ok,
+  ]) async {
+    var response = request.response;
+    response.statusCode = code;
+    response.headers.contentType = ContentType.json;
+    response.write(jsonEncode(json));
+    await response.close();
+  }
+
+  Future<void> respondOk(
+    HttpRequest request, {
+    int code = HttpStatus.ok,
+  }) async {
+    if (request.headers.contentType.subType == 'json') {
+      return respondJson(request, {'success': true}, code);
+    }
+
+    var response = request.response;
+    response.statusCode = code;
+    await response.close();
+  }
+
+  Future<void> respondRedirect(HttpRequest request, String pathFragment) async {
+    var response = request.response;
     response.statusCode = HttpStatus.movedTemporarily;
-    response.redirect(request.uri.resolve(pathFragment));
+    await response.redirect(request.uri.resolve(pathFragment));
   }
 }

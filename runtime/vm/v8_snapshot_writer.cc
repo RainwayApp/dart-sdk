@@ -34,6 +34,16 @@ V8SnapshotProfileWriter::V8SnapshotProfileWriter(Zone* zone)
 
   strings_.Insert({"<unknown>", kUnknownString});
   strings_.Insert({"<artificial root>", kArtificialRootString});
+
+  nodes_.Insert({ArtificialRootId(),
+                 {
+                     kArtificialRoot,
+                     kArtificialRootString,
+                     ArtificialRootId(),
+                     0,
+                     nullptr,
+                     0,
+                 }});
 }
 
 void V8SnapshotProfileWriter::SetObjectTypeAndName(ObjectId object_id,
@@ -53,7 +63,7 @@ void V8SnapshotProfileWriter::SetObjectTypeAndName(ObjectId object_id,
     info->name = EnsureString(name);
   } else {
     info->name =
-        EnsureString(OS::SCreate(zone_, "Unnamed [%s] %s", type, name));
+        EnsureString(OS::SCreate(zone_, "Unnamed [%s] %s", type, "(nil)"));
   }
 }
 
@@ -90,10 +100,9 @@ V8SnapshotProfileWriter::NodeInfo V8SnapshotProfileWriter::DefaultNode(
   };
 }
 
-V8SnapshotProfileWriter::NodeInfo V8SnapshotProfileWriter::ArtificialRoot() {
-  return {
-      kArtificialRoot, kArtificialRootString, {kArtificial, 0}, 0, nullptr, 0,
-  };
+const V8SnapshotProfileWriter::NodeInfo&
+V8SnapshotProfileWriter::ArtificialRoot() {
+  return nodes_.Lookup(ArtificialRootId())->value;
 }
 
 V8SnapshotProfileWriter::NodeInfo* V8SnapshotProfileWriter::EnsureId(
@@ -134,7 +143,8 @@ void V8SnapshotProfileWriter::WriteEdgeInfo(JSONWriter* writer,
   writer->PrintNewline();
 }
 
-void V8SnapshotProfileWriter::AddRoot(ObjectId object_id) {
+void V8SnapshotProfileWriter::AddRoot(ObjectId object_id,
+                                      const char* name /*= nullptr*/) {
   EnsureId(object_id);
   // HeapSnapshotWorker.HeapSnapshot.calculateDistances (from HeapSnapshot.js)
   // assumes that the root does not have more than one edge to any other node
@@ -143,7 +153,8 @@ void V8SnapshotProfileWriter::AddRoot(ObjectId object_id) {
 
   ObjectIdToNodeInfoTraits::Pair pair;
   pair.key = object_id;
-  pair.value = NodeInfo{0, 0, object_id, 0, nullptr, 0};
+  pair.value = NodeInfo{
+      0, name != nullptr ? EnsureString(name) : -1, object_id, 0, nullptr, 0};
   roots_.Insert(pair);
 }
 
@@ -210,8 +221,7 @@ void V8SnapshotProfileWriter::Write(JSONWriter* writer) {
 
     writer->CloseObject();
 
-    writer->PrintProperty64("node_count",
-                            nodes_.Size() + 1 /* artificial root */);
+    writer->PrintProperty64("node_count", nodes_.Size());
     writer->PrintProperty64("edge_count", edge_count_ + roots_.Size());
   }
   writer->CloseObject();
@@ -225,6 +235,9 @@ void V8SnapshotProfileWriter::Write(JSONWriter* writer) {
     auto it = nodes_.GetIterator();
     while ((entry = it.Next()) != nullptr) {
       ASSERT(entry->key == entry->value.id);
+      if (entry->value.id == ArtificialRootId()) {
+        continue;  // Written separately above.
+      }
       entry->value.offset = offset;
       WriteNodeInfo(writer, entry->value);
       offset += kNumNodeFields;
@@ -239,11 +252,19 @@ void V8SnapshotProfileWriter::Write(JSONWriter* writer) {
     ObjectIdToNodeInfoTraits::Pair* entry = nullptr;
     auto roots_it = roots_.GetIterator();
     for (int i = 0; (entry = roots_it.Next()) != nullptr; ++i) {
-      WriteEdgeInfo(writer, {kInternal, i, entry->key});
+      if (entry->value.name != -1) {
+        WriteEdgeInfo(writer, {kProperty, entry->value.name, entry->key});
+      } else {
+        WriteEdgeInfo(writer, {kInternal, i, entry->key});
+      }
     }
 
     auto nodes_it = nodes_.GetIterator();
     while ((entry = nodes_it.Next()) != nullptr) {
+      if (entry->value.edges == nullptr) {
+        continue;  // Artificial root, its edges are written separately above.
+      }
+
       for (intptr_t i = 0; i < entry->value.edges->length(); ++i) {
         WriteEdgeInfo(writer, entry->value.edges->At(i));
       }

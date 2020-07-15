@@ -17,11 +17,22 @@ main(List<String> args) async {
   Directory dataDir = new Directory.fromUri(Platform.script.resolve('data'));
   await runTests<String>(dataDir,
       args: args,
-      supportedMarkers: cfeMarkersWithNnbd,
       createUriForFileName: createUriForFileName,
       onFailure: onFailure,
       runTest: runTestFor(const StaticTypeDataComputer(),
-          [defaultCfeConfig, cfeNonNullableConfig]));
+          [defaultCfeConfig, cfeNonNullableConfig]),
+      skipMap: {
+        defaultCfeConfig.marker: [
+          // NNBD-only tests.
+          'constant_from_opt_in',
+          'constant_from_opt_out',
+          'from_opt_in',
+          'from_opt_out',
+          'if_null.dart',
+          'null_check.dart',
+          'never.dart',
+        ]
+      });
 }
 
 class StaticTypeDataComputer extends DataComputer<String> {
@@ -30,15 +41,21 @@ class StaticTypeDataComputer extends DataComputer<String> {
   /// Function that computes a data mapping for [library].
   ///
   /// Fills [actualMap] with the data.
-  void computeLibraryData(InternalCompilerResult compilerResult,
-      Library library, Map<Id, ActualData<String>> actualMap,
+  void computeLibraryData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Library library,
+      Map<Id, ActualData<String>> actualMap,
       {bool verbose}) {
     new StaticTypeDataExtractor(compilerResult, actualMap)
         .computeForLibrary(library);
   }
 
   @override
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<String>> actualMap,
       {bool verbose}) {
     member.accept(new StaticTypeDataExtractor(compilerResult, actualMap));

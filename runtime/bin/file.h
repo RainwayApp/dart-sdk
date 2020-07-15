@@ -15,6 +15,7 @@
 #include "bin/namespace.h"
 #include "bin/reference_counting.h"
 #include "platform/syslog.h"
+#include "platform/utils.h"
 
 namespace dart {
 namespace bin {
@@ -74,11 +75,13 @@ class File : public ReferenceCounted<File> {
   enum Identical { kIdentical = 0, kDifferent = 1, kError = 2 };
 
   enum StdioHandleType {
+    // These match the constants in stdio.dart.
     kTerminal = 0,
     kPipe = 1,
     kFile = 2,
     kSocket = 3,
-    kOther = 4
+    kOther = 4,
+    kTypeError = 5
   };
 
   enum FileStat {
@@ -194,7 +197,7 @@ class File : public ReferenceCounted<File> {
   // when the file is explicitly closed and the finalizer is no longer
   // needed.
   void DeleteWeakHandle(Dart_Isolate isolate) {
-    Dart_DeleteWeakPersistentHandle(isolate, weak_handle_);
+    Dart_DeleteWeakPersistentHandle(weak_handle_);
     weak_handle_ = NULL;
   }
 
@@ -209,6 +212,9 @@ class File : public ReferenceCounted<File> {
   // the file. If conversion fails, uri is treated as a path.
   static File* OpenUri(Namespace* namespc, const char* uri, FileOpenMode mode);
 
+  // Attempts to convert the given [uri] to a file path.
+  static Utils::CStringUniquePtr UriToPath(const char* uri);
+
   // Create a file object for the specified stdio file descriptor
   // (stdin, stout or stderr).
   static File* OpenStdio(int fd);
@@ -218,6 +224,7 @@ class File : public ReferenceCounted<File> {
 #endif
 
   static bool Exists(Namespace* namespc, const char* path);
+  static bool ExistsUri(Namespace* namespc, const char* uri);
   static bool Create(Namespace* namespc, const char* path);
   static bool CreateLink(Namespace* namespc,
                          const char* path,
@@ -247,14 +254,23 @@ class File : public ReferenceCounted<File> {
   static const char* PathSeparator();
   static const char* StringEscapedPathSeparator();
   static Type GetType(Namespace* namespc, const char* path, bool follow_links);
-  static Identical AreIdentical(Namespace* namespc,
+  static Identical AreIdentical(Namespace* namespc_1,
                                 const char* file_1,
+                                Namespace* namespc_2,
                                 const char* file_2);
   static StdioHandleType GetStdioHandleType(int fd);
 
   // LinkTarget, GetCanonicalPath, and ReadLink may call Dart_ScopeAllocate.
-  static const char* LinkTarget(Namespace* namespc, const char* pathname);
-  static const char* GetCanonicalPath(Namespace* namespc, const char* path);
+  // If dest and its size are provided, Dart String will not be created.
+  // The result will be populated into dest.
+  static const char* LinkTarget(Namespace* namespc,
+                                const char* pathname,
+                                char* dest = nullptr,
+                                int dest_size = 0);
+  static const char* GetCanonicalPath(Namespace* namespc,
+                                      const char* path,
+                                      char* dest = nullptr,
+                                      int dest_size = 0);
   // Link LinkTarget, but pathname must be absolute.
   static const char* ReadLink(const char* pathname);
   static intptr_t ReadLinkInto(const char* pathname,

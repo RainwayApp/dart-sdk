@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "platform/assert.h"
+#include "platform/utils.h"
 #include "vm/allocation.h"
 #include "vm/compiler/runtime_api.h"
 #include "vm/datastream.h"
@@ -28,10 +29,6 @@ class Dwarf;
 class Elf;
 class Instructions;
 class Object;
-class RawApiError;
-class RawCode;
-class RawInstructions;
-class RawObject;
 
 class Image : ValueObject {
  public:
@@ -49,16 +46,45 @@ class Image : ValueObject {
     return snapshot_size - kHeaderSize;
   }
 
-  uword bss_offset() const {
-    return *(reinterpret_cast<const uword*>(raw_memory_) + 1);
+  bool contains(uword address) const {
+    uword start = reinterpret_cast<uword>(object_start());
+    return address >= start && (address - start < object_size());
   }
 
-  static constexpr intptr_t kHeaderFields = 2;
-  static constexpr intptr_t kHeaderSize = kMaxObjectAlignment;
-  COMPILE_ASSERT((kHeaderFields * compiler::target::kWordSize) <= kHeaderSize);
+  // Returns the offset of the BSS section from this image. Only has meaning for
+  // instructions images.
+  word bss_offset() const {
+    auto const raw_value = *(reinterpret_cast<const word*>(raw_memory_) + 1);
+    return Utils::RoundDown(raw_value, kBssAlignment);
+  }
+
+  // Returns true if the image was compiled directly to ELF. Only has meaning
+  // for instructions images.
+  bool compiled_to_elf() const {
+    auto const raw_value = *(reinterpret_cast<const word*>(raw_memory_) + 1);
+    return (raw_value & 0x1) == 0x1;
+  }
 
  private:
+  static constexpr intptr_t kHeaderFields = 2;
+  static constexpr intptr_t kHeaderSize = kMaxObjectAlignment;
+  // Explicitly double-checking kHeaderSize is never changed. Increasing the
+  // Image header size would mean objects would not start at a place expected
+  // by parts of the VM (like the GC) that use Image pages as HeapPages.
+  static_assert(kHeaderSize == kMaxObjectAlignment,
+                "Image page cannot be used as HeapPage");
+
+  // Determines how many bits we have for encoding any extra information in
+  // the BSS offset.
+  static constexpr intptr_t kBssAlignment = compiler::target::kWordSize;
+
   const void* raw_memory_;  // The symbol kInstructionsSnapshot.
+
+  // For access to private constants.
+  friend class AssemblyImageWriter;
+  friend class BlobImageWriter;
+  friend class ImageWriter;
+  friend class Elf;
 
   DISALLOW_COPY_AND_ASSIGN(Image);
 };
@@ -67,10 +93,12 @@ class ImageReader : public ZoneAllocated {
  public:
   ImageReader(const uint8_t* data_image, const uint8_t* instructions_image);
 
-  RawApiError* VerifyAlignment() const;
+  ApiErrorPtr VerifyAlignment() const;
 
-  RawInstructions* GetInstructionsAt(uint32_t offset) const;
-  RawObject* GetObjectAt(uint32_t offset) const;
+  ONLY_IN_PRECOMPILED(uword GetBareInstructionsAt(uint32_t offset) const);
+  ONLY_IN_PRECOMPILED(uword GetBareInstructionsEnd() const);
+  InstructionsPtr GetInstructionsAt(uint32_t offset) const;
+  ObjectPtr GetObjectAt(uint32_t offset) const;
 
  private:
   const uint8_t* data_image_;
@@ -82,16 +110,16 @@ class ImageReader : public ZoneAllocated {
 struct ObjectOffsetPair {
  public:
   ObjectOffsetPair() : ObjectOffsetPair(NULL, 0) {}
-  ObjectOffsetPair(RawObject* obj, int32_t off) : object(obj), offset(off) {}
+  ObjectOffsetPair(ObjectPtr obj, int32_t off) : object(obj), offset(off) {}
 
-  RawObject* object;
+  ObjectPtr object;
   int32_t offset;
 };
 
 class ObjectOffsetTrait {
  public:
   // Typedefs needed for the DirectChainedHashMap template.
-  typedef RawObject* Key;
+  typedef ObjectPtr Key;
   typedef int32_t Value;
   typedef ObjectOffsetPair Pair;
 
@@ -117,7 +145,7 @@ struct ImageWriterCommand {
     InsertBytesOfTrampoline,
   };
 
-  ImageWriterCommand(intptr_t expected_offset, RawCode* code)
+  ImageWriterCommand(intptr_t expected_offset, CodePtr code)
       : expected_offset(expected_offset),
         op(ImageWriterCommand::InsertInstructionOfCode),
         insert_instruction_of_code({code}) {}
@@ -136,7 +164,7 @@ struct ImageWriterCommand {
   Opcode op;
   union {
     struct {
-      RawCode* code;
+      CodePtr code;
     } insert_instruction_of_code;
     struct {
       uint8_t* buffer;
@@ -147,12 +175,15 @@ struct ImageWriterCommand {
 
 class ImageWriter : public ValueObject {
  public:
-  explicit ImageWriter(Heap* heap);
+  explicit ImageWriter(Thread* thread);
   virtual ~ImageWriter() {}
 
   void ResetOffsets() {
     next_data_offset_ = Image::kHeaderSize;
     next_text_offset_ = Image::kHeaderSize;
+    if (FLAG_use_bare_instructions && FLAG_precompiled_mode) {
+      next_text_offset_ += compiler::target::InstructionsSection::HeaderSize();
+    }
     objects_.Clear();
     instructions_.Clear();
   }
@@ -161,12 +192,20 @@ class ImageWriter : public ValueObject {
   // [ImageWriterCommand]s.
   void PrepareForSerialization(GrowableArray<ImageWriterCommand>* commands);
 
-  int32_t GetTextOffsetFor(RawInstructions* instructions, RawCode* code);
-  uint32_t GetDataOffsetFor(RawObject* raw_object);
+  bool IsROSpace() const {
+    return offset_space_ == V8SnapshotProfileWriter::kVmData ||
+           offset_space_ == V8SnapshotProfileWriter::kVmText ||
+           offset_space_ == V8SnapshotProfileWriter::kIsolateData ||
+           offset_space_ == V8SnapshotProfileWriter::kIsolateText;
+  }
+  int32_t GetTextOffsetFor(InstructionsPtr instructions, CodePtr code);
+  uint32_t GetDataOffsetFor(ObjectPtr raw_object);
 
   void Write(WriteStream* clustered_stream, bool vm);
   intptr_t data_size() const { return next_data_offset_; }
   intptr_t text_size() const { return next_text_offset_; }
+  intptr_t GetTextObjectCount() const;
+  void GetTrampolineInfo(intptr_t* count, intptr_t* size) const;
 
   void DumpStatistics();
 
@@ -178,7 +217,41 @@ class ImageWriter : public ValueObject {
 
   void TraceInstructions(const Instructions& instructions);
 
-  static intptr_t SizeInSnapshot(RawObject* object);
+  static intptr_t SizeInSnapshot(ObjectPtr object);
+  static const intptr_t kBareInstructionsAlignment = 4;
+
+  static_assert(
+      (kObjectAlignmentLog2 -
+       compiler::target::ObjectAlignment::kObjectAlignmentLog2) >= 0,
+      "Target object alignment is larger than the host object alignment");
+
+  // Converts the target object size (in bytes) to an appropriate argument for
+  // ObjectLayout::SizeTag methods on the host machine.
+  //
+  // ObjectLayout::SizeTag expects a size divisible by kObjectAlignment and
+  // checks this in debug mode, but the size on the target machine may not be
+  // divisible by the host machine's object alignment if they differ.
+  //
+  // If target_size = n, we convert it to n * m, where m is the host alignment
+  // divided by the target alignment. This means AdjustObjectSizeForTarget(n)
+  // encodes on the host machine to the same bits that decode to n on the target
+  // machine. That is:
+  //    n * (host align / target align) / host align => n / target align
+  static constexpr intptr_t AdjustObjectSizeForTarget(intptr_t target_size) {
+    return target_size
+           << (kObjectAlignmentLog2 -
+               compiler::target::ObjectAlignment::kObjectAlignmentLog2);
+  }
+
+  static UNLESS_DEBUG(constexpr) compiler::target::uword
+      UpdateObjectSizeForTarget(intptr_t size, uword marked_tags) {
+    return ObjectLayout::SizeTag::update(AdjustObjectSizeForTarget(size),
+                                         marked_tags);
+  }
+
+  // Returns nullptr if there is no profile writer.
+  const char* ObjectTypeForProfile(const Object& object) const;
+  static const char* TagObjectTypeAsReadOnly(Zone* zone, const char* type);
 
  protected:
   void WriteROData(WriteStream* stream);
@@ -188,43 +261,41 @@ class ImageWriter : public ValueObject {
   void DumpInstructionsSizes();
 
   struct InstructionsData {
-    InstructionsData(RawInstructions* insns,
-                     RawCode* code,
-                     intptr_t text_offset)
+    InstructionsData(InstructionsPtr insns, CodePtr code, intptr_t text_offset)
         : raw_insns_(insns),
           raw_code_(code),
           text_offset_(text_offset),
           trampoline_bytes(nullptr),
-          trampline_length(0) {}
+          trampoline_length(0) {}
 
     InstructionsData(uint8_t* trampoline_bytes,
-                     intptr_t trampline_length,
+                     intptr_t trampoline_length,
                      intptr_t text_offset)
         : raw_insns_(nullptr),
           raw_code_(nullptr),
           text_offset_(text_offset),
           trampoline_bytes(trampoline_bytes),
-          trampline_length(trampline_length) {}
+          trampoline_length(trampoline_length) {}
 
     union {
-      RawInstructions* raw_insns_;
+      InstructionsPtr raw_insns_;
       const Instructions* insns_;
     };
     union {
-      RawCode* raw_code_;
+      CodePtr raw_code_;
       const Code* code_;
     };
     intptr_t text_offset_;
 
     uint8_t* trampoline_bytes;
-    intptr_t trampline_length;
+    intptr_t trampoline_length;
   };
 
   struct ObjectData {
-    explicit ObjectData(RawObject* raw_obj) : raw_obj_(raw_obj) {}
+    explicit ObjectData(ObjectPtr raw_obj) : raw_obj_(raw_obj) {}
 
     union {
-      RawObject* raw_obj_;
+      ObjectPtr raw_obj_;
       const Object* obj_;
     };
   };
@@ -238,9 +309,13 @@ class ImageWriter : public ValueObject {
   V8SnapshotProfileWriter::IdSpace offset_space_ =
       V8SnapshotProfileWriter::kSnapshot;
   V8SnapshotProfileWriter* profile_writer_ = nullptr;
+  const char* const instructions_section_type_;
+  const char* const instructions_type_;
+  const char* const trampoline_type_;
 
   template <class T>
   friend class TraceImageObjectScope;
+  friend class SnapshotTextObjectNamer;  // For InstructionsData.
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ImageWriter);
@@ -258,43 +333,34 @@ class TraceImageObjectScope {
                         intptr_t section_offset,
                         const T* stream,
                         const Object& object)
-      : writer_(writer),
-        stream_(stream),
+      : writer_(ASSERT_NOTNULL(writer)),
+        stream_(ASSERT_NOTNULL(stream)),
         section_offset_(section_offset),
-        start_offset_(stream_->Position() - section_offset) {
-    if (writer_->profile_writer_ != nullptr) {
-      Thread* thread = Thread::Current();
-      REUSABLE_CLASS_HANDLESCOPE(thread);
-      REUSABLE_STRING_HANDLESCOPE(thread);
-      Class& klass = thread->ClassHandle();
-      String& name = thread->StringHandle();
-      klass = object.clazz();
-      name = klass.UserVisibleName();
-      ASSERT(writer_->offset_space_ != V8SnapshotProfileWriter::kSnapshot);
-      writer_->profile_writer_->SetObjectTypeAndName(
-          {writer_->offset_space_, start_offset_}, name.ToCString(), nullptr);
-    }
-  }
+        start_offset_(stream_->Position() - section_offset),
+        object_(object) {}
 
   ~TraceImageObjectScope() {
-    if (writer_->profile_writer_ != nullptr) {
-      ASSERT(writer_->offset_space_ != V8SnapshotProfileWriter::kSnapshot);
-      writer_->profile_writer_->AttributeBytesTo(
-          {writer_->offset_space_, start_offset_},
-          stream_->Position() - section_offset_ - start_offset_);
-    }
+    if (writer_->profile_writer_ == nullptr) return;
+    ASSERT(writer_->IsROSpace());
+    writer_->profile_writer_->SetObjectTypeAndName(
+        {writer_->offset_space_, start_offset_},
+        writer_->ObjectTypeForProfile(object_), nullptr);
+    writer_->profile_writer_->AttributeBytesTo(
+        {writer_->offset_space_, start_offset_},
+        stream_->Position() - section_offset_ - start_offset_);
   }
 
  private:
-  ImageWriter* writer_;
-  const T* stream_;
-  intptr_t section_offset_;
-  intptr_t start_offset_;
+  ImageWriter* const writer_;
+  const T* const stream_;
+  const intptr_t section_offset_;
+  const intptr_t start_offset_;
+  const Object& object_;
 };
 
-class AssemblyCodeNamer {
+class SnapshotTextObjectNamer {
  public:
-  explicit AssemblyCodeNamer(Zone* zone)
+  explicit SnapshotTextObjectNamer(Zone* zone)
       : zone_(zone),
         owner_(Object::Handle(zone)),
         string_(String::Handle(zone)),
@@ -303,7 +369,9 @@ class AssemblyCodeNamer {
 
   const char* StubNameForType(const AbstractType& type) const;
 
-  const char* AssemblyNameFor(intptr_t code_index, const Code& code);
+  const char* SnapshotNameFor(intptr_t code_index, const Code& code);
+  const char* SnapshotNameFor(intptr_t index,
+                              const ImageWriter::InstructionsData& data);
 
  private:
   Zone* const zone_;
@@ -329,6 +397,7 @@ class AssemblyImageWriter : public ImageWriter {
   void FrameUnwindPrologue();
   void FrameUnwindEpilogue();
   intptr_t WriteByteSequence(uword start, uword end);
+  intptr_t Align(intptr_t alignment, uword position = 0);
 
 #if defined(TARGET_ARCH_IS_64_BIT)
   const char* kLiteralPrefix = ".quad";
@@ -336,18 +405,19 @@ class AssemblyImageWriter : public ImageWriter {
   const char* kLiteralPrefix = ".long";
 #endif
 
-  void WriteWordLiteralText(compiler::target::uword value) {
+  intptr_t WriteWordLiteralText(compiler::target::uword value) {
     // Padding is helpful for comparing the .S with --disassemble.
 #if defined(TARGET_ARCH_IS_64_BIT)
     assembly_stream_.Print(".quad 0x%0.16" Px "\n", value);
 #else
     assembly_stream_.Print(".long 0x%0.8" Px "\n", value);
 #endif
+    return compiler::target::kWordSize;
   }
 
   StreamingWriteStream assembly_stream_;
   Dwarf* assembly_dwarf_;
-  Dwarf* debug_dwarf_;
+  Elf* debug_elf_;
 
   DISALLOW_COPY_AND_ASSIGN(AssemblyImageWriter);
 };
@@ -358,10 +428,8 @@ class BlobImageWriter : public ImageWriter {
                   uint8_t** instructions_blob_buffer,
                   ReAlloc alloc,
                   intptr_t initial_size,
-                  Dwarf* debug_dwarf = nullptr,
-                  intptr_t bss_base = 0,
-                  Elf* elf = nullptr,
-                  Dwarf* elf_dwarf = nullptr);
+                  Elf* debug_elf = nullptr,
+                  Elf* elf = nullptr);
 
   virtual void WriteText(WriteStream* clustered_stream, bool vm);
 
@@ -374,9 +442,7 @@ class BlobImageWriter : public ImageWriter {
 
   WriteStream instructions_blob_stream_;
   Elf* const elf_;
-  Dwarf* const elf_dwarf_;
-  const intptr_t bss_base_;
-  Dwarf* const debug_dwarf_;
+  Elf* const debug_elf_;
 
   DISALLOW_COPY_AND_ASSIGN(BlobImageWriter);
 };

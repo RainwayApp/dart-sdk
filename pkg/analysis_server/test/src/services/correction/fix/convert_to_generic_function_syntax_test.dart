@@ -9,73 +9,83 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
-    defineReflectiveTests(ConvertToGenericFunctionSyntaxTest);
+    defineReflectiveTests(PreferGenericFunctionTypeAliasesTest);
+    defineReflectiveTests(UseFunctionTypeSyntaxForParametersTest);
   });
 }
 
 @reflectiveTest
-class ConvertToGenericFunctionSyntaxTest extends FixProcessorLintTest {
+class PreferGenericFunctionTypeAliasesTest extends FixProcessorLintTest {
   @override
   FixKind get kind => DartFixKind.CONVERT_TO_GENERIC_FUNCTION_SYNTAX;
 
   @override
   String get lintCode => LintNames.prefer_generic_function_type_aliases;
 
-  test_functionTypeAlias_noParameterTypes() async {
+  Future<void> test_functionTypeAlias_noParameterTypes() async {
     await resolveTestUnit('''
-typedef String /*LINT*/F(x);
+typedef String F(x);
 ''');
     await assertNoFix();
   }
 
-  test_functionTypeAlias_noReturnType_noTypeParameters() async {
+  Future<void> test_functionTypeAlias_noReturnType_noTypeParameters() async {
     await resolveTestUnit('''
-typedef String /*LINT*/F(int x);
+typedef String F(int x);
 ''');
     await assertHasFix('''
 typedef F = String Function(int x);
 ''');
   }
 
-  test_functionTypeAlias_noReturnType_typeParameters() async {
+  Future<void> test_functionTypeAlias_noReturnType_typeParameters() async {
     await resolveTestUnit('''
-typedef /*LINT*/F<P, R>(P x);
+typedef F<P, R>(P x);
 ''');
     await assertHasFix('''
-typedef /*LINT*/F<P, R> = Function(P x);
+typedef F<P, R> = Function(P x);
 ''');
   }
 
-  test_functionTypeAlias_returnType_noTypeParameters() async {
+  Future<void> test_functionTypeAlias_returnType_noTypeParameters() async {
     await resolveTestUnit('''
-typedef String /*LINT*/F(int x);
+typedef String F(int x);
 ''');
     await assertHasFix('''
 typedef F = String Function(int x);
 ''');
   }
 
-  test_functionTypeAlias_returnType_typeParameters() async {
+  Future<void> test_functionTypeAlias_returnType_typeParameters() async {
     await resolveTestUnit('''
-typedef R /*LINT*/F<P, R>(P x);
+typedef R F<P, R>(P x);
 ''');
     await assertHasFix('''
 typedef F<P, R> = R Function(P x);
 ''');
   }
+}
 
-  test_functionTypedParameter_noParameterTypes() async {
+@reflectiveTest
+class UseFunctionTypeSyntaxForParametersTest extends FixProcessorLintTest {
+  @override
+  FixKind get kind => DartFixKind.CONVERT_TO_GENERIC_FUNCTION_SYNTAX;
+
+  @override
+  String get lintCode => LintNames.use_function_type_syntax_for_parameters;
+
+  Future<void> test_functionTypedParameter_noParameterTypes() async {
     await resolveTestUnit('''
-g(String /*LINT*/f(x)) {}
+g(String f(x)) {}
 ''');
     await assertNoFix();
   }
 
-  test_functionTypedParameter_returnType() async {
+  Future<void> test_functionTypedParameter_returnType() async {
     await resolveTestUnit('''
-g(String /*LINT*/f(int x)) {}
+g(String f(int x)) {}
 ''');
     await assertHasFix('''
 g(String Function(int x) f) {}

@@ -10,45 +10,54 @@ import 'package:path/path.dart' as path;
 
 import '../benchmarks.dart';
 
+Future<int> _runProcess(
+  String command,
+  List<String> args, {
+  String cwd,
+  bool failOnError = true,
+}) async {
+  print('\n$command ${args.join(' ')}');
+
+  var process = await Process.start(command, args, workingDirectory: cwd);
+
+  process.stdout
+      .transform(utf8.decoder)
+      .transform(LineSplitter())
+      .listen((line) {
+    print('  $line');
+  });
+  process.stderr
+      .transform(utf8.decoder)
+      .transform(LineSplitter())
+      .listen((line) => print('  $line'));
+
+  var exitCode = await process.exitCode;
+  if (exitCode != 0 && failOnError) {
+    throw '$command exited with $exitCode';
+  }
+
+  return exitCode;
+}
+
 /// benchmarks:
 ///   - analysis-flutter-analyze
 class FlutterAnalyzeBenchmark extends Benchmark {
+  Directory flutterDir;
+
   FlutterAnalyzeBenchmark()
       : super(
           'analysis-flutter-analyze',
-          "Clone the flutter/flutter repo and run "
+          'Clone the flutter/flutter repo and run '
               "'flutter analyze --flutter-repo' with the current Dart VM and "
-              "analysis server.",
+              'analysis server.',
           kind: 'cpu',
         );
 
   @override
-  bool get needsSetup => true;
-
-  Directory flutterDir;
+  int get maxIterations => 3;
 
   @override
-  Future oneTimeSetup() async {
-    flutterDir = Directory.systemTemp.createTempSync('flutter');
-
-    // git clone https://github.com/flutter/flutter $flutterDir
-    await _runProcess('git', [
-      'clone',
-      'https://github.com/flutter/flutter',
-      path.canonicalize(flutterDir.path)
-    ]);
-
-    String flutterTool = path.join(flutterDir.path, 'bin', 'flutter');
-
-    // flutter --version
-    await _runProcess(flutterTool, ['--version'], cwd: flutterDir.path);
-
-    // flutter precache
-    await _runProcess(flutterTool, ['precache'], cwd: flutterDir.path);
-
-    // flutter update-packages
-    await _runProcess(flutterTool, ['update-packages'], cwd: flutterDir.path);
-  }
+  bool get needsSetup => true;
 
   @override
   Future oneTimeCleanup() {
@@ -62,7 +71,27 @@ class FlutterAnalyzeBenchmark extends Benchmark {
   }
 
   @override
-  int get maxIterations => 3;
+  Future oneTimeSetup() async {
+    flutterDir = Directory.systemTemp.createTempSync('flutter');
+
+    // git clone https://github.com/flutter/flutter $flutterDir
+    await _runProcess('git', [
+      'clone',
+      'https://github.com/flutter/flutter',
+      path.canonicalize(flutterDir.path)
+    ]);
+
+    var flutterTool = path.join(flutterDir.path, 'bin', 'flutter');
+
+    // flutter --version
+    await _runProcess(flutterTool, ['--version'], cwd: flutterDir.path);
+
+    // flutter precache
+    await _runProcess(flutterTool, ['precache'], cwd: flutterDir.path);
+
+    // flutter update-packages
+    await _runProcess(flutterTool, ['update-packages'], cwd: flutterDir.path);
+  }
 
   @override
   Future<BenchMarkResult> run({
@@ -73,10 +102,9 @@ class FlutterAnalyzeBenchmark extends Benchmark {
       deleteServerCache();
     }
 
-    final String dartSdkPath =
-        path.dirname(path.dirname(Platform.resolvedExecutable));
+    var dartSdkPath = path.dirname(path.dirname(Platform.resolvedExecutable));
 
-    final Stopwatch stopwatch = Stopwatch()..start();
+    var stopwatch = Stopwatch()..start();
 
     await _runProcess(
       Platform.resolvedExecutable,
@@ -95,33 +123,4 @@ class FlutterAnalyzeBenchmark extends Benchmark {
 
     return BenchMarkResult('micros', stopwatch.elapsedMicroseconds);
   }
-}
-
-Future<int> _runProcess(
-  String command,
-  List<String> args, {
-  String cwd,
-  bool failOnError = true,
-}) async {
-  print('\n$command ${args.join(' ')}');
-
-  Process process = await Process.start(command, args, workingDirectory: cwd);
-
-  process.stdout
-      .transform(utf8.decoder)
-      .transform(LineSplitter())
-      .listen((line) {
-    print('  $line');
-  });
-  process.stderr
-      .transform(utf8.decoder)
-      .transform(LineSplitter())
-      .listen((line) => print('  $line'));
-
-  int exitCode = await process.exitCode;
-  if (exitCode != 0 && failOnError) {
-    throw '$command exited with $exitCode';
-  }
-
-  return exitCode;
 }

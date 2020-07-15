@@ -53,7 +53,7 @@ abstract class KernelToElementMap {
   FunctionType getFunctionType(ir.FunctionNode node);
 
   /// Return the [InterfaceType] corresponding to the [cls] with the given
-  /// [typeArguments].
+  /// [typeArguments] and [nullability].
   InterfaceType createInterfaceType(
       ir.Class cls, List<ir.DartType> typeArguments);
 
@@ -80,9 +80,6 @@ abstract class KernelToElementMap {
 
   /// Returns the [ClassEntity] corresponding to the class [node].
   ClassEntity getClass(ir.Class node);
-
-  /// Returns the [TypedefType] corresponding to raw type of the typedef [node].
-  TypedefType getTypedefType(ir.Typedef node);
 
   /// Returns the super [MemberEntity] for a super invocation, get or set of
   /// [name] from the member [context].
@@ -174,9 +171,6 @@ abstract class KernelToElementMap {
   /// Returns the [ir.Library] corresponding to [library].
   ir.Library getLibraryNode(LibraryEntity library);
 
-  /// Returns the node that defines [typedef].
-  ir.Typedef getTypedefNode(covariant TypedefEntity typedef);
-
   /// Returns the defining node for [member].
   ir.Member getMemberNode(covariant MemberEntity member);
 
@@ -190,4 +184,32 @@ enum ForeignKind {
   JS_EMBEDDED_GLOBAL,
   JS_INTERCEPTOR_CONSTANT,
   NONE,
+}
+
+// Members which dart2js ignores.
+bool memberIsIgnorable(ir.Member node, {ir.Class cls}) {
+  if (node is! ir.Procedure) return false;
+  ir.Procedure member = node;
+  if ((member.isMemberSignature || member.isForwardingStub) &&
+      member.isAbstract) {
+    // Skip abstract forwarding stubs. These are never emitted but they
+    // might shadow the inclusion of a mixed in method in code like:
+    //
+    //     class Super {}
+    //     class Mixin<T> {
+    //       void method(T t) {}
+    //     }
+    //     class Class extends Super with Mixin<int> {}
+    //     main() => new Class().method();
+    //
+    // Here a stub is created for `Super&Mixin.method` hiding that
+    // `Mixin.method` is inherited by `Class`.
+    return true;
+  }
+  if (cls != null &&
+      (member.isMemberSignature || member.isForwardingStub) &&
+      cls.isAnonymousMixin) {
+    return true;
+  }
+  return false;
 }

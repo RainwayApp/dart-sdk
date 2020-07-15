@@ -7,14 +7,18 @@ import 'package:kernel/kernel.dart';
 import '../compiler/js_names.dart' as js_ast;
 import '../js_ast/js_ast.dart' as js_ast;
 import '../js_ast/js_ast.dart' show js;
+import 'kernel_helpers.dart';
 
 Set<TypeParameter> freeTypeParameters(DartType t) {
-  var result = Set<TypeParameter>();
+  assert(isKnownDartTypeImplementor(t));
+  var result = <TypeParameter>{};
   void find(DartType t) {
     if (t is TypeParameterType) {
       result.add(t.parameter);
     } else if (t is InterfaceType) {
       t.typeArguments.forEach(find);
+    } else if (t is FutureOrType) {
+      find(t.typeArgument);
     } else if (t is TypedefType) {
       t.typeArguments.forEach(find);
     } else if (t is FunctionType) {
@@ -63,16 +67,29 @@ class _CacheTable {
 
   bool isNamed(DartType type) => _names.containsKey(type);
 
+  /// A name for a type made of JS identifier safe characters.
+  ///
+  /// 'L' and 'N' are prepended to a type name to represent a legacy or nullable
+  /// flavor of a type.
   String _typeString(DartType type, {bool flat = false}) {
+    var nullability = type.declaredNullability == Nullability.legacy
+        ? 'L'
+        : type.declaredNullability == Nullability.nullable ? 'N' : '';
+    assert(isKnownDartTypeImplementor(type));
     if (type is InterfaceType) {
-      var name = type.classNode.name;
+      var name = '${type.classNode.name}$nullability';
       var typeArgs = type.typeArguments;
       if (typeArgs == null) return name;
       if (typeArgs.every((p) => p == const DynamicType())) return name;
       return "${name}Of${typeArgs.map(_typeString).join("\$")}";
     }
+    if (type is FutureOrType) {
+      var name = 'FutureOr$nullability';
+      if (type.typeArgument == const DynamicType()) return name;
+      return '${name}Of${_typeString(type.typeArgument)}';
+    }
     if (type is TypedefType) {
-      var name = type.typedefNode.name;
+      var name = '${type.typedefNode.name}$nullability';
       var typeArgs = type.typeArguments;
       if (typeArgs == null) return name;
       if (typeArgs.every((p) => p == const DynamicType())) return name;
@@ -91,12 +108,13 @@ class _CacheTable {
       } else if (count == 0) {
         paramList = 'Void';
       }
-      return '${paramList}To${rType}';
+      return '${paramList}To$nullability$rType';
     }
-    if (type is TypeParameterType) return type.parameter.name;
-    if (type == const DynamicType()) return 'dynamic';
-    if (type == const VoidType()) return 'void';
-    if (type == const BottomType()) return 'bottom';
+    if (type is TypeParameterType) return '${type.parameter.name}$nullability';
+    if (type is DynamicType) return 'dynamic';
+    if (type is VoidType) return 'void';
+    if (type is NeverType) return 'Never$nullability';
+    if (type is BottomType) return 'bottom';
     return 'invalid';
   }
 
@@ -120,9 +138,11 @@ class _GeneratorTable extends _CacheTable {
   js_ast.Statement _dischargeType(DartType t) {
     var name = _names.remove(t);
     if (name != null) {
-      js_ast.Expression init = _defs.remove(t);
+      var init = _defs.remove(t);
       assert(init != null);
-      return js.statement('let # = () => ((# = #.constFn(#))());',
+      // TODO(vsm): Change back to `let`.
+      // See https://github.com/dart-lang/sdk/issues/40380.
+      return js.statement('var # = () => ((# = #.constFn(#))());',
           [name, name, _runtimeModule, init]);
     }
     return null;

@@ -9,9 +9,15 @@ import "package:expect/expect.dart";
 const u1 = null;
 const int u2 = null;
 const List u3 = null;
-const u4 = const String.fromEnvironment("XXXXX");
-const u5 = const int.fromEnvironment("XXXXX");
-const u6 = const bool.fromEnvironment("XXXXX", defaultValue: null);
+const u4 = const bool.hasEnvironment("XXXXX")
+    ? const String.fromEnvironment("XXXXX")
+    : null;
+const u5 = const bool.hasEnvironment("XXXXX")
+    ? const int.fromEnvironment("XXXXX")
+    : null;
+const u6 = bool.hasEnvironment("XXXXX")
+    ? const bool.fromEnvironment("XXXXX")
+    : null;
 const n1 = 42;
 const n2 = 3.1415;
 const int n3 = 37;

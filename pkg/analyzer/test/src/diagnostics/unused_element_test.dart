@@ -96,6 +96,7 @@ class _A {
 }
 ''', [
       error(HintCode.UNUSED_ELEMENT, 6, 2),
+      error(HintCode.UNUSED_ELEMENT, 20, 12),
     ]);
   }
 
@@ -205,17 +206,19 @@ class A {
 
   test_enum_isUsed_fieldReference() async {
     await assertNoErrorsInCode(r'''
-enum _MyEnum {A, B, C}
+enum _MyEnum {A}
 main() {
-  print(_MyEnum.B);
+  _MyEnum.A;
 }
 ''');
   }
 
   test_enum_notUsed_noReference() async {
     await assertErrorsInCode(r'''
-enum _MyEnum {A, B, C}
-main() {
+enum _MyEnum {A, B}
+void f(d) {
+  d.A;
+  d.B;
 }
 ''', [
       error(HintCode.UNUSED_ELEMENT, 5, 7),
@@ -225,7 +228,7 @@ main() {
   test_factoryConstructor_notUsed_multiple() async {
     await assertErrorsInCode(r'''
 class A {
-  factory A._factory() => null;
+  factory A._factory() => A();
   A();
 }
 ''', [
@@ -236,7 +239,7 @@ class A {
   test_factoryConstructor_notUsed_single() async {
     await assertNoErrorsInCode(r'''
 class A {
-  factory A._factory() => null;
+  factory A._factory() => throw 0;
 }
 ''');
   }
@@ -712,6 +715,76 @@ main() {
 ''');
   }
 
+  test_method_isUsed_privateExtension() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  void m() {}
+}
+void main() {
+  "hello".m();
+}
+''');
+  }
+
+  test_method_isUsed_privateExtension_binaryOperator() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  int operator -(int other) => other;
+}
+void main() {
+  "hello" - 3;
+}
+''');
+  }
+
+  test_method_isUsed_privateExtension_indexOperator() async {
+    await assertNoErrorsInCode(r'''
+extension _A on bool {
+  int operator [](int index) => 7;
+}
+void main() {
+  false[3];
+}
+''');
+  }
+
+  test_method_isUsed_privateExtension_operator_assignment() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  String operator -(int other) => this;
+}
+void f(String s) {
+  s -= 3;
+}
+''');
+  }
+
+  test_method_isUsed_privateExtension_postfixOperator() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  String operator -(int i) => this;
+}
+void f(String a) {
+  a--;
+}
+''');
+  }
+
+  // Postfix operators can only be called, not defined. The "notUsed" sibling to
+  // this test is the test on a binary operator.
+  test_method_isUsed_privateExtension_prefixOperator() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  int operator ~() => 7;
+}
+void main() {
+  ~"hello";
+}
+''');
+  }
+
+  // Assignment operators can only be called, not defined. The "notUsed" sibling
+  // to this test is the test on a binary operator.
   test_method_isUsed_staticInvocation() async {
     await assertNoErrorsInCode(r'''
 class A {
@@ -719,6 +792,28 @@ class A {
 }
 main() {
   A._m();
+}
+''');
+  }
+
+  test_method_isUsed_unnamedExtension() async {
+    await assertNoErrorsInCode(r'''
+extension on String {
+  void m() {}
+}
+void main() {
+  "hello".m();
+}
+''');
+  }
+
+  test_method_isUsed_unnamedExtension_operator() async {
+    await assertNoErrorsInCode(r'''
+extension on String {
+  int operator -(int other) => other;
+}
+void main() {
+  "hello" - 3;
 }
 ''');
   }
@@ -744,6 +839,46 @@ class A {
 }
 ''', [
       error(HintCode.UNUSED_ELEMENT, 19, 2),
+    ]);
+  }
+
+  test_method_notUsed_privateExtension() async {
+    await assertErrorsInCode(r'''
+extension _A on String {
+  void m() {}
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 32, 1),
+    ]);
+  }
+
+  test_method_notUsed_privateExtension_indexOperator() async {
+    await assertErrorsInCode(r'''
+extension _A on bool {
+  int operator [](int index) => 7;
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 38, 2),
+    ]);
+  }
+
+  test_method_notUsed_privateExtension_operator() async {
+    await assertErrorsInCode(r'''
+extension _A on String {
+  int operator -(int other) => other;
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 40, 1),
+    ]);
+  }
+
+  test_method_notUsed_privateExtension_prefixOperator() async {
+    await assertErrorsInCode(r'''
+extension _A on String {
+  int operator ~() => 7;
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 40, 1),
     ]);
   }
 
@@ -780,6 +915,99 @@ int g() => 7;
 ''', [
       error(HintCode.UNUSED_ELEMENT, 16, 2),
     ]);
+  }
+
+  test_method_notUsed_unnamedExtension() async {
+    await assertErrorsInCode(r'''
+extension on String {
+  void m() {}
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 29, 1),
+    ]);
+  }
+
+  test_method_notUsed_unnamedExtension_operator() async {
+    await assertErrorsInCode(r'''
+extension on String {
+  int operator -(int other) => other;
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 37, 1),
+    ]);
+  }
+
+  test_publicStaticMethod_privateClass_isUsed() async {
+    await assertNoErrorsInCode(r'''
+class _A {
+  static void m() {}
+}
+void main() {
+  _A.m();
+}
+''');
+  }
+
+  test_publicStaticMethod_privateClass_notUsed() async {
+    await assertErrorsInCode(r'''
+class _A {
+  static void m() {}
+}
+void f(_A a) {}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 25, 1),
+    ]);
+  }
+
+  test_publicStaticMethod_privateExtension_isUsed() async {
+    await assertNoErrorsInCode(r'''
+extension _A on String {
+  static void m() {}
+}
+void main() {
+  _A.m();
+}
+''');
+  }
+
+  test_publicStaticMethod_privateExtension_notUsed() async {
+    await assertErrorsInCode(r'''
+extension _A on String {
+  static void m() {}
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 39, 1),
+    ]);
+  }
+
+  test_publicStaticMethod_privateMixin_isUsed() async {
+    await assertNoErrorsInCode(r'''
+mixin _A {
+  static void m() {}
+}
+void main() {
+  _A.m();
+}
+''');
+  }
+
+  test_publicStaticMethod_privateMixin_notUsed() async {
+    await assertErrorsInCode(r'''
+mixin _A {
+  static void m() {}
+}
+void main() {
+  _A;
+}
+''', [
+      error(HintCode.UNUSED_ELEMENT, 25, 1),
+    ]);
+  }
+
+  test_publicTopLevelFunction_notUsed() async {
+    await assertNoErrorsInCode(r'''
+int get a => 1;
+''');
   }
 
   test_setter_isUsed_invocation_implicitThis() async {

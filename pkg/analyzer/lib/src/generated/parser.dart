@@ -362,17 +362,14 @@ class Parser {
         _tokenMatchesKeyword(afterReturnType, Keyword.FUNCTION)) {
       afterReturnType = skipGenericFunctionTypeAfterReturnType(afterReturnType);
     }
-    if (afterReturnType == null) {
-      // There was no return type, but it is optional, so go back to where we
-      // started.
-      afterReturnType = _currentToken;
-    }
+    // If there was no return type, because it was optional, go back
+    // to where we started.
+    afterReturnType ??= _currentToken;
     Token afterIdentifier = skipSimpleIdentifier(afterReturnType);
-    if (afterIdentifier == null) {
-      // It's possible that we parsed the function name as if it were a type
-      // name, so see whether it makes sense if we assume that there is no type.
-      afterIdentifier = skipSimpleIdentifier(_currentToken);
-    }
+
+    // It's possible that we parsed the function name as if it were a type
+    // name, so see whether it makes sense if we assume that there is no type.
+    afterIdentifier ??= skipSimpleIdentifier(_currentToken);
     if (afterIdentifier == null) {
       return false;
     }
@@ -407,9 +404,7 @@ class Parser {
       return false;
     }
     Token afterTypeParameters = _skipTypeParameterList(token);
-    if (afterTypeParameters == null) {
-      afterTypeParameters = token;
-    }
+    afterTypeParameters ??= token;
     Token afterParameters = _skipFormalParameterList(afterTypeParameters);
     if (afterParameters == null) {
       return false;
@@ -786,8 +781,11 @@ class Parser {
       try {
         Expression index = parseExpression2();
         Token rightBracket = _expect(TokenType.CLOSE_SQUARE_BRACKET);
-        return astFactory.indexExpressionForTarget(
-            prefix, leftBracket, index, rightBracket);
+        return astFactory.indexExpressionForTarget2(
+            target: prefix,
+            leftBracket: leftBracket,
+            index: index,
+            rightBracket: rightBracket);
       } finally {
         _inInitializer = wasInInitializer;
       }
@@ -807,8 +805,11 @@ class Parser {
         Token leftBracket = getAndAdvance();
         Expression index = parseSimpleIdentifier();
         Token rightBracket = getAndAdvance();
-        return astFactory.indexExpressionForTarget(
-            prefix, leftBracket, index, rightBracket);
+        return astFactory.indexExpressionForTarget2(
+            target: prefix,
+            leftBracket: leftBracket,
+            index: index,
+            rightBracket: rightBracket);
       } else {
         if (!optional) {
           // Report the missing selector.
@@ -979,8 +980,11 @@ class Parser {
       try {
         Expression index = parseExpression2();
         Token rightBracket = _expect(TokenType.CLOSE_SQUARE_BRACKET);
-        expression = astFactory.indexExpressionForCascade(
-            period, leftBracket, index, rightBracket);
+        expression = astFactory.indexExpressionForCascade2(
+            period: period,
+            leftBracket: leftBracket,
+            index: index,
+            rightBracket: rightBracket);
         period;
       } finally {
         _inInitializer = wasInInitializer;
@@ -1604,7 +1608,10 @@ class Parser {
       BooleanErrorListener listener = BooleanErrorListener();
       Scanner scanner = Scanner(
           null, SubSequenceReader(referenceSource, sourceOffset), listener)
-        ..configureFeatures(_featureSet);
+        ..configureFeatures(
+          featureSetForOverriding: _featureSet,
+          featureSet: _featureSet,
+        );
       scanner.setSourceStart(1, 1);
       Token firstToken = scanner.tokenize();
       if (listener.errorReported) {
@@ -1890,7 +1897,10 @@ class Parser {
           _reportErrorForToken(ParserErrorCode.STACK_OVERFLOW, _currentToken);
           Token eof = Token.eof(0);
           return astFactory.compilationUnit(
-              beginToken: eof, endToken: eof, featureSet: _featureSet);
+            beginToken: eof,
+            endToken: eof,
+            featureSet: _featureSet,
+          );
         }
         if (member != null) {
           declarations.add(member);
@@ -1940,12 +1950,13 @@ class Parser {
       }
     }
     return astFactory.compilationUnit(
-        beginToken: firstToken,
-        scriptTag: scriptTag,
-        directives: directives,
-        declarations: declarations,
-        endToken: _currentToken,
-        featureSet: _featureSet);
+      beginToken: firstToken,
+      scriptTag: scriptTag,
+      directives: directives,
+      declarations: declarations,
+      endToken: _currentToken,
+      featureSet: _featureSet,
+    );
   }
 
   /// Parse a compilation unit member. The [commentAndMetadata] is the metadata
@@ -2053,12 +2064,8 @@ class Parser {
           getAndAdvance()));
     } else if (!_matchesIdentifier()) {
       Token keyword = modifiers.varKeyword;
-      if (keyword == null) {
-        keyword = modifiers.finalKeyword;
-      }
-      if (keyword == null) {
-        keyword = modifiers.constKeyword;
-      }
+      keyword ??= modifiers.finalKeyword;
+      keyword ??= modifiers.constKeyword;
       if (keyword != null) {
         //
         // We appear to have found an incomplete top-level variable declaration.
@@ -2396,19 +2403,21 @@ class Parser {
           _advance();
         }
         return astFactory.compilationUnit(
-            beginToken: firstToken,
-            scriptTag: scriptTag,
-            directives: directives,
-            endToken: _currentToken,
-            featureSet: _featureSet);
+          beginToken: firstToken,
+          scriptTag: scriptTag,
+          directives: directives,
+          endToken: _currentToken,
+          featureSet: _featureSet,
+        );
       }
     }
     return astFactory.compilationUnit(
-        beginToken: firstToken,
-        scriptTag: scriptTag,
-        directives: directives,
-        endToken: _currentToken,
-        featureSet: _featureSet);
+      beginToken: firstToken,
+      scriptTag: scriptTag,
+      directives: directives,
+      endToken: _currentToken,
+      featureSet: _featureSet,
+    );
   }
 
   /// Parse a documentation comment based on the given list of documentation

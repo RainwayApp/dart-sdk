@@ -5,6 +5,8 @@ import 'package:expect/minitest.dart';
 
 import 'package:smith/smith.dart';
 
+import 'test_helpers.dart';
+
 void main() {
   group("Configuration", () {
     test("equality", () {
@@ -380,7 +382,6 @@ void main() {
         isMinified: true,
         useAnalyzerCfe: true,
         useAnalyzerFastaParser: true,
-        useBlobs: true,
         useElf: true,
         useHotReload: true,
         useHotReloadRollback: true,
@@ -410,7 +411,6 @@ architecture: ia32 x64
    minified: false true
    use-cfe: false true
    analyzer-use-fasta-parser: false true
-   use-blobs: false true
    host-checked: false true
    hot-reload: false true
    hot-reload-rollback: false true
@@ -438,23 +438,4 @@ architecture: ia32 ia32
       });
     });
   });
-}
-
-void expectParseError(String name, Map<String, dynamic> options, String error) {
-  try {
-    var configuration = Configuration.parse(name, options);
-    fail("Expected FormatException but got $configuration.");
-  } on FormatException catch (ex) {
-    expect(ex.message, equals(error));
-  }
-}
-
-void expectExpandError(
-    String template, Map<String, dynamic> options, String error) {
-  try {
-    var configurations = Configuration.expandTemplate(template, options);
-    fail("Expected FormatException but got $configurations.");
-  } on FormatException catch (ex) {
-    expect(ex.message, equals(error));
-  }
 }

@@ -10,14 +10,14 @@ import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
+import 'package:analyzer/src/dart/resolver/assignment_expression_resolver.dart';
 import 'package:analyzer/src/dart/resolver/flow_analysis_visitor.dart';
 import 'package:analyzer/src/dart/resolver/invocation_inference_helper.dart';
 import 'package:analyzer/src/dart/resolver/resolution_result.dart';
 import 'package:analyzer/src/dart/resolver/type_property_resolver.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/element_type_provider.dart';
 import 'package:analyzer/src/generated/resolver.dart';
-import 'package:analyzer/src/generated/type_system.dart';
 import 'package:analyzer/src/task/strong/checker.dart';
 import 'package:meta/meta.dart';
 
@@ -25,19 +25,21 @@ import 'package:meta/meta.dart';
 class PrefixExpressionResolver {
   final ResolverVisitor _resolver;
   final FlowAnalysisHelper _flowAnalysis;
-  final ElementTypeProvider _elementTypeProvider;
   final TypePropertyResolver _typePropertyResolver;
   final InvocationInferenceHelper _inferenceHelper;
+  final AssignmentExpressionShared _assignmentShared;
 
   PrefixExpressionResolver({
     @required ResolverVisitor resolver,
     @required FlowAnalysisHelper flowAnalysis,
-    @required ElementTypeProvider elementTypeProvider,
   })  : _resolver = resolver,
         _flowAnalysis = flowAnalysis,
-        _elementTypeProvider = elementTypeProvider,
         _typePropertyResolver = resolver.typePropertyResolver,
-        _inferenceHelper = resolver.inferenceHelper;
+        _inferenceHelper = resolver.inferenceHelper,
+        _assignmentShared = AssignmentExpressionShared(
+          resolver: resolver,
+          flowAnalysis: flowAnalysis,
+        );
 
   ErrorReporter get _errorReporter => _resolver.errorReporter;
 
@@ -49,19 +51,17 @@ class PrefixExpressionResolver {
 
   void resolve(PrefixExpressionImpl node) {
     var operator = node.operator.type;
-    var operand = node.operand;
-
     if (operator == TokenType.BANG) {
-      InferenceContext.setType(operand, _typeProvider.boolType);
+      _resolveNegation(node);
+      return;
     }
-    operand.accept(_resolver);
+
+    node.operand.accept(_resolver);
+
+    _assignmentShared.checkLateFinalAlreadyAssigned(node.operand);
 
     _resolve1(node);
     _resolve2(node);
-
-    if (operator == TokenType.BANG) {
-      _flowAnalysis?.flow?.logicalNot_end(node, operand);
-    }
   }
 
   /// Check that the result [type] of a prefix or postfix `++` or `--`
@@ -71,7 +71,7 @@ class PrefixExpressionResolver {
   void _checkForInvalidAssignmentIncDec(
       AstNode node, Expression operand, DartType type) {
     var operandWriteType = _getStaticType(operand);
-    if (!_typeSystem.isAssignableTo(type, operandWriteType)) {
+    if (!_typeSystem.isAssignableTo2(type, operandWriteType)) {
       _resolver.errorReporter.reportErrorForNode(
         StaticTypeWarningCode.INVALID_ASSIGNMENT,
         node,
@@ -92,17 +92,14 @@ class PrefixExpressionResolver {
       // This is a function invocation expression disguised as something else.
       // We are invoking a getter and then invoking the returned function.
       //
-      FunctionType propertyType =
-          _elementTypeProvider.getExecutableType(element);
+      FunctionType propertyType = element.type;
       if (propertyType != null) {
         return _resolver.inferenceHelper.computeInvokeReturnType(
-            propertyType.returnType,
-            isNullAware: false);
+          propertyType.returnType,
+        );
       }
     } else if (element is ExecutableElement) {
-      return _resolver.inferenceHelper.computeInvokeReturnType(
-          _elementTypeProvider.getExecutableType(element),
-          isNullAware: false);
+      return _resolver.inferenceHelper.computeInvokeReturnType(element.type);
     }
     return DynamicTypeImpl.instance;
   }
@@ -130,7 +127,6 @@ class PrefixExpressionResolver {
     if (read) {
       var type = getReadType(
         expression,
-        elementTypeProvider: _elementTypeProvider,
       );
       return _resolveTypeParameter(type);
     } else {
@@ -138,7 +134,7 @@ class PrefixExpressionResolver {
         var element = expression.staticElement;
         if (element is PromotableElement) {
           // We're writing to the element so ignore promotions.
-          return _elementTypeProvider.getVariableType(element);
+          return element.type;
         } else {
           return expression.staticType;
         }
@@ -192,7 +188,7 @@ class PrefixExpressionResolver {
 
       if (identical(staticType, NeverTypeImpl.instance)) {
         _resolver.errorReporter.reportErrorForNode(
-          StaticWarningCode.INVALID_USE_OF_NEVER_VALUE,
+          HintCode.RECEIVER_OF_TYPE_NEVER,
           operand,
         );
         return;
@@ -226,9 +222,7 @@ class PrefixExpressionResolver {
 
   void _resolve2(PrefixExpressionImpl node) {
     TokenType operator = node.operator.type;
-    if (operator == TokenType.BANG) {
-      _recordStaticType(node, _nonNullable(_typeProvider.boolType));
-    } else if (identical(node.operand.staticType, NeverTypeImpl.instance)) {
+    if (identical(node.operand.staticType, NeverTypeImpl.instance)) {
       _recordStaticType(node, NeverTypeImpl.instance);
     } else {
       // The other cases are equivalent to invoking a method.
@@ -253,6 +247,21 @@ class PrefixExpressionResolver {
       }
       _recordStaticType(node, staticType);
     }
+    _resolver.nullShortingTermination(node);
+  }
+
+  void _resolveNegation(PrefixExpressionImpl node) {
+    var operand = node.operand;
+    InferenceContext.setType(operand, _typeProvider.boolType);
+
+    operand.accept(_resolver);
+    operand = node.operand;
+
+    _resolver.boolExpressionVerifier.checkForNonBoolNegationExpression(operand);
+
+    _recordStaticType(node, _nonNullable(_typeProvider.boolType));
+
+    _flowAnalysis?.flow?.logicalNot_end(node, operand);
   }
 
   /// If the given [type] is a type parameter, resolve it to the type that should

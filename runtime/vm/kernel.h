@@ -43,6 +43,7 @@ namespace kernel {
 
 class Reader;
 struct ProcedureAttributesMetadata;
+class TableSelectorMetadata;
 
 class StringIndex {
  public:
@@ -92,6 +93,7 @@ class Program {
   const uint8_t* kernel_data() { return kernel_data_; }
   intptr_t kernel_data_size() { return kernel_data_size_; }
   intptr_t library_count() { return library_count_; }
+  NNBDCompiledMode compilation_mode() const { return compilation_mode_; }
 
  private:
   Program() : typed_data_(NULL), kernel_data_(NULL), kernel_data_size_(-1) {}
@@ -99,6 +101,7 @@ class Program {
   bool single_program_;
   uint32_t binary_version_;
   NameIndex main_method_reference_;  // Procedure.
+  NNBDCompiledMode compilation_mode_;
   intptr_t library_count_;
 
   // The offset from the start of the binary to the start of the source table.
@@ -136,8 +139,6 @@ class KernelLineStartsReader {
   int32_t DeltaAt(intptr_t index) const {
     return helper_->At(line_starts_data_, index);
   }
-
-  intptr_t LineNumberForPosition(intptr_t position) const;
 
   void LocationForPosition(intptr_t position,
                            intptr_t* line,
@@ -194,9 +195,9 @@ class KernelLineStartsReader {
 
 void CollectTokenPositionsFor(const Script& script);
 
-RawObject* EvaluateMetadata(const Field& metadata_field,
-                            bool is_annotations_offset);
-RawObject* BuildParameterDescriptor(const Function& function);
+ObjectPtr EvaluateMetadata(const Field& metadata_field,
+                           bool is_annotations_offset);
+ObjectPtr BuildParameterDescriptor(const Function& function);
 
 // Fills in [is_covariant] and [is_generic_covariant_impl] vectors
 // according to covariance attributes of [function] parameters.
@@ -216,13 +217,17 @@ bool NeedsDynamicInvocationForwarder(const Function& function);
 // Returns a list of ParameterTypeChecks needed by a dynamic invocation
 // forwarder that targets [function]. Indices in these checks correspond to
 // bytecode frame indices.
-RawArray* CollectDynamicInvocationChecks(const Function& function);
+ArrayPtr CollectDynamicInvocationChecks(const Function& function);
 
 ProcedureAttributesMetadata ProcedureAttributesOf(const Function& function,
                                                   Zone* zone);
 
 ProcedureAttributesMetadata ProcedureAttributesOf(const Field& field,
                                                   Zone* zone);
+
+TableSelectorMetadata* TableSelectorMetadataForProgram(
+    const KernelProgramInfo& info,
+    Zone* zone);
 
 }  // namespace kernel
 }  // namespace dart

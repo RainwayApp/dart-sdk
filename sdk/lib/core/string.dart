@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// @dart = 2.6
-
 part of dart.core;
 
 /**
@@ -95,10 +93,9 @@ part of dart.core;
  *
  * Also see:
  *
- * * [Dart Cookbook](https://www.dartlang.org/docs/cookbook/#strings)
- *   for String examples and recipes.
- * * [Dart Up and Running](https://www.dartlang.org/docs/dart-up-and-running/ch03.html#strings-and-regular-expressions)
+ * * [Strings and regular expressions](https://dart.dev/guides/libraries/library-tour#strings-and-regular-expressions)
  */
+@pragma('vm:entry-point')
 abstract class String implements Comparable<String>, Pattern {
   /**
    * Allocates a new String for the specified [charCodes].
@@ -121,7 +118,7 @@ abstract class String implements Comparable<String>, Pattern {
    * `0 <= start <= end <= charCodes.length`.
    */
   external factory String.fromCharCodes(Iterable<int> charCodes,
-      [int start = 0, int end]);
+      [int start = 0, int? end]);
 
   /**
    * Allocates a new String for the specified [charCode].
@@ -131,7 +128,7 @@ abstract class String implements Comparable<String>, Pattern {
    * the code units form a surrogate pair. See documentation for
    * [fromCharCodes].
    *
-   * Creating a String with half of a surrogate pair is allowed.
+   * Creating a [String] with one half of a surrogate pair is allowed.
    */
   external factory String.fromCharCode(int charCode);
 
@@ -146,12 +143,16 @@ abstract class String implements Comparable<String>, Pattern {
    * [defaultValue].
    *
    * Example of getting a value:
-   *
-   *     const String.fromEnvironment("defaultFloo", defaultValue: "no floo")
-   *
-   * Example of checking whether a declaration is there at all:
-   *
-   *     var isDeclared = const String.fromEnvironment("maybeDeclared") != null;
+   * ```
+   * const String.fromEnvironment("defaultFloo", defaultValue: "no floo")
+   * ```
+   * In order to check whether a declaration is there at all, use
+   * [bool.hasEnvironment]. Example:
+   * ```
+   * const maybeDeclared = bool.hasEnvironment("maybeDeclared")
+   *     ? String.fromEnvironment("maybeDeclared")
+   *     : null;
+   * ```
    */
   // The .fromEnvironment() constructors are special in that we do not want
   // users to call them using "new". We prohibit that by giving them bodies
@@ -160,7 +161,7 @@ abstract class String implements Comparable<String>, Pattern {
   //ignore: const_constructor_with_body
   //ignore: const_factory
   external const factory String.fromEnvironment(String name,
-      {String defaultValue});
+      {String defaultValue = ""});
 
   /**
    * Gets the character (as a single-code-unit [String]) at the given [index].
@@ -287,23 +288,24 @@ abstract class String implements Comparable<String>, Pattern {
    *
    * [start] must be non-negative and not greater than [length].
    */
-  int indexOf(Pattern pattern, [int start]);
+  int indexOf(Pattern pattern, [int start = 0]);
 
   /**
-   * Returns the position of the last match [pattern] in this string, searching
-   * backward starting at [start], inclusive:
+   * Returns the starting position of the last match [pattern] in this string,
+   * searching backward starting at [start], inclusive:
    *
    *     var string = 'Dartisans';
    *     string.lastIndexOf('a');                    // 6
-   *     string.lastIndexOf(new RegExp(r'a(r|n)'));  // 6
+   *     string.lastIndexOf(RegExp(r'a(r|n)'));      // 6
    *
    * Returns -1 if [pattern] could not be found in this string.
    *
-   *     string.lastIndexOf(new RegExp(r'DART'));    // -1
+   *     string.lastIndexOf(RegExp(r'DART'));        // -1
    *
-   * The [start] must be non-negative and not greater than [length].
+   * If [start] is omitted, search starts from the end of the string.
+   * If supplied, [start] must be non-negative and not greater than [length].
    */
-  int lastIndexOf(Pattern pattern, [int start]);
+  int lastIndexOf(Pattern pattern, [int? start]);
 
   /**
    * Returns true if this string is empty.
@@ -330,7 +332,7 @@ abstract class String implements Comparable<String>, Pattern {
    *     string.substring(1);    // 'artlang'
    *     string.substring(1, 4); // 'art'
    */
-  String substring(int startIndex, [int endIndex]);
+  String substring(int startIndex, [int? endIndex]);
 
   /**
    * Returns the string without any leading and trailing whitespace.
@@ -509,7 +511,7 @@ abstract class String implements Comparable<String>, Pattern {
    *
    *     pigLatin('I have a secret now!'); // 'Iway avehay away ecretsay ownay!'
    */
-  String replaceAllMapped(Pattern from, String replace(Match match));
+  String replaceAllMapped(Pattern from, String Function(Match match) replace);
 
   /**
    * Replaces the substring from [start] to [end] with [replacement].
@@ -522,7 +524,7 @@ abstract class String implements Comparable<String>, Pattern {
    * That is `0 <= start <= end <= this.length`.
    * If [end] is `null`, it defaults to [length].
    */
-  String replaceRange(int start, int end, String replacement);
+  String replaceRange(int start, int? end, String replacement);
 
   /**
    * Splits the string at matches of [pattern] and returns a list of substrings.
@@ -591,7 +593,7 @@ abstract class String implements Comparable<String>, Pattern {
    *         onNonMatch: (n) => '*'); // *shoots*
    */
   String splitMapJoin(Pattern pattern,
-      {String onMatch(Match match), String onNonMatch(String nonMatch)});
+      {String Function(Match)? onMatch, String Function(String)? onNonMatch});
 
   /**
    * Returns an unmodifiable list of the UTF-16 code units of this string.
@@ -609,7 +611,7 @@ abstract class String implements Comparable<String>, Pattern {
 
   /**
    * Converts all characters in this string to lower case.
-   * If the string is already in all lower case, this method returns [:this:].
+   * If the string is already in all lower case, this method returns `this`.
    *
    *     'ALPHABET'.toLowerCase(); // 'alphabet'
    *     'abc'.toLowerCase();      // 'abc'
@@ -622,7 +624,7 @@ abstract class String implements Comparable<String>, Pattern {
 
   /**
    * Converts all characters in this string to upper case.
-   * If the string is already in all upper case, this method returns [:this:].
+   * If the string is already in all upper case, this method returns `this`.
    *
    *     'alphabet'.toUpperCase(); // 'ALPHABET'
    *     'ABC'.toUpperCase();      // 'ABC'
@@ -670,9 +672,9 @@ int _combineSurrogatePair(int start, int end) {
   return 0x10000 + ((start & 0x3FF) << 10) + (end & 0x3FF);
 }
 
-/** [Iterator] for reading runes (integer Unicode code points) out of a Dart
-  * string.
-  */
+/**
+ * [Iterator] for reading runes (integer Unicode code points) of a Dart string.
+ */
 class RuneIterator implements BidirectionalIterator<int> {
   /** String being iterated. */
   final String string;
@@ -683,10 +685,10 @@ class RuneIterator implements BidirectionalIterator<int> {
   /**
    * Current code point.
    *
-   * If the iterator has hit either end, the [_currentCodePoint] is null
-   * and [: _position == _nextPosition :].
+   * If the iterator has hit either end, the [_currentCodePoint] is -1
+   * and `_position == _nextPosition`.
    */
-  int _currentCodePoint;
+  int _currentCodePoint = -1;
 
   /** Create an iterator positioned at the beginning of the string. */
   RuneIterator(String string)
@@ -723,20 +725,21 @@ class RuneIterator implements BidirectionalIterator<int> {
   }
 
   /**
-   * Returns the starting position of the current rune in the string.
+   * The starting position of the current rune in the string.
    *
-   * Returns null if the [current] rune is null.
+   * Returns -1 if there is no current rune ([current] is -1).
    */
-  int get rawIndex => (_position != _nextPosition) ? _position : null;
+  int get rawIndex => (_position != _nextPosition) ? _position : -1;
 
   /**
    * Resets the iterator to the rune at the specified index of the string.
    *
    * Setting a negative [rawIndex], or one greater than or equal to
-   * [:string.length:],
-   * is an error. So is setting it in the middle of a surrogate pair.
+   * `string.length`, is an error. So is setting it in the middle of a surrogate
+   *  pair.
    *
-   * Setting the position to the end of then string will set [current] to null.
+   * Setting the position to the end of then string means that there is no
+   * current rune.
    */
   void set rawIndex(int rawIndex) {
     RangeError.checkValidIndex(rawIndex, string, "rawIndex");
@@ -751,25 +754,29 @@ class RuneIterator implements BidirectionalIterator<int> {
    * You must call [moveNext] make the rune at the position current,
    * or [movePrevious] for the last rune before the position.
    *
-   * Setting a negative [rawIndex], or one greater than [:string.length:],
-   * is an error. So is setting it in the middle of a surrogate pair.
+   * The [rawIndex] must be non-negative and no greater than `string.length`.
+   * It must also not be the index of the trailing surrogate of a surrogate
+   * pair.
    */
   void reset([int rawIndex = 0]) {
     RangeError.checkValueInInterval(rawIndex, 0, string.length, "rawIndex");
     _checkSplitSurrogate(rawIndex);
     _position = _nextPosition = rawIndex;
-    _currentCodePoint = null;
+    _currentCodePoint = -1;
   }
 
-  /** The rune (integer Unicode code point) starting at the current position in
-   *  the string.
+  /**
+   * The rune (integer Unicode code point) starting at the current position in
+   * the string.
+   *
+   * The value is -1 if there is no current code point.
    */
   int get current => _currentCodePoint;
 
   /**
    * The number of code units comprising the current rune.
    *
-   * Returns zero if there is no current rune ([current] is null).
+   * Returns zero if there is no current rune ([current] is -1).
    */
   int get currentSize => _nextPosition - _position;
 
@@ -779,10 +786,10 @@ class RuneIterator implements BidirectionalIterator<int> {
    * For runes outside the basic multilingual plane, this will be
    * a String of length 2, containing two code units.
    *
-   * Returns null if [current] is null.
+   * Returns an empty string if there is no [current] value.
    */
   String get currentAsString {
-    if (_position == _nextPosition) return null;
+    if (_position == _nextPosition) return "";
     if (_position + 1 == _nextPosition) return string[_position];
     return string.substring(_position, _nextPosition);
   }
@@ -790,7 +797,7 @@ class RuneIterator implements BidirectionalIterator<int> {
   bool moveNext() {
     _position = _nextPosition;
     if (_position == string.length) {
-      _currentCodePoint = null;
+      _currentCodePoint = -1;
       return false;
     }
     int codeUnit = string.codeUnitAt(_position);
@@ -811,7 +818,7 @@ class RuneIterator implements BidirectionalIterator<int> {
   bool movePrevious() {
     _nextPosition = _position;
     if (_position == 0) {
-      _currentCodePoint = null;
+      _currentCodePoint = -1;
       return false;
     }
     int position = _position - 1;

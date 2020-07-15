@@ -104,8 +104,8 @@ final String _implCode = r'''
     _streamSub.cancel();
     _completers.forEach((id, c) {
       final method = _methodCalls[id];
-      return c.completeError(
-          RPCError(method, -32000, 'Service connection disposed'));
+      return c.completeError(RPCError(
+          method, RPCError.kServerError, 'Service connection disposed'));
     });
     _completers.clear();
     if (_disposeHandler != null) {
@@ -118,13 +118,12 @@ final String _implCode = r'''
 
   Future get onDone => _onDoneCompleter.future;
 
-  Future<T> _call<T>(String method, [Map args]) {
+  Future<T> _call<T>(String method, [Map args = const {}]) {
     String id = '${++_id}';
     Completer<T> completer = Completer<T>();
     _completers[id] = completer;
     _methodCalls[id] = method;
-    Map m = {'id': id, 'method': method};
-    if (args != null) m['params'] = args;
+    Map m = {'jsonrpc': '2.0', 'id': id, 'method': method, 'params': args,};
     String message = jsonEncode(m);
     _onSend.add(message);
     _writeMessage(message);
@@ -210,7 +209,9 @@ final String _implCode = r'''
     } else {
       Map<String, dynamic> result = json['result'] as Map<String, dynamic>;
       String type = result['type'];
-      if (_typeFactories[type] == null) {
+      if (type == 'Sentinel') {
+        completer.completeError(SentinelException.parse(methodName, result));
+      } else if (_typeFactories[type] == null) {
         completer.complete(Response.parse(result));
       } else {
         completer.complete(createServiceObject(result, returnTypes));
@@ -219,7 +220,7 @@ final String _implCode = r'''
   }
 
   Future _processRequest(Map<String, dynamic> json) async {
-    final Map m = await _routeRequest(json['method'], json['params']);
+    final Map m = await _routeRequest(json['method'], json['params'] ?? <String, dynamic>{});
     m['id'] = json['id'];
     m['jsonrpc'] = '2.0';
     String message = jsonEncode(m);
@@ -229,7 +230,7 @@ final String _implCode = r'''
 
   Future _processNotification(Map<String, dynamic> json) async {
     final String method = json['method'];
-    final Map params = json['params'];
+    final Map params = json['params'] ?? <String, dynamic>{};
     if (method == 'streamNotify') {
       String streamId = params['streamId'];
       _getEventController(streamId).add(createServiceObject(params['event'], const ['Event']));
@@ -238,24 +239,19 @@ final String _implCode = r'''
     }
   }
 
-  Future<Map> _routeRequest(String method, Map params) async{
+  Future<Map> _routeRequest(String method, Map<String, dynamic> params) async{
+    if (!_services.containsKey(method)) {
+      RPCError error = RPCError(
+          method, RPCError.kMethodNotFound, 'method not found \'$method\'');
+      return {'error': error.toMap()};
+    }
+
     try {
-      if (_services.containsKey(method)) {
-        return await _services[method](params);
-      }
-      return {
-        'error': {
-          'code': -32601, // Method not found
-          'message': 'Method not found \'$method\''
-        }
-      };
+      return await _services[method](params);
     } catch (e, st) {
-      return {
-        'error': {
-          'code': -32000, // SERVER ERROR
-          'message': 'Unexpected Server Error $e\n$st'
-        }
-      };
+      RPCError error = RPCError.withDetails(
+        method, RPCError.kServerError, '$e', details: '$st',);
+      return {'error': error.toMap()};
     }
   }
 ''';
@@ -265,7 +261,22 @@ final String _rpcError = r'''
 
 typedef DisposeHandler = Future Function();
 
-class RPCError {
+class RPCError implements Exception {
+  /// Application specific error codes.
+  static const int kServerError = -32000;
+
+  /// The JSON sent is not a valid Request object.
+  static const int kInvalidRequest = -32600;
+
+  /// The method does not exist or is not available.
+  static const int kMethodNotFound = -32601;
+
+  /// Invalid method parameter(s), such as a mismatched type.
+  static const int kInvalidParams = -32602;
+
+  /// Internal JSON-RPC error.
+  static const int kInternalError = -32603;
+
   static RPCError parse(String callingMethod, dynamic json) {
     return RPCError(callingMethod, json['code'], json['message'], json['data']);
   }
@@ -277,15 +288,47 @@ class RPCError {
 
   RPCError(this.callingMethod, this.code, this.message, [this.data]);
 
+  RPCError.withDetails(this.callingMethod, this.code, this.message,
+      {Object details})
+      : data = details == null ? null : <String, dynamic>{} {
+    if (details != null) {
+      data['details'] = details;
+    }
+  }
+
   String get details => data == null ? null : data['details'];
+
+  /// Return a map representation of this error suitable for converstion to
+  /// json.
+  Map<String, dynamic> toMap() {
+    Map<String, dynamic> map = {
+      'code': code,
+      'message': message,
+    };
+    if (data != null) {
+      map['data'] = data;
+    }
+    return map;
+  }
 
   String toString() {
     if (details == null) {
-      return '${message} (${code}) from ${callingMethod}()';
+      return '$callingMethod: ($code) $message';
     } else {
-      return '${message} (${code}) from ${callingMethod}():\n${details}';
+      return '$callingMethod: ($code) $message\n$details';
     }
   }
+}
+
+/// Thrown when an RPC response is a [Sentinel].
+class SentinelException implements Exception {
+  final String callingMethod;
+  final Sentinel sentinel;
+
+  SentinelException.parse(this.callingMethod, Map<String, dynamic> data) :
+    sentinel = Sentinel.parse(data);
+
+  String toString() => '$sentinel from ${callingMethod}()';
 }
 
 /// An `ExtensionData` is an arbitrary map that can have any contents.
@@ -325,9 +368,10 @@ response =  Success();''';
 final _streamListenCaseImpl = '''
 var id = params['streamId'];
 if (_streamSubscriptions.containsKey(id)) {
-  throw RPCError('streamListen', 103, 'Stream already subscribed', {
-      'details': "The stream '\$id' is already subscribed",
-    });
+  throw RPCError.withDetails(
+    'streamListen', 103, 'Stream already subscribed',
+    details: "The stream '\$id' is already subscribed",
+  );
 }
 
 var stream = id == 'Service'
@@ -349,9 +393,10 @@ final _streamCancelCaseImpl = '''
 var id = params['streamId'];
 var existing = _streamSubscriptions.remove(id);
 if (existing == null) {
-  throw RPCError('streamCancel', 104, 'Stream not subscribed', {
-      'details': "The stream '\$id' is not subscribed",
-    });
+  throw RPCError.withDetails(
+    'streamCancel', 104, 'Stream not subscribed',
+    details: "The stream '\$id' is not subscribed",
+  );
 }
 await existing.cancel();
 response = Success();''';
@@ -392,10 +437,13 @@ class Api extends Member with ApiParseUtil {
         String docs = '';
 
         while (i + 1 < nodes.length &&
-            (isPara(nodes[i + 1]) || isBlockquote(nodes[i + 1]))) {
+                (isPara(nodes[i + 1]) || isBlockquote(nodes[i + 1])) ||
+            isList(nodes[i + 1])) {
           Element p = nodes[++i];
           String str = TextOutputVisitor.printText(p);
-          if (!str.contains('|') && !str.contains('``')) {
+          if (!str.contains('|') &&
+              !str.contains('``') &&
+              !str.startsWith('- ')) {
             str = collapseWhitespace(str);
           }
           docs = '${docs}\n\n${str}';
@@ -455,10 +503,6 @@ class Api extends Member with ApiParseUtil {
   }
 
   void generate(DartGenerator gen) {
-    // Set default value for unspecified property
-    setDefaultValue('Instance', 'valueAsStringIsTruncated', 'false');
-    setDefaultValue('InstanceRef', 'valueAsStringIsTruncated', 'false');
-
     gen.out(_headerCode);
     gen.writeln("const String vmServiceVersion = '${serviceVersion}';");
     gen.writeln();
@@ -512,11 +556,10 @@ dynamic _createSpecificObject(dynamic json, dynamic creator(Map<String, dynamic>
   if (json is List) {
     return json.map((e) => creator(e)).toList();
   } else if (json is Map) {
-    Map<String, dynamic> map = {};
-    for (dynamic key in json.keys) {
-      map[key as String] = json[key];
-    }
-    return creator(map);
+    return creator({
+      for (String key in json.keys)
+        key: json[key],
+    });
   } else {
     // Handle simple types.
     return json;
@@ -649,7 +692,8 @@ abstract class VmServiceInterface {
         }
         var method = request['method'] as String;
         if (method == null) {
-          throw RPCError(null, -32600, 'Invalid Request', request);
+          throw RPCError(
+            null, RPCError.kInvalidRequest, 'Invalid Request', request);
         }
         var params = request['params'] as Map;
         Response response;
@@ -714,7 +758,7 @@ abstract class VmServiceInterface {
           response = await _serviceImplementation.callServiceExtension(method,
               isolateId: isolateId, args: args);
         } else {
-          throw RPCError(method, -32601, 'Method not found', request);
+          throw RPCError(method, RPCError.kMethodNotFound, 'Method not found', request);
         }
 ''');
     // Terminate the switch
@@ -739,8 +783,12 @@ abstract class VmServiceInterface {
     gen.write(r'''
       } catch (e, st) {
         var error = e is RPCError
-            ? {'code': e.code, 'data': e.data, 'message': e.message}
-            : {'code': -32603, 'message': '$e\n$st'};
+            ? e.toMap()
+            : {
+                'code': RPCError.kInternalError,
+                'message': '${request['method']}: $e',
+                'data': {'details': '$st'},
+              };
         _responseSink.add({
           'jsonrpc': '2.0',
           'id': request['id'],
@@ -964,6 +1012,7 @@ vms.Event assertIsolateEvent(vms.Event event) {
             'LibraryDependency',
             'Message',
             'ProfileFunction',
+            'Protocol',
             'RetainingObject',
             'SourceReportRange',
             'TimelineEvent',
@@ -1067,35 +1116,31 @@ class Method extends Member {
     if (!hasArgs) {
       gen.writeStatement("=> _call('${name}');");
     } else if (hasOptionalArgs) {
-      gen.writeStatement('{');
-      gen.write('Map m = {');
+      gen.writeStatement("=> _call('$name', {");
       gen.write(args
           .where((MethodArg a) => !a.optional)
-          .map((arg) => "'${arg.name}': ${arg.name}")
-          .join(', '));
-      gen.writeln('};');
+          .map((arg) => "'${arg.name}': ${arg.name},")
+          .join());
+
       args.where((MethodArg a) => a.optional).forEach((MethodArg arg) {
         String valueRef = arg.name;
         // Special case for `getAllocationProfile`. We do not want to add these
         // params if they are false.
         if (name == 'getAllocationProfile') {
-          gen.writeln("if (${arg.name} != null && ${arg.name}) {");
+          gen.writeln("if (${arg.name} != null && ${arg.name})");
         } else {
-          gen.writeln("if (${arg.name} != null) {");
+          gen.writeln("if (${arg.name} != null)");
         }
-        gen.writeln("m['${arg.name}'] = ${valueRef};");
-        gen.writeln("}");
+        gen.writeln("'${arg.name}': $valueRef,");
       });
-      gen.writeStatement("return _call('${name}', m);");
-      gen.writeStatement('}');
+
+      gen.writeln('});');
     } else {
-      gen.writeStatement('{');
-      gen.write("return _call('${name}', {");
+      gen.write("=> _call('${name}', {");
       gen.write(args.map((MethodArg arg) {
         return "'${arg.name}': ${arg.name}";
       }).join(', '));
       gen.writeStatement('});');
-      gen.writeStatement('}');
     }
   }
 
@@ -1113,6 +1158,11 @@ class Method extends Member {
       if (returnType.isMultipleReturns) {
         _docs += '\n\nThe return value can be one of '
             '${joinLast(returnType.types.map((t) => '[${t}]'), ', ', ' or ')}.';
+        _docs = _docs.trim();
+      }
+      if (returnType.canReturnSentinel) {
+        _docs +=
+            '\n\nThis method will throw a [SentinelException] in the case a [Sentinel] is returned.';
         _docs = _docs.trim();
       }
       if (_docs.isNotEmpty) gen.writeDocs(_docs);
@@ -1152,10 +1202,11 @@ class MemberType extends Member {
 
   MemberType();
 
-  void parse(Parser parser) {
+  void parse(Parser parser, {bool isReturnType = false}) {
     // foo|bar[]|baz
     // (@Instance|Sentinel)[]
     bool loop = true;
+    this.isReturnType = isReturnType;
 
     while (loop) {
       if (parser.consume('(')) {
@@ -1177,7 +1228,11 @@ class MemberType extends Member {
           parser.expect(']');
           ref.arrayDepth++;
         }
-        types.add(ref);
+        if (isReturnType && ref.name == 'Sentinel') {
+          canReturnSentinel = true;
+        } else {
+          types.add(ref);
+        }
       }
 
       loop = parser.consume('|');
@@ -1187,8 +1242,12 @@ class MemberType extends Member {
   String get name {
     if (types.isEmpty) return '';
     if (types.length == 1) return types.first.ref;
+    if (isReturnType) return 'Response';
     return 'dynamic';
   }
+
+  bool isReturnType = false;
+  bool canReturnSentinel = false;
 
   bool get isMultipleReturns => types.length > 1;
 
@@ -1340,7 +1399,14 @@ class Type extends Member {
     gen.writeln();
     if (docs != null) gen.writeDocs(docs);
     gen.write('class ${name} ');
-    if (superName != null) gen.write('extends ${superName} ');
+    Type superType;
+    if (superName != null) {
+      superType = parent.getType(superName);
+      gen.write('extends ${superName} ');
+    }
+    if (parent.getType('${name}Ref') != null) {
+      gen.write('implements ${name}Ref ');
+    }
     gen.writeln('{');
     gen.writeln('static ${name} parse(Map<String, dynamic> json) => '
         'json == null ? null : ${name}._fromJson(json);');
@@ -1360,6 +1426,8 @@ class Type extends Member {
 
     // ctors
 
+    bool hasRequiredParentFields = superType != null &&
+        (superType.name == 'ObjRef' || superType.name == 'Obj');
     // Default
     gen.write('${name}(');
     if (fields.isNotEmpty) {
@@ -1367,14 +1435,28 @@ class Type extends Member {
       fields
           .where((field) => !field.optional)
           .forEach((field) => field.generateNamedParameter(gen));
+      if (hasRequiredParentFields) {
+        superType.fields.where((field) => !field.optional).forEach(
+            (field) => field.generateNamedParameter(gen, fromParent: true));
+      }
       fields
           .where((field) => field.optional)
           .forEach((field) => field.generateNamedParameter(gen));
       gen.write('}');
     }
-    gen.writeln(');');
+    gen.write(')');
+    if (hasRequiredParentFields) {
+      gen.write(' : super(');
+      superType.fields.where((field) => !field.optional).forEach((field) {
+        String name = field.generatableName;
+        gen.write('$name: $name');
+      });
+      gen.write(')');
+    }
+    gen.writeln(';');
 
     // Build from JSON.
+    gen.writeln();
     String superCall = superName == null ? '' : ": super._fromJson(json) ";
     if (name == 'Response' || name == 'TimelineEvent') {
       gen.write('${name}._fromJson(this.json)');
@@ -1770,11 +1852,17 @@ class TypeField extends Member {
     if (parent.fields.any((field) => field.hasDocs)) gen.writeln();
   }
 
-  void generateNamedParameter(DartGenerator gen) {
+  void generateNamedParameter(DartGenerator gen, {bool fromParent = false}) {
     if (!optional) {
       gen.write('@required ');
     }
-    gen.writeStatement('this.${generatableName},');
+    if (fromParent) {
+      String typeName =
+          api.isEnumName(type.name) ? '/*${type.name}*/ String' : type.name;
+      gen.writeStatement('$typeName ${generatableName},');
+    } else {
+      gen.writeStatement('this.${generatableName},');
+    }
   }
 }
 
@@ -1875,6 +1963,14 @@ class TextOutputVisitor implements NodeVisitor {
       _blockquote = true;
     } else if (element.tag == 'a') {
       _href = true;
+    } else if (element.tag == 'strong') {
+      buf.write('**');
+    } else if (element.tag == 'ul') {
+      // Nothing to do.
+    } else if (element.tag == 'li') {
+      buf.write('- ');
+    } else {
+      throw 'unknown node type: ${element.tag}';
     }
 
     return true;
@@ -1902,13 +1998,17 @@ class TextOutputVisitor implements NodeVisitor {
     } else if (element.tag == 'p') {
       buf.write('\n\n');
     } else if (element.tag == 'blockquote') {
-      //buf.write('```\n');
       _blockquote = false;
     } else if (element.tag == 'a') {
       _href = false;
+    } else if (element.tag == 'strong') {
+      buf.write('**');
+    } else if (element.tag == 'ul') {
+      // Nothing to do.
+    } else if (element.tag == 'li') {
+      buf.write('\n');
     } else {
-      print('             </${element.tag}>');
-      buf.write(renderToHtml([element]));
+      throw 'unknown node type: ${element.tag}';
     }
   }
 
@@ -1926,7 +2026,7 @@ class MethodParser extends Parser {
     // method is return type, name, (, args )
     // args is type name, [optional], comma
 
-    method.returnType.parse(this);
+    method.returnType.parse(this, isReturnType: true);
 
     Token t = expectName();
     validate(

@@ -15,17 +15,17 @@ import 'markdown.dart';
 import 'typescript.dart';
 import 'typescript_parser.dart';
 
-main(List<String> arguments) async {
+Future<void> main(List<String> arguments) async {
   final args = argParser.parse(arguments);
   if (args[argHelp]) {
     print(argParser.usage);
     return;
   }
 
-  final String script = Platform.script.toFilePath();
+  final script = Platform.script.toFilePath();
   // 3x parent = file -> lsp_spec -> tool -> analysis_server.
-  final String packageFolder = File(script).parent.parent.parent.path;
-  final String outFolder = path.join(packageFolder, 'lib', 'lsp_protocol');
+  final packageFolder = File(script).parent.parent.parent.path;
+  final outFolder = path.join(packageFolder, 'lib', 'lsp_protocol');
   Directory(outFolder).createSync();
 
   // Collect definitions for types in the spec and our custom extensions.
@@ -39,8 +39,8 @@ main(List<String> arguments) async {
   recordTypes(customTypes);
 
   // Generate formatted Dart code (as a string) for each set of types.
-  final String specTypesOutput = generateDartForTypes(specTypes);
-  final String customTypesOutput = generateDartForTypes(customTypes);
+  final specTypesOutput = generateDartForTypes(specTypes);
+  final customTypesOutput = generateDartForTypes(customTypes);
 
   File(path.join(outFolder, 'protocol_generated.dart')).writeAsStringSync(
       generatedFileHeader(2018, importCustom: true) + specTypesOutput);
@@ -69,7 +69,7 @@ final Uri specLicenseUri = Uri.parse(
 /// The URI of the version of the spec to generate from. This should be periodically updated as
 /// there's no longer a stable URI for the latest published version.
 final Uri specUri = Uri.parse(
-    'https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/specification-3-14.md');
+    'https://raw.githubusercontent.com/microsoft/language-server-protocol/gh-pages/_specifications/specification-3-15.md');
 
 /// Pattern to extract inline types from the `result: {xx, yy }` notes in the spec.
 /// Doesn't parse past full stops as some of these have english sentences tagged on
@@ -176,17 +176,18 @@ import 'package:analysis_server/src/lsp/json_parsing.dart';
 import 'package:analysis_server/src/protocol/protocol_internal.dart'
     show listEqual, mapEqual;
 import 'package:analyzer/src/generated/utilities_general.dart';
+import 'package:meta/meta.dart';
 
 const jsonEncoder = JsonEncoder.withIndent('    ');
 
 ''';
 
 List<AstNode> getCustomClasses() {
-  interface(String name, List<Member> fields) {
+  Interface interface(String name, List<Member> fields) {
     return Interface(null, Token.identifier(name), [], [], fields);
   }
 
-  field(String name,
+  Field field(String name,
       {String type, array = false, canBeNull = false, canBeUndefined = false}) {
     var fieldType =
         array ? ArrayType(Type.identifier(type)) : Type.identifier(type);
@@ -195,7 +196,7 @@ List<AstNode> getCustomClasses() {
         null, Token.identifier(name), fieldType, canBeNull, canBeUndefined);
   }
 
-  final List<AstNode> customTypes = [
+  final customTypes = <AstNode>[
     interface('DartDiagnosticServer', [field('port', type: 'number')]),
     interface('AnalyzerStatusParams', [field('isAnalyzing', type: 'boolean')]),
     interface('PublishClosingLabelsParams', [
@@ -264,9 +265,9 @@ Future<List<AstNode>> getSpecClasses(ArgResults args) async {
   if (args[argDownload]) {
     await downloadSpec();
   }
-  final String spec = await readSpec();
+  final spec = await readSpec();
 
-  final List<AstNode> types = extractTypeScriptBlocks(spec)
+  final types = extractTypeScriptBlocks(spec)
       .where(shouldIncludeScriptBlock)
       .map(parseString)
       .expand((f) => f)

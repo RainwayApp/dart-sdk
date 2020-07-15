@@ -71,6 +71,42 @@ class D extends C with B {}
     ]);
   }
 
+  test_class_staticAndInstanceElement() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  static void _foo() {}
+}
+
+class B {
+  void _foo() {}
+}
+''');
+
+    await assertNoErrorsInCode('''
+import 'a.dart';
+
+class C extends Object with A, B {}
+''');
+  }
+
+  test_class_staticElements() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  static void _foo() {}
+}
+
+class B {
+  static void _foo() {}
+}
+''');
+
+    await assertNoErrorsInCode('''
+import 'a.dart';
+
+class C extends Object with A, B {}
+''');
+  }
+
   test_class_superclassAndMixin_getter2() async {
     newFile('/test/lib/a.dart', content: r'''
 class A {
@@ -106,22 +142,6 @@ class B {
 import 'a.dart';
 
 class C extends A with B {}
-''', [
-      error(CompileTimeErrorCode.PRIVATE_COLLISION_IN_MIXIN_APPLICATION, 41, 1),
-    ]);
-  }
-
-  test_class_superclassAndMixin_same() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  void _foo() {}
-}
-''');
-
-    await assertErrorsInCode('''
-import 'a.dart';
-
-class C extends A with A {}
 ''', [
       error(CompileTimeErrorCode.PRIVATE_COLLISION_IN_MIXIN_APPLICATION, 41, 1),
     ]);
@@ -220,26 +240,6 @@ class B {
 import 'a.dart';
 
 class C = A with B;
-''', [
-      error(CompileTimeErrorCode.PRIVATE_COLLISION_IN_MIXIN_APPLICATION, 35, 1),
-    ]);
-  }
-
-  test_classTypeAlias_superclassAndMixin_same() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  void _foo() {}
-}
-
-class B {
-  void _foo() {}
-}
-''');
-
-    await assertErrorsInCode('''
-import 'a.dart';
-
-class C = A with A;
 ''', [
       error(CompileTimeErrorCode.PRIVATE_COLLISION_IN_MIXIN_APPLICATION, 35, 1),
     ]);

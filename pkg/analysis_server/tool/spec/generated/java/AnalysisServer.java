@@ -215,16 +215,11 @@ public interface AnalysisServer {
    * @param excluded A list of the files and directories within the included directories that should
    *         not be analyzed.
    * @param packageRoots A mapping from source directories to package roots that should override the
-   *         normal package: URI resolution mechanism. If a package root is a directory, then the
-   *         analyzer will behave as though the associated source directory in the map contains a
-   *         special pubspec.yaml file which resolves any package: URI to the corresponding path
-   *         within that package root directory. The effect is the same as specifying the package
-   *         root directory as a "--package_root" parameter to the Dart VM when executing any Dart
-   *         file inside the source directory. If a package root is a file, then the analyzer will
-   *         behave as though that file is a ".packages" file in the source directory. The effect is
-   *         the same as specifying the file as a "--packages" parameter to the Dart VM when
-   *         executing any Dart file inside the source directory. Files in any directories that are
-   *         not overridden by this mapping have their package: URI's resolved using the normal
+   *         normal package: URI resolution mechanism. If a package root is a file, then the analyzer
+   *         will behave as though that file is a ".packages" file in the source directory. The
+   *         effect is the same as specifying the file as a "--packages" parameter to the Dart VM
+   *         when executing any Dart file inside the source directory. Files in any directories that
+   *         are not overridden by this mapping have their package: URI's resolved using the normal
    *         pubspec.yaml mechanism. If this field is absent, or the empty map is specified, that
    *         indicates that the normal pubspec.yaml mechanism should always be used.
    */
@@ -474,17 +469,33 @@ public interface AnalysisServer {
   public void diagnostic_getServerPort(GetServerPortConsumer consumer);
 
   /**
+   * {@code edit.bulkFixes}
+   *
+   * Analyze the specified sources for fixes that can be applied in bulk and return a set of
+   * suggested edits for those sources. These edits may include changes to sources outside the set of
+   * specified sources if a change in a specified source requires it.
+   *
+   * @param included A list of the files and directories for which edits should be suggested. If a
+   *         request is made with a path that is invalid, e.g. is not absolute and normalized, an
+   *         error of type INVALID_FILE_PATH_FORMAT will be generated. If a request is made for a
+   *         file which does not exist, or which is not currently subject to analysis (e.g. because
+   *         it is not associated with any analysis root specified to analysis.setAnalysisRoots), an
+   *         error of type FILE_NOT_ANALYZED will be generated.
+   */
+  public void edit_bulkFixes(List<String> included, BulkFixesConsumer consumer);
+
+  /**
    * {@code edit.dartfix}
    *
    * Analyze the specified sources for recommended changes and return a set of suggested edits for
    * those sources. These edits may include changes to sources outside the set of specified sources
    * if a change in a specified source requires it.
    *
-   * If includedFixes is specified, then those fixes will be applied. If includeRequiredFixes is
-   * specified, then "required" fixes will be applied in addition to whatever fixes are specified in
-   * includedFixes if any. If neither includedFixes nor includeRequiredFixes is specified, then all
-   * fixes will be applied. If excludedFixes is specified, then those fixes will not be applied
-   * regardless of whether they are "required" or specified in includedFixes.
+   * If includedFixes is specified, then those fixes will be applied. If includePedanticFixes is
+   * specified, then fixes associated with the pedantic rule set will be applied in addition to
+   * whatever fixes are specified in includedFixes if any. If neither includedFixes nor
+   * includePedanticFixes is specified, then no fixes will be applied. If excludedFixes is specified,
+   * then those fixes will not be applied regardless of whether they are specified in includedFixes.
    *
    * @param included A list of the files and directories for which edits should be suggested. If a
    *         request is made with a path that is invalid, e.g. is not absolute and normalized, an
@@ -496,14 +507,13 @@ public interface AnalysisServer {
    *         specified that does not match the name of a known fix, an error of type UNKNOWN_FIX will
    *         be generated.
    * @param includePedanticFixes A flag indicating whether "pedantic" fixes should be applied.
-   * @param includeRequiredFixes A flag indicating whether "required" fixes should be applied.
    * @param excludedFixes A list of names indicating which fixes should not be applied. If a name is
    *         specified that does not match the name of a known fix, an error of type UNKNOWN_FIX will
    *         be generated.
    * @param port Deprecated: This field is now ignored by server.
    * @param outputDir Deprecated: This field is now ignored by server.
    */
-  public void edit_dartfix(List<String> included, List<String> includedFixes, boolean includePedanticFixes, boolean includeRequiredFixes, List<String> excludedFixes, int port, String outputDir, DartfixConsumer consumer);
+  public void edit_dartfix(List<String> included, List<String> includedFixes, boolean includePedanticFixes, List<String> excludedFixes, int port, String outputDir, DartfixConsumer consumer);
 
   /**
    * {@code edit.format}
@@ -790,6 +800,9 @@ public interface AnalysisServer {
    *
    * If the location does not have a support widget, an error of type
    * FLUTTER_GET_WIDGET_DESCRIPTION_NO_WIDGET will be generated.
+   *
+   * If a change to a file happens while widget descriptions are computed, an error of type
+   * FLUTTER_GET_WIDGET_DESCRIPTION_CONTENT_MODIFIED will be generated.
    *
    * @param file The file where the widget instance is created.
    * @param offset The offset in the file where the widget instance is created.

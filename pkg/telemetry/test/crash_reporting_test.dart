@@ -31,7 +31,7 @@ void main() {
     };
 
     test('general', () async {
-      CrashReportSender sender = new CrashReportSender(
+      CrashReportSender sender = new CrashReportSender.prod(
           analytics.trackingId, shouldSend,
           httpClient: mockClient);
 
@@ -43,7 +43,7 @@ void main() {
     });
 
     test('reportsSent', () async {
-      CrashReportSender sender = new CrashReportSender(
+      CrashReportSender sender = new CrashReportSender.prod(
           analytics.trackingId, shouldSend,
           httpClient: mockClient);
 
@@ -59,7 +59,7 @@ void main() {
     });
 
     test('contains message', () async {
-      CrashReportSender sender = new CrashReportSender(
+      CrashReportSender sender = new CrashReportSender.prod(
           analytics.trackingId, shouldSend,
           httpClient: mockClient);
 
@@ -72,8 +72,29 @@ void main() {
       expect(body, contains('additional message'));
     });
 
+    test('has attachments', () async {
+      CrashReportSender sender = new CrashReportSender.prod(
+          analytics.trackingId, shouldSend,
+          httpClient: mockClient);
+
+      await sender.sendReport(
+        'test-error',
+        StackTrace.current,
+        attachments: [
+          CrashReportAttachment.string(field: 'attachment-1', value: 'aaa'),
+          CrashReportAttachment.string(field: 'attachment-2', value: 'bbb'),
+        ],
+      );
+
+      String body = utf8.decode(request.bodyBytes);
+      expect(body, contains('attachment-1'));
+      expect(body, contains('aaa'));
+      expect(body, contains('attachment-2'));
+      expect(body, contains('bbb'));
+    });
+
     test('has ptime', () async {
-      CrashReportSender sender = new CrashReportSender(
+      CrashReportSender sender = new CrashReportSender.prod(
           analytics.trackingId, shouldSend,
           httpClient: mockClient);
 

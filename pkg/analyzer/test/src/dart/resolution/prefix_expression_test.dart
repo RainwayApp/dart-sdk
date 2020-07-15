@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/dart/error/syntactic_errors.dart';
 import 'package:analyzer/src/error/codes.dart';
@@ -84,7 +85,10 @@ f(int x) {
 
     assertPrefixExpression(
       findNode.prefix('-x'),
-      element: intElement.getMethod('unary-'),
+      element: elementMatcher(
+        intElement.getMethod('unary-'),
+        isLegacy: isNullSafetySdkAndLegacyLibrary,
+      ),
       type: 'int',
     );
   }
@@ -122,7 +126,10 @@ f(int x) {
 
     assertPrefixExpression(
       findNode.prefix('++x'),
-      element: numElement.getMethod('+'),
+      element: elementMatcher(
+        numElement.getMethod('+'),
+        isLegacy: isNullSafetySdkAndLegacyLibrary,
+      ),
       type: 'int',
     );
   }
@@ -140,7 +147,10 @@ class M1 {
 
     assertPrefixExpression(
       findNode.prefix('++x'),
-      element: numElement.getMethod('+'),
+      element: elementMatcher(
+        numElement.getMethod('+'),
+        isLegacy: isNullSafetySdkAndLegacyLibrary,
+      ),
       type: 'int',
     );
   }
@@ -154,7 +164,10 @@ f(int x) {
 
     assertPrefixExpression(
       findNode.prefix('~x'),
-      element: intElement.getMethod('~'),
+      element: elementMatcher(
+        intElement.getMethod('~'),
+        isLegacy: isNullSafetySdkAndLegacyLibrary,
+      ),
       type: 'int',
     );
   }
@@ -165,7 +178,9 @@ class PrefixExpressionResolutionWithNnbdTest
     extends PrefixExpressionResolutionTest {
   @override
   AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..enabledExperiments = [EnableString.non_nullable]
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.non_nullable],
+    )
     ..implicitCasts = false;
 
   @override
@@ -191,5 +206,23 @@ f(Object x) {
     );
 
     assertType(findNode.simple('x;'), 'A');
+  }
+
+  test_plusPlus_nullShorting() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  int foo = 0;
+}
+
+f(A? a) {
+  ++a?.foo;
+}
+''');
+
+    assertPrefixExpression(
+      findNode.prefix('++a'),
+      element: numElement.getMethod('+'),
+      type: 'int?',
+    );
   }
 }

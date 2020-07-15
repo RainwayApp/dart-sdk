@@ -25,6 +25,8 @@ import '../api_prototype/standard_file_system.dart' show StandardFileSystem;
 
 import '../base/processed_options.dart' show ProcessedOptions;
 
+import '../base/nnbd_mode.dart' show NnbdMode;
+
 import '../kernel_generator_impl.dart' show generateKernel;
 
 import 'compiler_state.dart' show InitializedCompilerState;
@@ -47,6 +49,8 @@ export '../api_prototype/experimental_flags.dart'
 
 export '../api_prototype/kernel_generator.dart' show kernelForModule;
 
+export '../api_prototype/lowering_predicates.dart';
+
 export '../api_prototype/memory_file_system.dart' show MemoryFileSystem;
 
 export '../api_prototype/standard_file_system.dart' show StandardFileSystem;
@@ -56,12 +60,14 @@ export '../api_prototype/terminal_color_support.dart'
 
 export '../base/processed_options.dart' show ProcessedOptions;
 
+export '../base/nnbd_mode.dart' show NnbdMode;
+
 export '../fasta/compiler_context.dart' show CompilerContext;
 
 export '../fasta/incremental_compiler.dart' show IncrementalCompiler;
 
 export '../fasta/kernel/redirecting_factory_body.dart'
-    show RedirectingFactoryBody;
+    show RedirectingFactoryBody, isRedirectingFactoryField;
 
 export '../fasta/type_inference/type_schema_environment.dart'
     show TypeSchemaEnvironment;
@@ -72,17 +78,17 @@ export 'compiler_state.dart'
 class DdcResult {
   final Component component;
   final Component sdkSummary;
-  final List<Component> inputSummaries;
+  final List<Component> additionalDills;
   final ClassHierarchy classHierarchy;
 
-  DdcResult(
-      this.component, this.sdkSummary, this.inputSummaries, this.classHierarchy)
+  DdcResult(this.component, this.sdkSummary, this.additionalDills,
+      this.classHierarchy)
       : assert(classHierarchy != null);
 
   Set<Library> computeLibrariesFromDill() {
     Set<Library> librariesFromDill = new Set<Library>();
 
-    for (Component c in inputSummaries) {
+    for (Component c in additionalDills) {
       for (Library lib in c.libraries) {
         librariesFromDill.add(lib);
       }
@@ -104,19 +110,22 @@ Future<InitializedCompilerState> initializeCompiler(
     Uri sdkSummary,
     Uri packagesFile,
     Uri librariesSpecificationUri,
-    List<Uri> inputSummaries,
+    List<Uri> additionalDills,
     Target target,
     {FileSystem fileSystem,
     Map<ExperimentalFlag, bool> experiments,
-    Map<String, String> environmentDefines}) async {
-  inputSummaries.sort((a, b) => a.toString().compareTo(b.toString()));
+    Map<String, String> environmentDefines,
+    NnbdMode nnbdMode}) async {
+  assert(nnbdMode != null, "No NnbdMode provided.");
+  additionalDills.sort((a, b) => a.toString().compareTo(b.toString()));
 
   if (oldState != null &&
       oldState.options.compileSdk == compileSdk &&
       oldState.options.sdkSummary == sdkSummary &&
       oldState.options.packagesFileUri == packagesFile &&
       oldState.options.librariesSpecificationUri == librariesSpecificationUri &&
-      equalLists(oldState.options.inputSummaries, inputSummaries) &&
+      oldState.options.nnbdMode == nnbdMode &&
+      equalLists(oldState.options.additionalDills, additionalDills) &&
       equalMaps(oldState.options.experimentalFlags, experiments) &&
       equalMaps(oldState.options.environmentDefines, environmentDefines)) {
     // Reuse old state.
@@ -128,11 +137,12 @@ Future<InitializedCompilerState> initializeCompiler(
     ..sdkRoot = sdkRoot
     ..sdkSummary = sdkSummary
     ..packagesFileUri = packagesFile
-    ..inputSummaries = inputSummaries
+    ..additionalDills = additionalDills
     ..librariesSpecificationUri = librariesSpecificationUri
     ..target = target
     ..fileSystem = fileSystem ?? StandardFileSystem.instance
-    ..environmentDefines = environmentDefines;
+    ..environmentDefines = environmentDefines
+    ..nnbdMode = nnbdMode;
   if (experiments != null) options.experimentalFlags = experiments;
 
   ProcessedOptions processedOpts = new ProcessedOptions(options: options);
@@ -147,27 +157,28 @@ Future<InitializedCompilerState> initializeCompiler(
 Future<InitializedCompilerState> initializeIncrementalCompiler(
     InitializedCompilerState oldState,
     Set<String> tags,
-    List<Component> doneInputSummaries,
+    List<Component> doneAdditionalDills,
     bool compileSdk,
     Uri sdkRoot,
     Uri sdkSummary,
     Uri packagesFile,
     Uri librariesSpecificationUri,
-    List<Uri> inputSummaries,
+    List<Uri> additionalDills,
     Map<Uri, List<int>> workerInputDigests,
     Target target,
     {FileSystem fileSystem,
     Map<ExperimentalFlag, bool> experiments,
     Map<String, String> environmentDefines,
-    bool trackNeededDillLibraries: false}) async {
+    bool trackNeededDillLibraries: false,
+    NnbdMode nnbdMode}) async {
   return modular.initializeIncrementalCompiler(
       oldState,
       tags,
-      doneInputSummaries,
+      doneAdditionalDills,
       sdkSummary,
       packagesFile,
       librariesSpecificationUri,
-      inputSummaries,
+      additionalDills,
       workerInputDigests,
       target,
       compileSdk: compileSdk,
@@ -178,7 +189,8 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
           environmentDefines ?? const <ExperimentalFlag, bool>{},
       outlineOnly: false,
       omitPlatform: false,
-      trackNeededDillLibraries: trackNeededDillLibraries);
+      trackNeededDillLibraries: trackNeededDillLibraries,
+      nnbdMode: nnbdMode);
 }
 
 Future<DdcResult> compile(InitializedCompilerState compilerState,
@@ -198,7 +210,7 @@ Future<DdcResult> compile(InitializedCompilerState compilerState,
 
   // These should be cached.
   Component sdkSummary = await processedOpts.loadSdkSummary(null);
-  List<Component> summaries = await processedOpts.loadInputSummaries(null);
+  List<Component> summaries = await processedOpts.loadAdditionalDills(null);
   return new DdcResult(
       component, sdkSummary, summaries, compilerResult.classHierarchy);
 }

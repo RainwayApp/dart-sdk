@@ -51,14 +51,6 @@ class Object;
 class OSThread;
 class JSONObject;
 class PcDescriptors;
-class RawBool;
-class RawObject;
-class RawCode;
-class RawError;
-class RawGrowableObjectArray;
-class RawObjectPool;
-class RawStackTrace;
-class RawString;
 class RuntimeEntry;
 class Smi;
 class StackResource;
@@ -97,52 +89,70 @@ class Thread;
   V(TypeParameter)
 
 #define CACHED_VM_STUBS_LIST(V)                                                \
-  V(RawCode*, write_barrier_code_, StubCode::WriteBarrier().raw(), NULL)       \
-  V(RawCode*, array_write_barrier_code_, StubCode::ArrayWriteBarrier().raw(),  \
-    NULL)                                                                      \
-  V(RawCode*, fix_callers_target_code_, StubCode::FixCallersTarget().raw(),    \
-    NULL)                                                                      \
-  V(RawCode*, fix_allocation_stub_code_,                                       \
-    StubCode::FixAllocationStubTarget().raw(), NULL)                           \
-  V(RawCode*, invoke_dart_code_stub_, StubCode::InvokeDartCode().raw(), NULL)  \
-  V(RawCode*, invoke_dart_code_from_bytecode_stub_,                            \
-    StubCode::InvokeDartCodeFromBytecode().raw(), NULL)                        \
-  V(RawCode*, call_to_runtime_stub_, StubCode::CallToRuntime().raw(), NULL)    \
-  V(RawCode*, null_error_shared_without_fpu_regs_stub_,                        \
-    StubCode::NullErrorSharedWithoutFPURegs().raw(), NULL)                     \
-  V(RawCode*, null_error_shared_with_fpu_regs_stub_,                           \
-    StubCode::NullErrorSharedWithFPURegs().raw(), NULL)                        \
-  V(RawCode*, null_arg_error_shared_without_fpu_regs_stub_,                    \
+  V(CodePtr, write_barrier_code_, StubCode::WriteBarrier().raw(), nullptr)     \
+  V(CodePtr, array_write_barrier_code_, StubCode::ArrayWriteBarrier().raw(),   \
+    nullptr)                                                                   \
+  V(CodePtr, fix_callers_target_code_, StubCode::FixCallersTarget().raw(),     \
+    nullptr)                                                                   \
+  V(CodePtr, fix_allocation_stub_code_,                                        \
+    StubCode::FixAllocationStubTarget().raw(), nullptr)                        \
+  V(CodePtr, invoke_dart_code_stub_, StubCode::InvokeDartCode().raw(),         \
+    nullptr)                                                                   \
+  V(CodePtr, invoke_dart_code_from_bytecode_stub_,                             \
+    StubCode::InvokeDartCodeFromBytecode().raw(), nullptr)                     \
+  V(CodePtr, call_to_runtime_stub_, StubCode::CallToRuntime().raw(), nullptr)  \
+  V(CodePtr, null_error_shared_without_fpu_regs_stub_,                         \
+    StubCode::NullErrorSharedWithoutFPURegs().raw(), nullptr)                  \
+  V(CodePtr, null_error_shared_with_fpu_regs_stub_,                            \
+    StubCode::NullErrorSharedWithFPURegs().raw(), nullptr)                     \
+  V(CodePtr, null_arg_error_shared_without_fpu_regs_stub_,                     \
     StubCode::NullArgErrorSharedWithoutFPURegs().raw(), nullptr)               \
-  V(RawCode*, null_arg_error_shared_with_fpu_regs_stub_,                       \
+  V(CodePtr, null_arg_error_shared_with_fpu_regs_stub_,                        \
     StubCode::NullArgErrorSharedWithFPURegs().raw(), nullptr)                  \
-  V(RawCode*, allocate_mint_with_fpu_regs_stub_,                               \
-    StubCode::AllocateMintWithFPURegs().raw(), NULL)                           \
-  V(RawCode*, allocate_mint_without_fpu_regs_stub_,                            \
-    StubCode::AllocateMintWithoutFPURegs().raw(), NULL)                        \
-  V(RawCode*, stack_overflow_shared_without_fpu_regs_stub_,                    \
-    StubCode::StackOverflowSharedWithoutFPURegs().raw(), NULL)                 \
-  V(RawCode*, stack_overflow_shared_with_fpu_regs_stub_,                       \
-    StubCode::StackOverflowSharedWithFPURegs().raw(), NULL)                    \
-  V(RawCode*, monomorphic_miss_stub_, StubCode::MonomorphicMiss().raw(), NULL) \
-  V(RawCode*, optimize_stub_, StubCode::OptimizeFunction().raw(), NULL)        \
-  V(RawCode*, deoptimize_stub_, StubCode::Deoptimize().raw(), NULL)            \
-  V(RawCode*, lazy_deopt_from_return_stub_,                                    \
-    StubCode::DeoptimizeLazyFromReturn().raw(), NULL)                          \
-  V(RawCode*, lazy_deopt_from_throw_stub_,                                     \
-    StubCode::DeoptimizeLazyFromThrow().raw(), NULL)                           \
-  V(RawCode*, slow_type_test_stub_, StubCode::SlowTypeTest().raw(), NULL)      \
-  V(RawCode*, lazy_specialize_type_test_stub_,                                 \
-    StubCode::LazySpecializeTypeTest().raw(), NULL)                            \
-  V(RawCode*, enter_safepoint_stub_, StubCode::EnterSafepoint().raw(), NULL)   \
-  V(RawCode*, exit_safepoint_stub_, StubCode::ExitSafepoint().raw(), NULL)     \
-  V(RawCode*, call_native_through_safepoint_stub_,                             \
-    StubCode::CallNativeThroughSafepoint().raw(), NULL)
+  V(CodePtr, null_cast_error_shared_without_fpu_regs_stub_,                    \
+    StubCode::NullCastErrorSharedWithoutFPURegs().raw(), nullptr)              \
+  V(CodePtr, null_cast_error_shared_with_fpu_regs_stub_,                       \
+    StubCode::NullCastErrorSharedWithFPURegs().raw(), nullptr)                 \
+  V(CodePtr, range_error_shared_without_fpu_regs_stub_,                        \
+    StubCode::RangeErrorSharedWithoutFPURegs().raw(), nullptr)                 \
+  V(CodePtr, range_error_shared_with_fpu_regs_stub_,                           \
+    StubCode::RangeErrorSharedWithFPURegs().raw(), nullptr)                    \
+  V(CodePtr, allocate_mint_with_fpu_regs_stub_,                                \
+    StubCode::AllocateMintSharedWithFPURegs().raw(), nullptr)                  \
+  V(CodePtr, allocate_mint_without_fpu_regs_stub_,                             \
+    StubCode::AllocateMintSharedWithoutFPURegs().raw(), nullptr)               \
+  V(CodePtr, allocate_object_stub_, StubCode::AllocateObject().raw(), nullptr) \
+  V(CodePtr, allocate_object_parameterized_stub_,                              \
+    StubCode::AllocateObjectParameterized().raw(), nullptr)                    \
+  V(CodePtr, allocate_object_slow_stub_, StubCode::AllocateObjectSlow().raw(), \
+    nullptr)                                                                   \
+  V(CodePtr, stack_overflow_shared_without_fpu_regs_stub_,                     \
+    StubCode::StackOverflowSharedWithoutFPURegs().raw(), nullptr)              \
+  V(CodePtr, stack_overflow_shared_with_fpu_regs_stub_,                        \
+    StubCode::StackOverflowSharedWithFPURegs().raw(), nullptr)                 \
+  V(CodePtr, switchable_call_miss_stub_, StubCode::SwitchableCallMiss().raw(), \
+    nullptr)                                                                   \
+  V(CodePtr, throw_stub_, StubCode::Throw().raw(), nullptr)                    \
+  V(CodePtr, re_throw_stub_, StubCode::Throw().raw(), nullptr)                 \
+  V(CodePtr, assert_boolean_stub_, StubCode::AssertBoolean().raw(), nullptr)   \
+  V(CodePtr, optimize_stub_, StubCode::OptimizeFunction().raw(), nullptr)      \
+  V(CodePtr, deoptimize_stub_, StubCode::Deoptimize().raw(), nullptr)          \
+  V(CodePtr, lazy_deopt_from_return_stub_,                                     \
+    StubCode::DeoptimizeLazyFromReturn().raw(), nullptr)                       \
+  V(CodePtr, lazy_deopt_from_throw_stub_,                                      \
+    StubCode::DeoptimizeLazyFromThrow().raw(), nullptr)                        \
+  V(CodePtr, slow_type_test_stub_, StubCode::SlowTypeTest().raw(), nullptr)    \
+  V(CodePtr, lazy_specialize_type_test_stub_,                                  \
+    StubCode::LazySpecializeTypeTest().raw(), nullptr)                         \
+  V(CodePtr, enter_safepoint_stub_, StubCode::EnterSafepoint().raw(), nullptr) \
+  V(CodePtr, exit_safepoint_stub_, StubCode::ExitSafepoint().raw(), nullptr)   \
+  V(CodePtr, call_native_through_safepoint_stub_,                              \
+    StubCode::CallNativeThroughSafepoint().raw(), nullptr)
 
 #define CACHED_NON_VM_STUB_LIST(V)                                             \
-  V(RawObject*, object_null_, Object::null(), NULL)                            \
-  V(RawBool*, bool_true_, Object::bool_true().raw(), NULL)                     \
-  V(RawBool*, bool_false_, Object::bool_false().raw(), NULL)
+  V(ObjectPtr, object_null_, Object::null(), nullptr)                          \
+  V(BoolPtr, bool_true_, Object::bool_true().raw(), nullptr)                   \
+  V(BoolPtr, bool_false_, Object::bool_false().raw(), nullptr)
 
 // List of VM-global objects/addresses cached in each Thread object.
 // Important: constant false must immediately follow constant true.
@@ -163,30 +173,30 @@ class Thread;
     StubCode::ArrayWriteBarrier().EntryPoint(), 0)                             \
   V(uword, call_to_runtime_entry_point_,                                       \
     StubCode::CallToRuntime().EntryPoint(), 0)                                 \
-  V(uword, null_error_shared_without_fpu_regs_entry_point_,                    \
-    StubCode::NullErrorSharedWithoutFPURegs().EntryPoint(), 0)                 \
-  V(uword, null_error_shared_with_fpu_regs_entry_point_,                       \
-    StubCode::NullErrorSharedWithFPURegs().EntryPoint(), 0)                    \
-  V(uword, null_arg_error_shared_without_fpu_regs_entry_point_,                \
-    StubCode::NullArgErrorSharedWithoutFPURegs().EntryPoint(), 0)              \
-  V(uword, null_arg_error_shared_with_fpu_regs_entry_point_,                   \
-    StubCode::NullArgErrorSharedWithFPURegs().EntryPoint(), 0)                 \
   V(uword, allocate_mint_with_fpu_regs_entry_point_,                           \
-    StubCode::AllocateMintWithFPURegs().EntryPoint(), 0)                       \
+    StubCode::AllocateMintSharedWithFPURegs().EntryPoint(), 0)                 \
   V(uword, allocate_mint_without_fpu_regs_entry_point_,                        \
-    StubCode::AllocateMintWithoutFPURegs().EntryPoint(), 0)                    \
+    StubCode::AllocateMintSharedWithoutFPURegs().EntryPoint(), 0)              \
+  V(uword, allocate_object_entry_point_,                                       \
+    StubCode::AllocateObject().EntryPoint(), 0)                                \
+  V(uword, allocate_object_parameterized_entry_point_,                         \
+    StubCode::AllocateObjectParameterized().EntryPoint(), 0)                   \
+  V(uword, allocate_object_slow_entry_point_,                                  \
+    StubCode::AllocateObjectSlow().EntryPoint(), 0)                            \
   V(uword, stack_overflow_shared_without_fpu_regs_entry_point_,                \
     StubCode::StackOverflowSharedWithoutFPURegs().EntryPoint(), 0)             \
   V(uword, stack_overflow_shared_with_fpu_regs_entry_point_,                   \
     StubCode::StackOverflowSharedWithFPURegs().EntryPoint(), 0)                \
   V(uword, megamorphic_call_checked_entry_,                                    \
     StubCode::MegamorphicCall().EntryPoint(), 0)                               \
-  V(uword, monomorphic_miss_entry_, StubCode::MonomorphicMiss().EntryPoint(),  \
-    0)                                                                         \
+  V(uword, switchable_call_miss_entry_,                                        \
+    StubCode::SwitchableCallMiss().EntryPoint(), 0)                            \
   V(uword, optimize_entry_, StubCode::OptimizeFunction().EntryPoint(), 0)      \
   V(uword, deoptimize_entry_, StubCode::Deoptimize().EntryPoint(), 0)          \
   V(uword, call_native_through_safepoint_entry_point_,                         \
-    StubCode::CallNativeThroughSafepoint().EntryPoint(), 0)
+    StubCode::CallNativeThroughSafepoint().EntryPoint(), 0)                    \
+  V(uword, slow_type_test_entry_point_, StubCode::SlowTypeTest().EntryPoint(), \
+    0)
 
 #define CACHED_ADDRESSES_LIST(V)                                               \
   CACHED_VM_STUBS_ADDRESSES_LIST(V)                                            \
@@ -197,7 +207,7 @@ class Thread;
   V(uword, auto_scope_native_wrapper_entry_point_,                             \
     NativeEntry::AutoScopeNativeCallWrapperEntry(), 0)                         \
   V(uword, interpret_call_entry_point_, RuntimeEntry::InterpretCallEntry(), 0) \
-  V(RawString**, predefined_symbols_address_, Symbols::PredefinedAddress(),    \
+  V(StringPtr*, predefined_symbols_address_, Symbols::PredefinedAddress(),     \
     NULL)                                                                      \
   V(uword, double_nan_address_, reinterpret_cast<uword>(&double_nan_constant), \
     0)                                                                         \
@@ -238,6 +248,7 @@ class Thread : public ThreadState {
     kMarkerTask = 0x4,
     kSweeperTask = 0x8,
     kCompactorTask = 0x10,
+    kScavengerTask = 0x20,
   };
   // Converts a TaskKind to its corresponding C-String name.
   static const char* TaskKindToCString(TaskKind kind);
@@ -270,6 +281,11 @@ class Thread : public ThreadState {
                                    TaskKind kind,
                                    bool bypass_safepoint = false);
   static void ExitIsolateAsHelper(bool bypass_safepoint = false);
+
+  static bool EnterIsolateGroupAsHelper(IsolateGroup* isolate_group,
+                                        TaskKind kind,
+                                        bool bypass_safepoint);
+  static void ExitIsolateGroupAsHelper(bool bypass_safepoint);
 
   // Empties the store buffer block into the isolate.
   void ReleaseStoreBuffer();
@@ -337,6 +353,22 @@ class Thread : public ThreadState {
     return OFFSET_OF(Thread, ffi_callback_code_);
   }
 
+  // Tag state is maintained on transitions.
+  enum {
+    // Always true in generated state.
+    kDidNotExit = 0,
+    // The VM did exit the generated state through FFI.
+    // This can be true in both native and VM state.
+    kExitThroughFfi = 1,
+    // The VM exited the generated state through FFI.
+    // This can be true in both native and VM state.
+    kExitThroughRuntimeCall = 2,
+  };
+
+  static intptr_t exit_through_ffi_offset() {
+    return OFFSET_OF(Thread, exit_through_ffi_);
+  }
+
   TaskKind task_kind() const { return task_kind_; }
 
   // Retrieves and clears the stack overflow flags.  These are set by
@@ -354,7 +386,7 @@ class Thread : public ThreadState {
 
   void ScheduleInterrupts(uword interrupt_bits);
   void ScheduleInterruptsLocked(uword interrupt_bits);
-  RawError* HandleInterrupts();
+  ErrorPtr HandleInterrupts();
   uword GetAndClearInterrupts();
   bool HasScheduledInterrupts() const {
     return (stack_limit_ & kInterruptsMask) != 0;
@@ -374,6 +406,9 @@ class Thread : public ThreadState {
   // are allocated.
   ApiLocalScope* api_top_scope() const { return api_top_scope_; }
   void set_api_top_scope(ApiLocalScope* value) { api_top_scope_ = value; }
+  static intptr_t api_top_scope_offset() {
+    return OFFSET_OF(Thread, api_top_scope_);
+  }
 
   void EnterApiScope();
   void ExitApiScope();
@@ -389,7 +424,8 @@ class Thread : public ThreadState {
     return OFFSET_OF(Thread, field_table_values_);
   }
 
-  bool IsMutatorThread() const;
+  bool IsMutatorThread() const { return is_mutator_thread_; }
+
   bool CanCollectGarbage() const;
 
   // Offset of Dart TimelineStream object.
@@ -449,10 +485,10 @@ class Thread : public ThreadState {
     no_callback_scope_depth_ -= 1;
   }
 
-  void StoreBufferAddObject(RawObject* obj);
-  void StoreBufferAddObjectGC(RawObject* obj);
+  void StoreBufferAddObject(ObjectPtr obj);
+  void StoreBufferAddObjectGC(ObjectPtr obj);
 #if defined(TESTING)
-  bool StoreBufferContains(RawObject* obj) const {
+  bool StoreBufferContains(ObjectPtr obj) const {
     return store_buffer_block_->Contains(obj);
   }
 #endif
@@ -462,8 +498,8 @@ class Thread : public ThreadState {
   }
 
   bool is_marking() const { return marking_stack_block_ != NULL; }
-  void MarkingStackAddObject(RawObject* obj);
-  void DeferredMarkingStackAddObject(RawObject* obj);
+  void MarkingStackAddObject(ObjectPtr obj);
+  void DeferredMarkingStackAddObject(ObjectPtr obj);
   void MarkingStackBlockProcess();
   void DeferredMarkingStackBlockProcess();
   static intptr_t marking_stack_block_offset() {
@@ -482,19 +518,12 @@ class Thread : public ThreadState {
   Heap* heap() const { return heap_; }
   static intptr_t heap_offset() { return OFFSET_OF(Thread, heap_); }
 
-  void set_top(uword value) { top_ = value; }
-  void set_end(uword value) { end_ = value; }
-
-  uword top() { return top_; }
-  uword end() { return end_; }
-
-  bool HasActiveTLAB() { return end_ > 0; }
-
+  uword top() const { return top_; }
+  uword end() const { return end_; }
+  void set_top(uword top) { top_ = top; }
+  void set_end(uword end) { end_ = end; }
   static intptr_t top_offset() { return OFFSET_OF(Thread, top_); }
   static intptr_t end_offset() { return OFFSET_OF(Thread, end_); }
-
-  bool bump_allocate() const { return bump_allocate_; }
-  void set_bump_allocate(bool b) { bump_allocate_ = b; }
 
   int32_t no_safepoint_scope_depth() const {
 #if defined(DEBUG)
@@ -567,9 +596,14 @@ class Thread : public ThreadState {
   LEAF_RUNTIME_ENTRY_LIST(DEFINE_OFFSET_METHOD)
 #undef DEFINE_OFFSET_METHOD
 
-  RawObjectPool* global_object_pool() const { return global_object_pool_; }
-  void set_global_object_pool(RawObjectPool* raw_value) {
+  ObjectPoolPtr global_object_pool() const { return global_object_pool_; }
+  void set_global_object_pool(ObjectPoolPtr raw_value) {
     global_object_pool_ = raw_value;
+  }
+
+  const uword* dispatch_table_array() const { return dispatch_table_array_; }
+  void set_dispatch_table_array(const uword* array) {
+    dispatch_table_array_ = array;
   }
 
   static bool CanLoadFromThread(const Object& object);
@@ -598,20 +632,24 @@ class Thread : public ThreadState {
     return OFFSET_OF(Thread, unboxed_int64_runtime_arg_);
   }
 
-  RawGrowableObjectArray* pending_functions();
+  GrowableObjectArrayPtr pending_functions();
   void clear_pending_functions();
 
   static intptr_t global_object_pool_offset() {
     return OFFSET_OF(Thread, global_object_pool_);
   }
 
-  RawObject* active_exception() const { return active_exception_; }
+  static intptr_t dispatch_table_array_offset() {
+    return OFFSET_OF(Thread, dispatch_table_array_);
+  }
+
+  ObjectPtr active_exception() const { return active_exception_; }
   void set_active_exception(const Object& value);
   static intptr_t active_exception_offset() {
     return OFFSET_OF(Thread, active_exception_);
   }
 
-  RawObject* active_stacktrace() const { return active_stacktrace_; }
+  ObjectPtr active_stacktrace() const { return active_stacktrace_; }
   void set_active_stacktrace(const Object& value);
   static intptr_t active_stacktrace_offset() {
     return OFFSET_OF(Thread, active_stacktrace_);
@@ -621,14 +659,14 @@ class Thread : public ThreadState {
   void set_resume_pc(uword value) { resume_pc_ = value; }
   static uword resume_pc_offset() { return OFFSET_OF(Thread, resume_pc_); }
 
-  RawError* sticky_error() const;
+  ErrorPtr sticky_error() const;
   void set_sticky_error(const Error& value);
   void ClearStickyError();
-  DART_WARN_UNUSED_RESULT RawError* StealStickyError();
+  DART_WARN_UNUSED_RESULT ErrorPtr StealStickyError();
 
-  RawStackTrace* async_stack_trace() const;
+  StackTracePtr async_stack_trace() const;
   void set_async_stack_trace(const StackTrace& stack_trace);
-  void set_raw_async_stack_trace(RawStackTrace* raw_stack_trace);
+  void set_raw_async_stack_trace(StackTracePtr raw_stack_trace);
   void clear_async_stack_trace();
   static intptr_t async_stack_trace_offset() {
     return OFFSET_OF(Thread, async_stack_trace_);
@@ -703,11 +741,13 @@ class Thread : public ThreadState {
   uword SetSafepointRequested(bool value) {
     ASSERT(thread_lock()->IsOwnedByCurrentThread());
     if (value) {
+      // acquire pulls from the release in TryEnterSafepoint.
       return safepoint_state_.fetch_or(SafepointRequestedField::encode(true),
-                                       std::memory_order_relaxed);
+                                       std::memory_order_acquire);
     } else {
+      // release pushes to the acquire in TryExitSafepoint.
       return safepoint_state_.fetch_and(~SafepointRequestedField::encode(true),
-                                        std::memory_order_relaxed);
+                                        std::memory_order_release);
     }
   }
   static bool IsBlockedForSafepoint(uword state) {
@@ -738,6 +778,11 @@ class Thread : public ThreadState {
   ExecutionState execution_state() const {
     return static_cast<ExecutionState>(execution_state_);
   }
+  // Normally execution state is only accessed for the current thread.
+  NO_SANITIZE_THREAD
+  ExecutionState execution_state_cross_thread_for_testing() const {
+    return static_cast<ExecutionState>(execution_state_);
+  }
   void set_execution_state(ExecutionState state) {
     execution_state_ = static_cast<uword>(state);
   }
@@ -757,7 +802,7 @@ class Thread : public ThreadState {
     uword old_state = 0;
     uword new_state = SetAtSafepoint(true, 0);
     return safepoint_state_.compare_exchange_strong(old_state, new_state,
-                                                    std::memory_order_acq_rel);
+                                                    std::memory_order_release);
   }
 
   void EnterSafepoint() {
@@ -775,7 +820,7 @@ class Thread : public ThreadState {
     uword old_state = SetAtSafepoint(true, 0);
     uword new_state = 0;
     return safepoint_state_.compare_exchange_strong(old_state, new_state,
-                                                    std::memory_order_acq_rel);
+                                                    std::memory_order_acquire);
   }
 
   void ExitSafepoint() {
@@ -815,6 +860,8 @@ class Thread : public ThreadState {
   // Visit all object pointers.
   void VisitObjectPointers(ObjectPointerVisitor* visitor,
                            ValidationPolicy validate_frames);
+  void RememberLiveTemporaries();
+  void DeferredMarkLiveTemporaries();
 
   bool IsValidHandle(Dart_Handle object) const;
   bool IsValidLocalHandle(Dart_Handle object) const;
@@ -845,6 +892,13 @@ class Thread : public ThreadState {
   template <class T>
   T* AllocateReusableHandle();
 
+  enum class RestoreWriteBarrierInvariantOp {
+    kAddToRememberedSet,
+    kAddToDeferredMarkingStack
+  };
+  friend class RestoreWriteBarrierInvariantVisitor;
+  void RestoreWriteBarrierInvariant(RestoreWriteBarrierInvariantOp op);
+
   // Set the current compiler state and return the previous compiler state.
   CompilerState* SetCompilerState(CompilerState* state) {
     CompilerState* previous = compiler_state_;
@@ -858,21 +912,25 @@ class Thread : public ThreadState {
   // in SIMARM(IA32) and ARM, and the same offsets in SIMARM64(X64) and ARM64.
   // We use only word-sized fields to avoid differences in struct packing on the
   // different architectures. See also CheckOffsets in dart.cc.
-  uword stack_limit_;
-  uword saved_stack_limit_;
-  uword stack_overflow_flags_;
+  RelaxedAtomic<uword> stack_limit_;
   uword write_barrier_mask_;
   Isolate* isolate_;
-  RawInstance** field_table_values_;
+  const uword* dispatch_table_array_;
+  uword top_ = 0;
+  uword end_ = 0;
+  // Offsets up to this point can all fit in a byte on X64. All of the above
+  // fields are very abundantly accessed from code. Thus, keeping them first
+  // is important for code size (although code size on X64 is not a priority).
+  uword saved_stack_limit_;
+  uword stack_overflow_flags_;
+  InstancePtr* field_table_values_;
   Heap* heap_;
-  uword top_;
-  uword end_;
   uword volatile top_exit_frame_info_;
   StoreBufferBlock* store_buffer_block_;
   MarkingStackBlock* marking_stack_block_;
   MarkingStackBlock* deferred_marking_stack_block_;
   uword volatile vm_tag_;
-  RawStackTrace* async_stack_trace_;
+  StackTracePtr async_stack_trace_;
   // Memory location dedicated for passing unboxed int64 values from
   // generated code to runtime.
   // TODO(dartbug.com/33549): Clean this up when unboxed values
@@ -899,14 +957,16 @@ class Thread : public ThreadState {
 #endif
 
   // JumpToExceptionHandler state:
-  RawObject* active_exception_;
-  RawObject* active_stacktrace_;
-  RawObjectPool* global_object_pool_;
+  ObjectPtr active_exception_;
+  ObjectPtr active_stacktrace_;
+  ObjectPoolPtr global_object_pool_;
   uword resume_pc_;
   uword saved_shadow_call_stack_ = 0;
   uword execution_state_;
   std::atomic<uword> safepoint_state_;
-  RawGrowableObjectArray* ffi_callback_code_;
+  GrowableObjectArrayPtr ffi_callback_code_;
+  uword exit_through_ffi_ = 0;
+  ApiLocalScope* api_top_scope_;
 
   // ---- End accessed from generated code. ----
 
@@ -920,7 +980,6 @@ class Thread : public ThreadState {
   IsolateGroup* isolate_group_ = nullptr;
   mutable Monitor thread_lock_;
   ApiLocalScope* api_reusable_scope_;
-  ApiLocalScope* api_top_scope_;
   int32_t no_callback_scope_depth_;
 #if defined(DEBUG)
   int32_t no_safepoint_scope_depth_;
@@ -930,22 +989,21 @@ class Thread : public ThreadState {
   uint16_t deferred_interrupts_mask_;
   uint16_t deferred_interrupts_;
   int32_t stack_overflow_count_;
-  bool bump_allocate_;
 
   // Compiler state:
   CompilerState* compiler_state_ = nullptr;
   HierarchyInfo* hierarchy_info_;
   TypeUsageInfo* type_usage_info_;
-  RawGrowableObjectArray* pending_functions_;
+  GrowableObjectArrayPtr pending_functions_;
 
-  RawError* sticky_error_;
+  ErrorPtr sticky_error_;
 
   Random thread_random_;
 
   intptr_t ffi_marshalled_arguments_size_ = 0;
   uint64_t* ffi_marshalled_arguments_;
 
-  RawInstance** field_table_values() const { return field_table_values_; }
+  InstancePtr* field_table_values() const { return field_table_values_; }
 
 // Reusable handles support.
 #define REUSABLE_HANDLE_FIELDS(object) object* object##_handle_;
@@ -974,6 +1032,7 @@ class Thread : public ThreadState {
 #endif
 
   Thread* next_;  // Used to chain the thread structures in an isolate.
+  bool is_mutator_thread_ = false;
 
   explicit Thread(bool is_vm_isolate);
 
@@ -990,6 +1049,9 @@ class Thread : public ThreadState {
   void EnterSafepointUsingLock();
   void ExitSafepointUsingLock();
   void BlockForSafepoint();
+
+  void FinishEntering(TaskKind kind);
+  void PrepareLeaving();
 
   static void SetCurrent(Thread* current) { OSThread::SetCurrentTLS(current); }
 
@@ -1011,9 +1073,13 @@ class Thread : public ThreadState {
   friend class Simulator;
   friend class StackZone;
   friend class ThreadRegistry;
+  friend class NoActiveIsolateScope;
   friend class CompilerState;
   friend class compiler::target::Thread;
   friend class FieldTable;
+  friend Isolate* CreateWithinExistingIsolateGroup(IsolateGroup*,
+                                                   const char*,
+                                                   char**);
   DISALLOW_COPY_AND_ASSIGN(Thread);
 };
 

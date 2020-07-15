@@ -56,6 +56,7 @@ namespace dart {
   F(Field, guarded_list_length_)                                               \
   F(Field, dependent_code_)                                                    \
   F(Field, initializer_function_)                                              \
+  F(Field, host_offset_or_field_id_)                                           \
   F(Script, url_)                                                              \
   F(Script, resolved_url_)                                                     \
   F(Script, compile_time_constants_)                                           \
@@ -70,6 +71,7 @@ namespace dart {
   F(Library, metadata_)                                                        \
   F(Library, toplevel_class_)                                                  \
   F(Library, used_scripts_)                                                    \
+  F(Library, loading_unit_)                                                    \
   F(Library, imports_)                                                         \
   F(Library, exports_)                                                         \
   F(Library, kernel_data_)                                                     \
@@ -118,15 +120,17 @@ namespace dart {
   F(SingleTargetCache, target_)                                                \
   F(UnlinkedCall, target_name_)                                                \
   F(UnlinkedCall, args_descriptor_)                                            \
+  F(MonomorphicSmiableCall, expected_cid_)                                     \
+  F(MonomorphicSmiableCall, target_)                                           \
+  F(CallSiteData, target_name_)                                                \
+  F(CallSiteData, args_descriptor_)                                            \
   F(ICData, entries_)                                                          \
-  F(ICData, target_name_)                                                      \
-  F(ICData, args_descriptor_)                                                  \
   F(ICData, owner_)                                                            \
   F(MegamorphicCache, buckets_)                                                \
   F(MegamorphicCache, mask_)                                                   \
-  F(MegamorphicCache, target_name_)                                            \
-  F(MegamorphicCache, args_descriptor_)                                        \
   F(SubtypeTestCache, cache_)                                                  \
+  F(LoadingUnit, parent_)                                                      \
+  F(LoadingUnit, base_objects_)                                                \
   F(ApiError, message_)                                                        \
   F(LanguageError, previous_error_)                                            \
   F(LanguageError, script_)                                                    \
@@ -141,6 +145,7 @@ namespace dart {
   F(TypeArguments, instantiations_)                                            \
   F(TypeArguments, length_)                                                    \
   F(TypeArguments, hash_)                                                      \
+  F(TypeArguments, nullability_)                                               \
   F(AbstractType, type_test_stub_)                                             \
   F(Type, type_test_stub_)                                                     \
   F(Type, type_class_id_)                                                      \
@@ -191,19 +196,19 @@ namespace dart {
   F(WeakProperty, value_)                                                      \
   F(MirrorReference, referent_)                                                \
   F(UserTag, label_)                                                           \
+  F(PointerBase, data_)                                                        \
   F(Pointer, type_arguments_)                                                  \
-  F(Pointer, c_memory_address_)                                                \
   F(DynamicLibrary, handle_)                                                   \
   F(FfiTrampolineData, signature_type_)                                        \
   F(FfiTrampolineData, c_signature_)                                           \
   F(FfiTrampolineData, callback_target_)                                       \
   F(FfiTrampolineData, callback_exceptional_return_)                           \
-  F(TypedDataBase, data_)                                                      \
   F(TypedDataBase, length_)                                                    \
   F(TypedDataView, typed_data_)                                                \
-  F(TypedDataView, offset_in_bytes_)
+  F(TypedDataView, offset_in_bytes_)                                           \
+  F(FutureOr, type_arguments_)
 
-#define AOT_CLASSES_AND_FIELDS(F)
+#define AOT_CLASSES_AND_FIELDS(F) F(WeakSerializationReference, cid_)
 
 #define JIT_CLASSES_AND_FIELDS(F)                                              \
   F(Code, active_instructions_)                                                \
@@ -213,7 +218,8 @@ namespace dart {
   F(Function, bytecode_)                                                       \
   F(Function, unoptimized_code_)                                               \
   F(Field, saved_initial_value_)                                               \
-  F(Field, type_test_cache_)
+  F(Field, type_test_cache_)                                                   \
+  F(WeakSerializationReference, target_)
 
 OffsetsTable::OffsetsTable(Zone* zone) : cached_offsets_(zone) {
   for (intptr_t i = 0; offsets_table[i].class_id != -1; ++i) {
@@ -228,7 +234,8 @@ const char* OffsetsTable::FieldNameForOffset(intptr_t class_id,
 }
 
 #define DEFINE_OFFSETS_TABLE_ENTRY(class_name, field_name)                     \
-  {class_name::kClassId, #field_name, OFFSET_OF(Raw##class_name, field_name)},
+  {class_name::kClassId, #field_name,                                          \
+   OFFSET_OF(class_name##Layout, field_name)},
 
 // clang-format off
 OffsetsTable::OffsetsTableEntry OffsetsTable::offsets_table[] = {

@@ -22,15 +22,15 @@ DEFINE_FLAG(bool, trace_resolving, false, "Trace resolving.");
 // them, since the entry code of such a method does not check for named
 // arguments. The dynamic resolver actually checks that a valid number of named
 // arguments is passed in.
-RawFunction* Resolver::ResolveDynamic(const Instance& receiver,
-                                      const String& function_name,
-                                      const ArgumentsDescriptor& args_desc) {
+FunctionPtr Resolver::ResolveDynamic(const Instance& receiver,
+                                     const String& function_name,
+                                     const ArgumentsDescriptor& args_desc) {
   // Figure out type of receiver first.
   const Class& cls = Class::Handle(receiver.clazz());
   return ResolveDynamicForReceiverClass(cls, function_name, args_desc);
 }
 
-RawFunction* Resolver::ResolveDynamicForReceiverClass(
+FunctionPtr Resolver::ResolveDynamicForReceiverClass(
     const Class& receiver_class,
     const String& function_name,
     const ArgumentsDescriptor& args_desc,
@@ -42,8 +42,7 @@ RawFunction* Resolver::ResolveDynamicForReceiverClass(
       zone,
       ResolveDynamicAnyArgs(zone, receiver_class, function_name, allow_add));
 
-  if (function.IsNull() ||
-      !function.AreValidArguments(NNBDMode::kLegacyLib, args_desc, NULL)) {
+  if (function.IsNull() || !function.AreValidArguments(args_desc, NULL)) {
     // Return a null function to signal to the upper levels to dispatch to
     // "noSuchMethod" function.
     if (FLAG_trace_resolving) {
@@ -51,8 +50,7 @@ RawFunction* Resolver::ResolveDynamicForReceiverClass(
           String::Handle(zone, Symbols::New(thread, "function not found"));
       if (!function.IsNull()) {
         // Obtain more detailed error message.
-        function.AreValidArguments(NNBDMode::kLegacyLib, args_desc,
-                                   &error_message);
+        function.AreValidArguments(args_desc, &error_message);
       }
       THR_Print("ResolveDynamic error '%s': %s.\n", function_name.ToCString(),
                 error_message.ToCString());
@@ -62,10 +60,10 @@ RawFunction* Resolver::ResolveDynamicForReceiverClass(
   return function.raw();
 }
 
-RawFunction* Resolver::ResolveDynamicAnyArgs(Zone* zone,
-                                             const Class& receiver_class,
-                                             const String& function_name,
-                                             bool allow_add) {
+FunctionPtr Resolver::ResolveDynamicAnyArgs(Zone* zone,
+                                            const Class& receiver_class,
+                                            const String& function_name,
+                                            bool allow_add) {
   Class& cls = Class::Handle(zone, receiver_class.raw());
   if (FLAG_trace_resolving) {
     THR_Print("ResolveDynamic '%s' for class %s\n", function_name.ToCString(),
@@ -73,60 +71,50 @@ RawFunction* Resolver::ResolveDynamicAnyArgs(Zone* zone,
   }
   Function& function = Function::Handle(zone);
 
-  String& demangled = String::Handle(zone);
+  const String& demangled = String::Handle(
+      zone,
+      Function::IsDynamicInvocationForwarderName(function_name)
+          ? Function::DemangleDynamicInvocationForwarderName(function_name)
+          : function_name.raw());
 
-  const bool is_getter = Field::IsGetterName(function_name);
+  const bool is_getter = Field::IsGetterName(demangled);
+  String& demangled_getter_name = String::Handle();
   if (is_getter) {
-    demangled = Field::NameFromGetter(function_name);
+    demangled_getter_name = Field::NameFromGetter(demangled);
   }
 
-  if (Function::IsDynamicInvocationForwarderName(function_name)) {
-    demangled = Function::DemangleDynamicInvocationForwarderName(function_name);
-#ifdef DART_PRECOMPILED_RUNTIME
-    // In precompiled mode, the non-dynamic version of the function may be
-    // tree-shaken away, so can't necessarily resolve the demanged name.
-    while (!cls.IsNull()) {
+  const bool is_dyn_call = demangled.raw() != function_name.raw();
+
+  while (!cls.IsNull()) {
+    if (is_dyn_call) {
+      // Try to find a dyn:* forwarder & return it.
       function = cls.GetInvocationDispatcher(
           function_name, Array::null_array(),
-          RawFunction::kDynamicInvocationForwarder, /*create_if_absent=*/false);
-      if (!function.IsNull()) break;
-      cls = cls.SuperClass();
+          FunctionLayout::kDynamicInvocationForwarder,
+          /*create_if_absent=*/false);
     }
-    // Some functions don't require dynamic invocation forwarders, for example
-    // if there are no parameters or all the parameters are marked
-    // `generic-covariant` (meaning there's no work for the dynamic invocation
-    // forwarder to do, see `kernel::DynamicInvocationForwarder`). For these
-    // functions, we won't have built a `dyn:` version, but it's safe to just
-    // return the original version directly.
-    return !function.IsNull() ? function.raw()
-                              : ResolveDynamicAnyArgs(zone, receiver_class,
-                                                      demangled, allow_add);
-#else
-    function =
-        ResolveDynamicAnyArgs(zone, receiver_class, demangled, allow_add);
-    return function.IsNull() ? function.raw()
-                             : function.GetDynamicInvocationForwarder(
-                                   function_name, allow_add);
-#endif
-  }
+    if (!function.IsNull()) return function.raw();
 
-  // Now look for an instance function whose name matches function_name
-  // in the class.
-  while (!cls.IsNull()) {
-    function = cls.LookupDynamicFunction(function_name);
-    if (!function.IsNull()) {
-      return function.raw();
+    function = cls.LookupDynamicFunction(demangled);
+#if !defined(DART_PRECOMPILED_RUNTIME)
+    // In JIT we might need to lazily create a dyn:* forwarder.
+    if (is_dyn_call && !function.IsNull()) {
+      function =
+          function.GetDynamicInvocationForwarder(function_name, allow_add);
     }
+#endif
+    if (!function.IsNull()) return function.raw();
+
     // Getter invocation might actually be a method extraction.
-    if (is_getter && function.IsNull()) {
-      function = cls.LookupDynamicFunction(demangled);
+    if (is_getter) {
+      function = cls.LookupDynamicFunction(demangled_getter_name);
       if (!function.IsNull()) {
         if (allow_add && FLAG_lazy_dispatchers) {
           // We were looking for the getter but found a method with the same
           // name. Create a method extractor and return it.
           // The extractor does not exist yet, so using GetMethodExtractor is
           // not necessary here.
-          function = function.CreateMethodExtractor(function_name);
+          function = function.CreateMethodExtractor(demangled);
           return function.raw();
         } else {
           return Function::null();
@@ -138,12 +126,12 @@ RawFunction* Resolver::ResolveDynamicAnyArgs(Zone* zone,
   return function.raw();
 }
 
-RawFunction* Resolver::ResolveStatic(const Library& library,
-                                     const String& class_name,
-                                     const String& function_name,
-                                     intptr_t type_args_len,
-                                     intptr_t num_arguments,
-                                     const Array& argument_names) {
+FunctionPtr Resolver::ResolveStatic(const Library& library,
+                                    const String& class_name,
+                                    const String& function_name,
+                                    intptr_t type_args_len,
+                                    intptr_t num_arguments,
+                                    const Array& argument_names) {
   ASSERT(!library.IsNull());
   Function& function = Function::Handle();
   if (class_name.IsNull() || (class_name.Length() == 0)) {
@@ -151,14 +139,13 @@ RawFunction* Resolver::ResolveStatic(const Library& library,
     const Object& object = Object::Handle(library.ResolveName(function_name));
     if (!object.IsNull() && object.IsFunction()) {
       function ^= object.raw();
-      if (!function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                      num_arguments, argument_names, NULL)) {
+      if (!function.AreValidArguments(type_args_len, num_arguments,
+                                      argument_names, NULL)) {
         if (FLAG_trace_resolving) {
           String& error_message = String::Handle();
           // Obtain more detailed error message.
-          function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                     num_arguments, argument_names,
-                                     &error_message);
+          function.AreValidArguments(type_args_len, num_arguments,
+                                     argument_names, &error_message);
           THR_Print("ResolveStatic error '%s': %s.\n",
                     function_name.ToCString(), error_message.ToCString());
         }
@@ -187,11 +174,11 @@ RawFunction* Resolver::ResolveStatic(const Library& library,
   return function.raw();
 }
 
-RawFunction* Resolver::ResolveStatic(const Class& cls,
-                                     const String& function_name,
-                                     intptr_t type_args_len,
-                                     intptr_t num_arguments,
-                                     const Array& argument_names) {
+FunctionPtr Resolver::ResolveStatic(const Class& cls,
+                                    const String& function_name,
+                                    intptr_t type_args_len,
+                                    intptr_t num_arguments,
+                                    const Array& argument_names) {
   ASSERT(!cls.IsNull());
   if (FLAG_trace_resolving) {
     THR_Print("ResolveStatic '%s'\n", function_name.ToCString());
@@ -199,52 +186,19 @@ RawFunction* Resolver::ResolveStatic(const Class& cls,
   const Function& function =
       Function::Handle(cls.LookupStaticFunction(function_name));
   if (function.IsNull() ||
-      !function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                  num_arguments, argument_names, NULL)) {
+      !function.AreValidArguments(type_args_len, num_arguments, argument_names,
+                                  NULL)) {
     // Return a null function to signal to the upper levels to throw a
     // resolution error or maybe throw the error right here.
     if (FLAG_trace_resolving) {
       String& error_message = String::Handle(String::New("function not found"));
       if (!function.IsNull()) {
         // Obtain more detailed error message.
-        function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                   num_arguments, argument_names,
+        function.AreValidArguments(type_args_len, num_arguments, argument_names,
                                    &error_message);
       }
       THR_Print("ResolveStatic error '%s': %s.\n", function_name.ToCString(),
                 error_message.ToCString());
-    }
-    return Function::null();
-  }
-  return function.raw();
-}
-
-RawFunction* Resolver::ResolveStaticAllowPrivate(const Class& cls,
-                                                 const String& function_name,
-                                                 intptr_t type_args_len,
-                                                 intptr_t num_arguments,
-                                                 const Array& argument_names) {
-  ASSERT(!cls.IsNull());
-  if (FLAG_trace_resolving) {
-    THR_Print("ResolveStaticAllowPrivate '%s'\n", function_name.ToCString());
-  }
-  const Function& function =
-      Function::Handle(cls.LookupStaticFunctionAllowPrivate(function_name));
-  if (function.IsNull() ||
-      !function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                  num_arguments, argument_names, NULL)) {
-    // Return a null function to signal to the upper levels to throw a
-    // resolution error or maybe throw the error right here.
-    if (FLAG_trace_resolving) {
-      String& error_message = String::Handle(String::New("function not found"));
-      if (!function.IsNull()) {
-        // Obtain more detailed error message.
-        function.AreValidArguments(NNBDMode::kLegacyLib, type_args_len,
-                                   num_arguments, argument_names,
-                                   &error_message);
-      }
-      THR_Print("ResolveStaticAllowPrivate error '%s': %s.\n",
-                function_name.ToCString(), error_message.ToCString());
     }
     return Function::null();
   }

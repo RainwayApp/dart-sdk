@@ -18,6 +18,7 @@ class Flags {
   static const String disableTypeInference = '--disable-type-inference';
   static const String disableRtiOptimization = '--disable-rti-optimization';
   static const String dumpInfo = '--dump-info';
+  static const String dumpSsa = '--dump-ssa';
   static const String enableAssertMessage = '--assert-message';
   static const String enableCheckedMode = '--enable-checked-mode';
   static const String enableAsserts = '--enable-asserts';
@@ -26,6 +27,8 @@ class Flags {
       '--experimental-track-allocations';
   static const String experimentalAllocationsPath =
       '--experimental-allocations-path';
+
+  static const String experimentalPowersets = '--experimental-powersets';
 
   // Temporary experiment for code generation of locals for frequently used
   // 'this' and constants.
@@ -55,6 +58,8 @@ class Flags {
   static const String omitImplicitChecks = '--omit-implicit-checks';
   static const String omitAsCasts = '--omit-as-casts';
   static const String laxRuntimeTypeToString = '--lax-runtime-type-to-string';
+  static const String legacyJavaScript = '--legacy-javascript';
+  static const String noLegacyJavaScript = '--no-legacy-javascript';
 
   static const String platformBinaries = '--platform-binaries=.+';
 
@@ -65,6 +70,7 @@ class Flags {
   static const String noMinify = '--no-minify';
   static const String noSourceMaps = '--no-source-maps';
   static const String preserveUris = '--preserve-uris';
+  static const String printLegacyStars = '--debug-print-legacy-stars';
   static const String showPackageWarnings = '--show-package-warnings';
   static const String suppressHints = '--suppress-hints';
   static const String suppressWarnings = '--suppress-warnings';
@@ -93,6 +99,9 @@ class Flags {
   static const String debugGlobalInference = '--debug-global-inference';
 
   static const String serverMode = '--server-mode';
+
+  static const String soundNullSafety = '--sound-null-safety';
+  static const String noSoundNullSafety = '--no-sound-null-safety';
 
   static const String newDeferredSplit = '--new-deferred-split';
   static const String reportInvalidInferredDeferredTypes =

@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ConvertToSetLiteralTest);
   });
@@ -23,163 +23,176 @@ class ConvertToSetLiteralTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.prefer_collection_literals;
 
-  test_default_declaredType() async {
+  Future<void> test_default_declaredType() async {
     await resolveTestUnit('''
-Set s = /*LINT*/Set();
+Set s = Set();
 ''');
     await assertHasFix('''
-Set s = /*LINT*/{};
+Set s = {};
 ''');
   }
 
-  test_default_minimal() async {
+  Future<void> test_default_minimal() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set();
+var s = Set();
 ''');
     await assertHasFix('''
-var s = /*LINT*/<dynamic>{};
+var s = <dynamic>{};
 ''');
   }
 
-  test_default_newKeyword() async {
+  Future<void> test_default_newKeyword() async {
     await resolveTestUnit('''
-var s = /*LINT*/new Set();
+var s = new Set();
 ''');
     await assertHasFix('''
-var s = /*LINT*/<dynamic>{};
+var s = <dynamic>{};
 ''');
   }
 
-  test_default_typeArg() async {
+  Future<void> test_default_typeArg() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set<int>();
+var s = Set<int>();
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{};
+var s = <int>{};
 ''');
   }
 
-  test_from_empty() async {
+  @failingTest
+  Future<void> test_default_typeArg_linkedHashSet() async {
+    // LinkedHashSet isn't converted even though the lint reports that case.
     await resolveTestUnit('''
-var s = /*LINT*/Set.from([]);
+import 'dart:collection';
+
+var s = LinkedHashSet<int>();
 ''');
     await assertHasFix('''
-var s = /*LINT*/<dynamic>{};
+import 'dart:collection';
+
+var s = <int>{};
 ''');
   }
 
-  test_from_newKeyword() async {
+  Future<void> test_from_empty() async {
     await resolveTestUnit('''
-var s = /*LINT*/new Set.from([2, 3]);
+var s = Set.from([]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/{2, 3};
+var s = <dynamic>{};
 ''');
   }
 
-  test_from_noKeyword_declaredType() async {
+  @failingTest
+  Future<void> test_from_inferred() async {
+    // _setWouldBeInferred does not check for inference based on the parameter
+    // type.
     await resolveTestUnit('''
-Set s = /*LINT*/Set.from([2, 3]);
+void f(Set<int> s) {}
+var s = f(Set.from([]));
 ''');
     await assertHasFix('''
-Set s = /*LINT*/{2, 3};
+void f(Set<int> s) {}
+var s = f({});
 ''');
   }
 
-  test_from_noKeyword_typeArg_onConstructor() async {
+  Future<void> test_from_newKeyword() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set<int>.from([2, 3]);
+var s = new Set.from([2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{2, 3};
+var s = {2, 3};
 ''');
   }
 
-  test_from_noKeyword_typeArg_onConstructorAndLiteral() async {
+  Future<void> test_from_noKeyword_declaredType() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set<int>.from(<num>[2, 3]);
+Set s = Set.from([2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{2, 3};
+Set s = {2, 3};
 ''');
   }
 
-  test_from_noKeyword_typeArg_onLiteral() async {
+  Future<void> test_from_noKeyword_typeArg_onConstructor() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set.from(<int>[2, 3]);
+var s = Set<int>.from([2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{2, 3};
+var s = <int>{2, 3};
 ''');
   }
 
-  test_from_nonEmpty() async {
+  Future<void> test_from_noKeyword_typeArg_onConstructorAndLiteral() async {
     await resolveTestUnit('''
-var s = /*LINT*/Set.from([2, 3]);
+var s = Set<int>.from(<num>[2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/{2, 3};
+var s = <int>{2, 3};
 ''');
   }
 
-  test_from_notALiteral() async {
+  Future<void> test_from_noKeyword_typeArg_onLiteral() async {
     await resolveTestUnit('''
-var l = [1];
-Set s = /*LINT*/new Set.from(l);
-''');
-    await assertNoFix();
-  }
-
-  test_from_trailingComma() async {
-    await resolveTestUnit('''
-var s = /*LINT*/Set.from([2, 3,]);
+var s = Set.from(<int>[2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/{2, 3,};
+var s = <int>{2, 3};
 ''');
   }
 
-  test_toSet_empty() async {
+  Future<void> test_from_nonEmpty() async {
     await resolveTestUnit('''
-var s = /*LINT*/[].toSet();
+var s = Set.from([2, 3]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/<dynamic>{};
+var s = {2, 3};
 ''');
   }
 
-  test_toSet_empty_typeArg() async {
+  Future<void> test_from_trailingComma() async {
     await resolveTestUnit('''
-var s = /*LINT*/<int>[].toSet();
+var s = Set.from([2, 3,]);
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{};
+var s = {2, 3,};
 ''');
   }
 
-  test_toSet_nonEmpty() async {
+  Future<void> test_toSet_empty() async {
     await resolveTestUnit('''
-var s = /*LINT*/[2, 3].toSet();
+var s = [].toSet();
 ''');
     await assertHasFix('''
-var s = /*LINT*/{2, 3};
+var s = <dynamic>{};
 ''');
   }
 
-  test_toSet_nonEmpty_typeArg() async {
+  Future<void> test_toSet_empty_typeArg() async {
     await resolveTestUnit('''
-var s = /*LINT*/<int>[2, 3].toSet();
+var s = <int>[].toSet();
 ''');
     await assertHasFix('''
-var s = /*LINT*/<int>{2, 3};
+var s = <int>{};
 ''');
   }
 
-  test_toSet_notALiteral() async {
+  Future<void> test_toSet_nonEmpty() async {
     await resolveTestUnit('''
-var l = [];
-var s = /*LINT*/l.toSet();
+var s = [2, 3].toSet();
 ''');
-    await assertNoFix();
+    await assertHasFix('''
+var s = {2, 3};
+''');
+  }
+
+  Future<void> test_toSet_nonEmpty_typeArg() async {
+    await resolveTestUnit('''
+var s = <int>[2, 3].toSet();
+''');
+    await assertHasFix('''
+var s = <int>{2, 3};
+''');
   }
 }

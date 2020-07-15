@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 #include "vm/compiler/backend/range_analysis.h"
 
 #include "vm/bit_vector.h"
@@ -837,7 +835,7 @@ class BoundsCheckGeneralizer {
     scheduler_.Start();
 
     // AOT should only see non-deopting GenericCheckBound.
-    ASSERT(!FLAG_precompiled_mode);
+    ASSERT(!CompilerState::Current().is_aot());
 
     ConstantInstr* max_smi = flow_graph_->GetConstant(
         Smi::Handle(Smi::New(compiler::target::kSmiMax)));
@@ -958,12 +956,21 @@ class BoundsCheckGeneralizer {
     return nullptr;
   }
 
+  // Returns true if x is invariant and is either based on a Smi definition
+  // or is a Smi constant.
+  static bool IsSmiInvariant(const InductionVar* x) {
+    return InductionVar::IsInvariant(x) && Smi::IsValid(x->offset()) &&
+           Smi::IsValid(x->mult()) &&
+           (x->mult() == 0 || x->def()->Type()->ToCid() == kSmiCid);
+  }
+
   // Only accept smi linear induction with unit stride.
   InductionVar* GetSmiInduction(LoopInfo* loop, Definition* def) {
     if (loop != nullptr && def->Type()->ToCid() == kSmiCid) {
       InductionVar* induc = loop->LookupInduction(def);
-      if (induc != nullptr && induc->kind() == InductionVar::kLinear &&
-          induc->next()->offset() == 1 && induc->next()->mult() == 0) {
+      int64_t stride;
+      if (induc != nullptr && InductionVar::IsLinear(induc, &stride) &&
+          stride == 1 && IsSmiInvariant(induc->initial())) {
         return induc;
       }
     }
@@ -1341,7 +1348,7 @@ void RangeAnalysis::EliminateRedundantBoundsChecks() {
     // check earlier and we are not compiling precompiled code
     // (no optimistic hoisting of checks possible)
     const bool try_generalization =
-        !FLAG_precompiled_mode &&
+        !CompilerState::Current().is_aot() &&
         !function.ProhibitsBoundsCheckGeneralization();
     BoundsCheckGeneralizer generalizer(this, flow_graph_);
     for (CheckBoundBase* check : bounds_checks_) {
@@ -1655,7 +1662,8 @@ Definition* IntegerInstructionSelector::ConstructReplacementFor(
     UnboxInstr* unbox = def->AsUnboxInt64();
     Value* value = unbox->value()->CopyWithType();
     intptr_t deopt_id = unbox->DeoptimizationTarget();
-    return new (Z) UnboxUint32Instr(value, deopt_id, def->speculative_mode());
+    return new (Z)
+        UnboxUint32Instr(value, deopt_id, def->SpeculativeModeOfInputs());
   } else if (def->IsUnaryInt64Op()) {
     UnaryInt64OpInstr* op = def->AsUnaryInt64Op();
     Token::Kind op_kind = op->op_kind();
@@ -1819,7 +1827,7 @@ RangeBoundary RangeBoundary::Shl(const RangeBoundary& value_boundary,
   } else if (shift_count == 0 ||
              (limit > 0 && Utils::IsInt(static_cast<int>(limit), value))) {
     // Result stays in 64 bit range.
-    const int64_t result = value << shift_count;
+    const int64_t result = static_cast<uint64_t>(value) << shift_count;
     return RangeBoundary(result);
   }
 
@@ -2693,11 +2701,12 @@ void LoadFieldInstr::InferRange(RangeAnalysis* analysis, Range* range) {
     case Slot::Kind::kClosure_function:
     case Slot::Kind::kClosure_function_type_arguments:
     case Slot::Kind::kClosure_instantiator_type_arguments:
-    case Slot::Kind::kPointer_c_memory_address:
-    case Slot::Kind::kTypedDataBase_data_field:
+    case Slot::Kind::kPointerBase_data_field:
     case Slot::Kind::kTypedDataView_data:
     case Slot::Kind::kType_arguments:
     case Slot::Kind::kTypeArgumentsIndex:
+    case Slot::Kind::kUnhandledException_exception:
+    case Slot::Kind::kUnhandledException_stacktrace:
       // Not an integer valued field.
       UNREACHABLE();
       break;
@@ -2712,6 +2721,7 @@ void LoadFieldInstr::InferRange(RangeAnalysis* analysis, Range* range) {
     case Slot::Kind::kArgumentsDescriptor_type_args_len:
     case Slot::Kind::kArgumentsDescriptor_positional_count:
     case Slot::Kind::kArgumentsDescriptor_count:
+    case Slot::Kind::kArgumentsDescriptor_size:
       *range = Range(RangeBoundary::FromConstant(0), RangeBoundary::MaxSmi());
       break;
   }
@@ -2761,7 +2771,7 @@ void LoadIndexedInstr::InferRange(RangeAnalysis* analysis, Range* range) {
 }
 
 void LoadCodeUnitsInstr::InferRange(RangeAnalysis* analysis, Range* range) {
-  ASSERT(RawObject::IsStringClassId(class_id()));
+  ASSERT(IsStringClassId(class_id()));
   RangeBoundary zero = RangeBoundary::FromConstant(0);
   // Take the number of loaded characters into account when determining the
   // range of the result.
@@ -3035,5 +3045,3 @@ bool CheckBoundBase::IsRedundant(bool use_loops) {
 }
 
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

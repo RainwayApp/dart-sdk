@@ -220,6 +220,11 @@ class CompilationCommand extends ProcessCommand {
     return true;
   }
 
+  @override
+  List<String> get batchArguments {
+    return [...arguments.where((arg) => arg.startsWith('--enable-experiment'))];
+  }
+
   void _buildHashCode(HashCodeBuilder builder) {
     super._buildHashCode(builder);
     builder.addJson(outputFile);
@@ -272,8 +277,8 @@ class FastaCompilationCommand extends CompilationCommand {
   @override
   List<String> get batchArguments {
     return <String>[
+      ...super.batchArguments,
       '--enable-asserts',
-      ...arguments.where((arg) => arg.startsWith('--enable-experiment')),
       _compilerLocation.resolve("batch.dart").toFilePath(),
     ];
   }
@@ -542,7 +547,6 @@ class AdbPrecompilationCommand extends Command implements AdbCommand {
   final String processTestFilename;
   final String precompiledTestDirectory;
   final List<String> arguments;
-  final bool useBlobs;
   final bool useElf;
   final List<String> extraLibraries;
 
@@ -551,7 +555,6 @@ class AdbPrecompilationCommand extends Command implements AdbCommand {
       this.processTestFilename,
       this.precompiledTestDirectory,
       this.arguments,
-      this.useBlobs,
       this.useElf,
       this.extraLibraries,
       {int index = 0})
@@ -562,7 +565,6 @@ class AdbPrecompilationCommand extends Command implements AdbCommand {
       processTestFilename,
       precompiledTestDirectory,
       arguments,
-      useBlobs,
       useElf,
       extraLibraries,
       index: index);
@@ -577,7 +579,6 @@ class AdbPrecompilationCommand extends Command implements AdbCommand {
     builder.add(buildPath);
     builder.add(precompiledTestDirectory);
     builder.add(arguments);
-    builder.add(useBlobs);
     builder.add(useElf);
     extraLibraries.forEach(builder.add);
   }
@@ -585,7 +586,6 @@ class AdbPrecompilationCommand extends Command implements AdbCommand {
   bool _equal(AdbPrecompilationCommand other) =>
       super._equal(other) &&
       buildPath == other.buildPath &&
-      useBlobs == other.useBlobs &&
       useElf == other.useElf &&
       arguments == other.arguments &&
       precompiledTestDirectory == other.precompiledTestDirectory &&
@@ -610,6 +610,7 @@ class AdbDartkCommand extends Command implements AdbCommand {
   AdbDartkCommand indexedCopy(int index) => AdbDartkCommand(
       buildPath, processTestFilename, kernelFile, arguments, extraLibraries,
       index: index);
+
   _buildHashCode(HashCodeBuilder builder) {
     super._buildHashCode(builder);
     builder.add(buildPath);
@@ -624,6 +625,11 @@ class AdbDartkCommand extends Command implements AdbCommand {
       arguments == other.arguments &&
       extraLibraries == other.extraLibraries &&
       kernelFile == other.kernelFile;
+
+  VMCommandOutput createOutput(int exitCode, bool timedOut, List<int> stdout,
+          List<int> stderr, Duration time, bool compilationSkipped,
+          [int pid = 0]) =>
+      VMCommandOutput(this, exitCode, timedOut, stdout, stderr, time, pid);
 
   String toString() => 'Steps to push Dart VM and Dill file '
       'to an attached device. Uses (and requires) adb.';

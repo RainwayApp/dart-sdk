@@ -9,6 +9,7 @@ import 'dart:math' show Random;
 
 import 'package:js_runtime/shared/embedded_names.dart'
     show
+        ARRAY_RTI_PROPERTY,
         DEFERRED_INITIALIZED,
         DEFERRED_LIBRARY_PARTS,
         DEFERRED_PART_URIS,
@@ -49,7 +50,6 @@ import '../../js/js.dart' as js;
 import '../../js_backend/js_backend.dart'
     show Namer, ConstantEmitter, StringBackedName;
 import '../../js_backend/js_interop_analysis.dart' as jsInteropAnalysis;
-import '../../js_backend/native_data.dart' show NativeData;
 import '../../js_backend/runtime_types.dart';
 import '../../js_backend/runtime_types_codegen.dart';
 import '../../js_backend/runtime_types_new.dart'
@@ -60,6 +60,11 @@ import '../../js_backend/type_reference.dart'
         TypeReferenceFinalizer,
         TypeReferenceFinalizerImpl,
         TypeReferenceResource;
+import '../../js_backend/string_reference.dart'
+    show
+        StringReferenceFinalizer,
+        StringReferenceFinalizerImpl,
+        StringReferenceResource;
 import '../../options.dart';
 import '../../universe/class_hierarchy.dart' show ClassHierarchy;
 import '../../universe/codegen_world_builder.dart' show CodegenWorld;
@@ -113,7 +118,6 @@ class ModelEmitter {
       this._emitter,
       this._nativeEmitter,
       this._sourceInformationStrategy,
-      RuntimeTypesEncoder rtiEncoder,
       RecipeEncoder rtiRecipeEncoder,
       this._shouldGenerateSourceMap)
       : _constantOrdering = new ConstantOrdering(_closedWorld.sorter) {
@@ -122,7 +126,6 @@ class ModelEmitter {
         _closedWorld.commonElements,
         _closedWorld.elementEnvironment,
         _closedWorld.rtiNeed,
-        rtiEncoder,
         rtiRecipeEncoder,
         _closedWorld.fieldAnalysis,
         _emitter,

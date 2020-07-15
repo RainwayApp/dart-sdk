@@ -836,9 +836,13 @@ abstract class BreakStatement implements Statement {
 ///      | identifier
 ///
 /// Clients may not extend, implement or mix-in this class.
-abstract class CascadeExpression implements Expression {
+abstract class CascadeExpression
+    implements Expression, NullShortableExpression {
   /// Return the cascade sections sharing the common target.
   NodeList<Expression> get cascadeSections;
+
+  /// Whether this cascade is null aware (as opposed to non-null).
+  bool get isNullAware;
 
   /// Return the target of the cascade sections.
   Expression get target;
@@ -1231,6 +1235,10 @@ abstract class CompilationUnit implements AstNode {
   /// Might be `null` if, for example, this [CompilationUnit] has been
   /// resynthesized from a summary.
   FeatureSet get featureSet;
+
+  /// The language version override specified for this compilation unit using a
+  /// token like '// @dart = 2.7', or `null` if no override is specified.
+  LanguageVersionToken get languageVersionToken;
 
   /// Return the line information for this compilation unit.
   LineInfo get lineInfo;
@@ -2098,6 +2106,9 @@ abstract class ExtensionOverride implements Expression {
   /// Return the name of the extension being selected.
   Identifier get extensionName;
 
+  /// Whether this override is null aware (as opposed to non-null).
+  bool get isNullAware;
+
   /// Return the forced extension element.
   ///
   /// Return `null` if the AST structure has not been resolved.
@@ -2681,7 +2692,8 @@ abstract class FunctionExpression implements Expression {
 ///        [Expression] [TypeArgumentList]? [ArgumentList]
 ///
 /// Clients may not extend, implement or mix-in this class.
-abstract class FunctionExpressionInvocation implements InvocationExpression {
+abstract class FunctionExpressionInvocation
+    implements NullShortableExpression, InvocationExpression {
   /// Set the list of arguments to the method to the given [argumentList].
   set argumentList(ArgumentList argumentList);
 
@@ -3195,13 +3207,17 @@ abstract class IndexExpression
   /// Set the left square bracket to the given [token].
   set leftBracket(Token token);
 
-  /// Return the period ("..") before a cascaded index expression, or `null` if
-  /// this index expression is not part of a cascade expression.
+  /// Return the period (".." | "?..") before a cascaded index expression, or
+  /// `null` if this index expression is not part of a cascade expression.
   Token get period;
 
   /// Set the period ("..") before a cascaded index expression to the given
   /// [token].
   set period(Token token);
+
+  /// Return the question mark before the left bracket, or `null` if there is no
+  /// question mark.
+  Token get question;
 
   /// Return the expression used to compute the object being indexed.
   ///
@@ -3279,6 +3295,14 @@ abstract class InstanceCreationExpression
   /// Set the 'new' or 'const' keyword used to indicate how an object should be
   /// created to the given [token].
   set keyword(Token token);
+
+  @Deprecated('Use constructorName.staticElement')
+  @override
+  ConstructorElement get staticElement;
+
+  @Deprecated('Use constructorName.staticElement')
+  @override
+  set staticElement(ConstructorElement staticElement);
 }
 
 /// An integer literal expression.
@@ -3718,7 +3742,8 @@ abstract class MethodDeclaration implements ClassMember {
 ///        ([Expression] '.')? [SimpleIdentifier] [TypeArgumentList]? [ArgumentList]
 ///
 /// Clients may not extend, implement or mix-in this class.
-abstract class MethodInvocation implements InvocationExpression {
+abstract class MethodInvocation
+    implements NullShortableExpression, InvocationExpression {
   /// Set the list of arguments to the method to the given [argumentList].
   set argumentList(ArgumentList argumentList);
 
@@ -4003,7 +4028,7 @@ abstract class NodeList<E extends AstNode> implements List<E> {
   void operator []=(int index, E node);
 
   /// Use the given [visitor] to visit each of the nodes in this list.
-  accept(AstVisitor visitor);
+  void accept(AstVisitor visitor);
 }
 
 /// A formal parameter that is required (is not optional).
@@ -4181,7 +4206,7 @@ abstract class PartOfDirective implements Directive {
 ///
 /// Clients may not extend, implement or mix-in this class.
 abstract class PostfixExpression
-    implements Expression, MethodReferenceExpression {
+    implements Expression, NullShortableExpression, MethodReferenceExpression {
   /// Return the expression computing the operand for the operator.
   Expression get operand;
 
@@ -4241,7 +4266,7 @@ abstract class PrefixedIdentifier implements Identifier {
 ///
 /// Clients may not extend, implement or mix-in this class.
 abstract class PrefixExpression
-    implements Expression, MethodReferenceExpression {
+    implements Expression, NullShortableExpression, MethodReferenceExpression {
   /// Return the expression computing the operand for the operator.
   Expression get operand;
 

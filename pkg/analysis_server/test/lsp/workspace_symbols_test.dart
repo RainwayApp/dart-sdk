@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'server_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(WorkspaceSymbolsTest);
   });
@@ -17,7 +17,25 @@ main() {
 
 @reflectiveTest
 class WorkspaceSymbolsTest extends AbstractLspAnalysisServerTest {
-  test_fullMatch() async {
+  Future<void> test_extensions() async {
+    const content = '''
+    extension StringExtensions on String {}
+    extension on String {}
+    ''';
+    newFile(mainFilePath, content: withoutMarkers(content));
+    await initialize();
+
+    final symbols = await getWorkspaceSymbols('S');
+
+    final namedExtensions =
+        symbols.firstWhere((s) => s.name == 'StringExtensions');
+    expect(namedExtensions.kind, equals(SymbolKind.Obj));
+    expect(namedExtensions.containerName, isNull);
+
+    // Unnamed extensions are not returned in Workspace Symbols.
+  }
+
+  Future<void> test_fullMatch() async {
     const content = '''
     [[String topLevel = '']];
     class MyClass {
@@ -42,7 +60,7 @@ class WorkspaceSymbolsTest extends AbstractLspAnalysisServerTest {
     expect(symbols.any((s) => s.name.contains('myMethod')), isFalse);
   }
 
-  test_fuzzyMatch() async {
+  Future<void> test_fuzzyMatch() async {
     const content = '''
     String topLevel = '';
     class MyClass {
@@ -68,15 +86,15 @@ class WorkspaceSymbolsTest extends AbstractLspAnalysisServerTest {
     expect(symbols.any((s) => s.name.contains('myMethod')), isFalse);
   }
 
-  test_invalidParams() async {
+  Future<void> test_invalidParams() async {
     await initialize();
 
     // Create a request that doesn't supply the query param.
     final request = RequestMessage(
-      Either2<num, String>.t1(1),
-      Method.workspace_symbol,
-      <String, dynamic>{},
-      jsonRpcVersion,
+      id: Either2<num, String>.t1(1),
+      method: Method.workspace_symbol,
+      params: <String, dynamic>{},
+      jsonrpc: jsonRpcVersion,
     );
 
     final response = await sendRequestToServer(request);
@@ -89,7 +107,7 @@ class WorkspaceSymbolsTest extends AbstractLspAnalysisServerTest {
     );
   }
 
-  test_partialMatch() async {
+  Future<void> test_partialMatch() async {
     const content = '''
     String topLevel = '';
     class MyClass {

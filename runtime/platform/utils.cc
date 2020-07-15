@@ -176,7 +176,7 @@ void Utils::CalculateMagicAndShiftForDivRem(int64_t divisor,
   const uint64_t exp = 1LL << 63;
 
   // Initialize the computations.
-  uint64_t abs_d = (divisor >= 0) ? divisor : -divisor;
+  uint64_t abs_d = (divisor >= 0) ? divisor : -static_cast<uint64_t>(divisor);
   uint64_t sign_bit = static_cast<uint64_t>(divisor) >> 63;
   uint64_t tmp = exp + sign_bit;
   uint64_t abs_nc = tmp - 1 - (tmp % abs_d);
@@ -293,6 +293,10 @@ char* Utils::VSCreate(const char* format, va_list args) {
   VSNPrint(buffer, len + 1, format, print_args);
   va_end(print_args);
   return buffer;
+}
+
+Utils::CStringUniquePtr Utils::CreateCStringUniquePtr(char* str) {
+  return std::unique_ptr<char, decltype(std::free)*>{str, std::free};
 }
 
 }  // namespace dart

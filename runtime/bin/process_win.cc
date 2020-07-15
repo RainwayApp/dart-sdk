@@ -9,6 +9,7 @@
 
 #include <process.h>  // NOLINT
 #include <psapi.h>    // NOLINT
+#include <vector>
 
 #include "bin/builtin.h"
 #include "bin/dartutils.h"
@@ -27,7 +28,7 @@ static const int kReadHandle = 0;
 static const int kWriteHandle = 1;
 
 int Process::global_exit_code_ = 0;
-Mutex* Process::global_exit_code_mutex_ = new Mutex();
+Mutex* Process::global_exit_code_mutex_ = nullptr;
 Process::ExitHook Process::exit_hook_ = NULL;
 
 // ProcessInfo is used to map a process id to the process handle,
@@ -84,6 +85,9 @@ class ProcessInfo {
 // started from Dart.
 class ProcessInfoList {
  public:
+  static void Init();
+  static void Cleanup();
+
   static void AddProcess(DWORD pid, HANDLE handle, HANDLE pipe) {
     // Register a callback to extract the exit code, when the process
     // is signaled.  The callback runs in a independent thread from the OS pool.
@@ -199,7 +203,7 @@ class ProcessInfoList {
 };
 
 ProcessInfo* ProcessInfoList::active_processes_ = NULL;
-Mutex* ProcessInfoList::mutex_ = new Mutex();
+Mutex* ProcessInfoList::mutex_ = nullptr;
 
 // Types of pipes to create.
 enum NamedPipeType { kInheritRead, kInheritWrite, kInheritNone };
@@ -331,12 +335,13 @@ static InitProcThreadAttrListFn init_proc_thread_attr_list = NULL;
 static UpdateProcThreadAttrFn update_proc_thread_attr = NULL;
 static DeleteProcThreadAttrListFn delete_proc_thread_attr_list = NULL;
 
+static Mutex* initialized_mutex = nullptr;
+static bool load_attempted = false;
+
 static bool EnsureInitialized() {
-  static bool load_attempted = false;
-  static Mutex* mutex = new Mutex();
   HMODULE kernel32_module = GetModuleHandleW(L"kernel32.dll");
   if (!load_attempted) {
-    MutexLocker locker(mutex);
+    MutexLocker locker(initialized_mutex);
     if (load_attempted) {
       return (delete_proc_thread_attr_list != NULL);
     }
@@ -527,14 +532,13 @@ class ProcessStarter {
         if (!init_proc_thread_attr_list(attribute_list_, 1, 0, &size)) {
           return CleanupAndReturnError();
         }
-        static const int kNumInheritedHandles = 3;
-        HANDLE inherited_handles[kNumInheritedHandles] = {
-            stdin_handles_[kReadHandle], stdout_handles_[kWriteHandle],
-            stderr_handles_[kWriteHandle]};
+        inherited_handles_ = {stdin_handles_[kReadHandle],
+                              stdout_handles_[kWriteHandle],
+                              stderr_handles_[kWriteHandle]};
         if (!update_proc_thread_attr(
                 attribute_list_, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-                inherited_handles, kNumInheritedHandles * sizeof(HANDLE), NULL,
-                NULL)) {
+                inherited_handles_.data(),
+                inherited_handles_.size() * sizeof(HANDLE), NULL, NULL)) {
           return CleanupAndReturnError();
         }
         startup_info.lpAttributeList = attribute_list_;
@@ -660,6 +664,7 @@ class ProcessStarter {
   const wchar_t* system_working_directory_;
   wchar_t* command_line_;
   wchar_t* environment_block_;
+  std::vector<HANDLE> inherited_handles_;
   LPPROC_THREAD_ATTRIBUTE_LIST attribute_list_;
 
   const char* path_;
@@ -943,7 +948,7 @@ int64_t Process::MaxRSS() {
 }
 
 static SignalInfo* signal_handlers = NULL;
-static Mutex* signal_mutex = new Mutex();
+static Mutex* signal_mutex = nullptr;
 
 SignalInfo::~SignalInfo() {
   FileHandle* file_handle = reinterpret_cast<FileHandle*>(fd_);
@@ -1049,6 +1054,75 @@ void Process::ClearSignalHandler(intptr_t signal, Dart_Port port) {
   if (signal_handlers == NULL) {
     USE(SetConsoleCtrlHandler(SignalHandler, false));
   }
+}
+
+void Process::ClearSignalHandlerByFd(intptr_t fd, Dart_Port port) {
+  MutexLocker lock(signal_mutex);
+  SignalInfo* handler = signal_handlers;
+  while (handler != NULL) {
+    bool remove = false;
+    if (handler->fd() == fd) {
+      if ((port == ILLEGAL_PORT) || (handler->port() == port)) {
+        if (signal_handlers == handler) {
+          signal_handlers = handler->next();
+        }
+        handler->Unlink();
+        FileHandle* file_handle = reinterpret_cast<FileHandle*>(handler->fd());
+        file_handle->Release();
+        remove = true;
+      }
+    }
+    SignalInfo* next = handler->next();
+    if (remove) {
+      delete handler;
+    }
+    handler = next;
+  }
+  if (signal_handlers == NULL) {
+    USE(SetConsoleCtrlHandler(SignalHandler, false));
+  }
+}
+
+void ProcessInfoList::Init() {
+  ASSERT(ProcessInfoList::mutex_ == nullptr);
+  ProcessInfoList::mutex_ = new Mutex();
+}
+
+void ProcessInfoList::Cleanup() {
+  ASSERT(ProcessInfoList::mutex_ != nullptr);
+  delete ProcessInfoList::mutex_;
+  ProcessInfoList::mutex_ = nullptr;
+}
+
+void Process::Init() {
+  ProcessInfoList::Init();
+
+  ASSERT(signal_mutex == nullptr);
+  signal_mutex = new Mutex();
+
+  ASSERT(initialized_mutex == nullptr);
+  initialized_mutex = new Mutex();
+
+  ASSERT(Process::global_exit_code_mutex_ == nullptr);
+  Process::global_exit_code_mutex_ = new Mutex();
+}
+
+void Process::Cleanup() {
+  ClearAllSignalHandlers();
+
+  ASSERT(signal_mutex != nullptr);
+  delete signal_mutex;
+  signal_mutex = nullptr;
+
+  ASSERT(initialized_mutex != nullptr);
+  delete initialized_mutex;
+  initialized_mutex = nullptr;
+
+  ASSERT(Process::global_exit_code_mutex_ != nullptr);
+  delete Process::global_exit_code_mutex_;
+  Process::global_exit_code_mutex_ = nullptr;
+
+  ProcessInfoList::Cleanup();
 }
 
 }  // namespace bin

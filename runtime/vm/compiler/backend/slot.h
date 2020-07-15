@@ -24,6 +24,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_SLOT_H_
 #define RUNTIME_VM_COMPILER_BACKEND_SLOT_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/compiler/backend/compile_type.h"
 #include "vm/thread.h"
 
@@ -36,10 +40,11 @@ class ParsedFunction;
 // List of slots that correspond to fields of native objects in the following
 // format:
 //
-//     V(class_name, field_name, exact_type, FINAL|VAR)
+//     V(class_name, underlying_type, field_name, exact_type, FINAL|VAR)
 //
 // - class_name and field_name specify the name of the host class and the name
 //   of the field respectively;
+// - underlying_type: the Raw class which holds the field;
 // - exact_type specifies exact type of the field (any load from this field
 //   would only yield instances of this type);
 // - the last component specifies whether field behaves like a final field
@@ -48,31 +53,33 @@ class ParsedFunction;
 //
 // Note: native slots are expected to be non-nullable.
 #define NATIVE_SLOTS_LIST(V)                                                   \
-  V(Array, length, Smi, FINAL)                                                 \
-  V(Context, parent, Context, FINAL)                                           \
-  V(Closure, instantiator_type_arguments, TypeArguments, FINAL)                \
-  V(Closure, delayed_type_arguments, TypeArguments, FINAL)                     \
-  V(Closure, function_type_arguments, TypeArguments, FINAL)                    \
-  V(Closure, function, Function, FINAL)                                        \
-  V(Closure, context, Context, FINAL)                                          \
-  V(Closure, hash, Context, VAR)                                               \
-  V(GrowableObjectArray, length, Smi, VAR)                                     \
-  V(GrowableObjectArray, data, Array, VAR)                                     \
-  V(TypedDataBase, data_field, Dynamic, FINAL)                                 \
-  V(TypedDataBase, length, Smi, FINAL)                                         \
-  V(TypedDataView, offset_in_bytes, Smi, FINAL)                                \
-  V(TypedDataView, data, Dynamic, FINAL)                                       \
-  V(String, length, Smi, FINAL)                                                \
-  V(LinkedHashMap, index, TypedDataUint32Array, VAR)                           \
-  V(LinkedHashMap, data, Array, VAR)                                           \
-  V(LinkedHashMap, hash_mask, Smi, VAR)                                        \
-  V(LinkedHashMap, used_data, Smi, VAR)                                        \
-  V(LinkedHashMap, deleted_keys, Smi, VAR)                                     \
-  V(ArgumentsDescriptor, type_args_len, Smi, FINAL)                            \
-  V(ArgumentsDescriptor, positional_count, Smi, FINAL)                         \
-  V(ArgumentsDescriptor, count, Smi, FINAL)                                    \
-  V(Pointer, c_memory_address, Dynamic, FINAL)                                 \
-  V(Type, arguments, TypeArguments, FINAL)
+  V(Array, ArrayLayout, length, Smi, FINAL)                                    \
+  V(Context, ContextLayout, parent, Context, FINAL)                            \
+  V(Closure, ClosureLayout, instantiator_type_arguments, TypeArguments, FINAL) \
+  V(Closure, ClosureLayout, delayed_type_arguments, TypeArguments, FINAL)      \
+  V(Closure, ClosureLayout, function_type_arguments, TypeArguments, FINAL)     \
+  V(Closure, ClosureLayout, function, Function, FINAL)                         \
+  V(Closure, ClosureLayout, context, Context, FINAL)                           \
+  V(Closure, ClosureLayout, hash, Context, VAR)                                \
+  V(GrowableObjectArray, GrowableObjectArrayLayout, length, Smi, VAR)          \
+  V(GrowableObjectArray, GrowableObjectArrayLayout, data, Array, VAR)          \
+  V(TypedDataBase, TypedDataBaseLayout, length, Smi, FINAL)                    \
+  V(TypedDataView, TypedDataViewLayout, offset_in_bytes, Smi, FINAL)           \
+  V(TypedDataView, TypedDataViewLayout, data, Dynamic, FINAL)                  \
+  V(String, StringLayout, length, Smi, FINAL)                                  \
+  V(LinkedHashMap, LinkedHashMapLayout, index, TypedDataUint32Array, VAR)      \
+  V(LinkedHashMap, LinkedHashMapLayout, data, Array, VAR)                      \
+  V(LinkedHashMap, LinkedHashMapLayout, hash_mask, Smi, VAR)                   \
+  V(LinkedHashMap, LinkedHashMapLayout, used_data, Smi, VAR)                   \
+  V(LinkedHashMap, LinkedHashMapLayout, deleted_keys, Smi, VAR)                \
+  V(ArgumentsDescriptor, ArrayLayout, type_args_len, Smi, FINAL)               \
+  V(ArgumentsDescriptor, ArrayLayout, positional_count, Smi, FINAL)            \
+  V(ArgumentsDescriptor, ArrayLayout, count, Smi, FINAL)                       \
+  V(ArgumentsDescriptor, ArrayLayout, size, Smi, FINAL)                        \
+  V(PointerBase, PointerBaseLayout, data_field, Dynamic, FINAL)                \
+  V(Type, TypeLayout, arguments, TypeArguments, FINAL)                         \
+  V(UnhandledException, UnhandledExceptionLayout, exception, Dynamic, FINAL)   \
+  V(UnhandledException, UnhandledExceptionLayout, stacktrace, Dynamic, FINAL)
 
 // Slot is an abstraction that describes an readable (and possibly writeable)
 // location within an object.
@@ -86,7 +93,7 @@ class Slot : public ZoneAllocated {
   // clang-format off
   enum class Kind : uint8_t {
     // Native slots are identified by their kind - each native slot has its own.
-#define DECLARE_KIND(ClassName, FieldName, cid, mutability)                    \
+#define DECLARE_KIND(ClassName, UnderlyingType, FieldName, cid, mutability)    \
   k##ClassName##_##FieldName,
     NATIVE_SLOTS_LIST(DECLARE_KIND)
 #undef DECLARE_KIND
@@ -134,7 +141,7 @@ class Slot : public ZoneAllocated {
                          const ParsedFunction* parsed_function);
 
   // Convenience getters for native slots.
-#define DEFINE_GETTER(ClassName, FieldName, cid, mutability)                   \
+#define DEFINE_GETTER(ClassName, UnderlyingType, FieldName, cid, mutability)   \
   static const Slot& ClassName##_##FieldName() {                               \
     return GetNativeSlot(Kind::k##ClassName##_##FieldName);                    \
   }

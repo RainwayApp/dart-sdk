@@ -23,8 +23,6 @@ import 'declaration_kind.dart' show DeclarationKind;
 
 import 'member_kind.dart' show MemberKind;
 
-import 'util.dart' show optional;
-
 abstract class UnescapeErrorListener {
   void handleUnescapeError(
       Message message, covariant location, int offset, int length);
@@ -68,6 +66,11 @@ class Listener implements UnescapeErrorListener {
   void endInvalidAwaitExpression(
       Token beginToken, Token endToken, MessageCode errorCode) {
     logEvent("InvalidAwaitExpression");
+  }
+
+  void endInvalidYieldStatement(Token beginToken, Token starToken,
+      Token endToken, MessageCode errorCode) {
+    logEvent("InvalidYieldStatement");
   }
 
   void beginBlock(Token token, BlockKind blockKind) {}
@@ -222,7 +225,7 @@ class Listener implements UnescapeErrorListener {
   /// - on type
   /// - body
   void endExtensionDeclaration(
-      Token extensionKeyword, Token onKeyword, Token token) {
+      Token extensionKeyword, Token onKeyword, Token endToken) {
     logEvent('ExtensionDeclaration');
   }
 
@@ -363,8 +366,15 @@ class Listener implements UnescapeErrorListener {
   /// - Variable declarations (count times)
   ///
   /// Doesn't have a corresponding begin event, use [beginMember] instead.
-  void endClassFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
+  void endClassFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
     logEvent("Fields");
   }
 
@@ -375,11 +385,18 @@ class Listener implements UnescapeErrorListener {
   /// - Variable declarations (count times)
   ///
   /// Doesn't have a corresponding begin event, use [beginMember] instead.
-  void endMixinFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
+  void endMixinFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
     // TODO(danrubel): push implementation into subclasses
-    endClassFields(staticToken, covariantToken, lateToken, varFinalOrConst,
-        count, beginToken, endToken);
+    endClassFields(externalToken, staticToken, covariantToken, lateToken,
+        varFinalOrConst, count, beginToken, endToken);
   }
 
   /// Handle the end of a extension field declaration.  Substructures:
@@ -390,6 +407,7 @@ class Listener implements UnescapeErrorListener {
   ///
   /// Doesn't have a corresponding begin event, use [beginMember] instead.
   void endExtensionFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -398,8 +416,8 @@ class Listener implements UnescapeErrorListener {
       Token beginToken,
       Token endToken) {
     // TODO(danrubel): push implementation into subclasses
-    endClassFields(staticToken, covariantToken, lateToken, varFinalOrConst,
-        count, beginToken, endToken);
+    endClassFields(externalToken, staticToken, covariantToken, lateToken,
+        varFinalOrConst, count, beginToken, endToken);
   }
 
   /// Marks that the grammar term `forInitializerStatement` has been parsed and
@@ -803,7 +821,7 @@ class Listener implements UnescapeErrorListener {
     logEvent("LiteralString");
   }
 
-  void handleStringJuxtaposition(int literalCount) {
+  void handleStringJuxtaposition(Token startToken, int literalCount) {
     logEvent("StringJuxtaposition");
   }
 
@@ -1086,6 +1104,7 @@ class Listener implements UnescapeErrorListener {
   /// Doesn't have a corresponding begin event.
   /// Use [beginTopLevelMember] instead.
   void endTopLevelFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -1143,37 +1162,6 @@ class Listener implements UnescapeErrorListener {
   /// used as a non-null postfix assertion in an expression.
   void handleNonNullAssertExpression(Token bang) {
     logEvent("NonNullAssertExpression");
-  }
-
-  // TODO(danrubel): Remove this once all listeners have been updated
-  // to properly handle nullable types
-  void reportErrorIfNullableType(Token questionMark) {
-    if (questionMark != null) {
-      assert(optional('?', questionMark));
-      handleRecoverableError(
-          templateExperimentNotEnabled.withArguments('non-nullable'),
-          questionMark,
-          questionMark);
-    }
-  }
-
-  // TODO(danrubel): Remove this once all listeners have been updated
-  // to properly handle nullable types
-  void reportNonNullableModifierError(Token modifierToken) {
-    if (modifierToken != null) {
-      handleRecoverableError(
-          // TODO(johnniwinther): Update this to handle opt-out libraries
-          templateExperimentNotEnabled.withArguments('non-nullable'),
-          modifierToken,
-          modifierToken);
-    }
-  }
-
-  // TODO(danrubel): Remove this once all listeners have been updated
-  // to properly handle non-null assert expressions
-  void reportNonNullAssertExpressionNotEnabled(Token bang) {
-    handleRecoverableError(
-        templateExperimentNotEnabled.withArguments('non-nullable'), bang, bang);
   }
 
   void handleNoName(Token token) {
@@ -1241,7 +1229,7 @@ class Listener implements UnescapeErrorListener {
   void reportVarianceModifierNotEnabled(Token variance) {
     if (variance != null) {
       handleRecoverableError(
-          templateExperimentNotEnabled.withArguments('variance'),
+          templateExperimentNotEnabled.withArguments('variance', '2.9'),
           variance,
           variance);
     }
@@ -1273,6 +1261,12 @@ class Listener implements UnescapeErrorListener {
 
   void endWhileStatement(Token whileKeyword, Token endToken) {
     logEvent("WhileStatement");
+  }
+
+  void beginAsOperatorType(Token operator) {}
+
+  void endAsOperatorType(Token operator) {
+    logEvent("AsOperatorType");
   }
 
   void handleAsOperator(Token operator) {
@@ -1382,8 +1376,14 @@ class Listener implements UnescapeErrorListener {
   }
 
   void handleIndexedExpression(
-      Token openSquareBracket, Token closeSquareBracket) {
+      Token question, Token openSquareBracket, Token closeSquareBracket) {
     logEvent("IndexedExpression");
+  }
+
+  void beginIsOperatorType(Token operator) {}
+
+  void endIsOperatorType(Token operator) {
+    logEvent("IsOperatorType");
   }
 
   void handleIsOperator(Token isOperator, Token not) {
@@ -1577,6 +1577,12 @@ class Listener implements UnescapeErrorListener {
 
   void handleVoidKeyword(Token token) {
     logEvent("VoidKeyword");
+  }
+
+  /// The parser saw a void with type arguments (e.g. void<int>).
+  /// This is not valid - an error has already been emitted.
+  void handleVoidKeywordWithTypeArguments(Token token) {
+    logEvent("handleVoidKeywordWithTypeArguments");
   }
 
   void beginYieldStatement(Token token) {}

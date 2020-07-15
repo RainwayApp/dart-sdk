@@ -14,12 +14,10 @@ import 'package:analyzer_plugin/src/utilities/completion/element_suggestion_buil
 import 'package:analyzer_plugin/src/utilities/completion/optype.dart';
 import 'package:analyzer_plugin/utilities/completion/completion_core.dart';
 
-/**
- * A contributor for calculating suggestions for inherited references.
- *
- * Plugin developers should extend this function and primarily
- * overload `computeSuggestions` (if needed).
- */
+/// A contributor for calculating suggestions for inherited references.
+///
+/// Plugin developers should extend this function and primarily overload
+/// `computeSuggestions` (if needed).
 class InheritedReferenceContributor
     with ElementSuggestionBuilder
     implements CompletionContributor {
@@ -32,24 +30,21 @@ class InheritedReferenceContributor
   @override
   ResourceProvider resourceProvider;
 
-  /**
-   * Plugin contributors should primarily overload this function.
-   * Should more parameters be needed for autocompletion needs, the
-   * overloaded function should define those parameters and
-   * call on `computeSuggestionsForClass`.
-   */
+  /// Plugin contributors should primarily overload this function. Should more
+  /// parameters be needed for autocompletion needs, the overloaded function
+  /// should define those parameters and call on `computeSuggestionsForClass`.
   @override
   Future<void> computeSuggestions(
       DartCompletionRequest request, CompletionCollector collector) async {
     // TODO(brianwilkerson) Determine whether this await is necessary.
     await null;
-    CompletionTarget target =
+    var target =
         CompletionTarget.forOffset(request.result.unit, request.offset);
-    OpType optype = OpType.forCompletion(target, request.offset);
+    var optype = OpType.forCompletion(target, request.offset);
     if (!optype.includeIdentifiers) {
       return;
     }
-    ClassDeclaration classDecl = _enclosingClass(target);
+    var classDecl = _enclosingClass(target);
     if (classDecl == null || classDecl.declaredElement == null) {
       return;
     }
@@ -58,9 +53,7 @@ class InheritedReferenceContributor
         collector, target, classDecl.declaredElement, optype);
   }
 
-  /**
-   * Clients should not overload this function.
-   */
+  /// Clients should not overload this function.
   Future<void> computeSuggestionsForClass(
     DartCompletionRequest request,
     CompletionCollector collector,
@@ -79,7 +72,7 @@ class InheritedReferenceContributor
       return;
     }
     if (classElement == null) {
-      ClassDeclaration classDecl = _enclosingClass(target);
+      var classDecl = _enclosingClass(target);
       if (classDecl == null || classDecl.declaredElement == null) {
         return;
       }
@@ -90,10 +83,10 @@ class InheritedReferenceContributor
         skipChildClass: skipChildClass);
   }
 
-  _addSuggestionsForType(InterfaceType type, OpType optype,
+  void _addSuggestionsForType(InterfaceType type, OpType optype,
       {bool isFunctionalArgument = false}) {
     if (!isFunctionalArgument) {
-      for (PropertyAccessorElement elem in type.accessors) {
+      for (var elem in type.accessors) {
         if (elem.isGetter) {
           if (optype.includeReturnValueSuggestions) {
             addSuggestion(elem);
@@ -105,7 +98,7 @@ class InheritedReferenceContributor
         }
       }
     }
-    for (MethodElement elem in type.methods) {
+    for (var elem in type.methods) {
       if (elem.returnType == null) {
         addSuggestion(elem);
       } else if (!elem.returnType.isVoid) {
@@ -123,7 +116,7 @@ class InheritedReferenceContributor
   void _computeSuggestionsForClass2(CompletionCollector collector,
       CompletionTarget target, ClassElement classElement, OpType optype,
       {bool skipChildClass = true}) {
-    bool isFunctionalArgument = target.isFunctionalArgument();
+    var isFunctionalArgument = target.isFunctionalArgument();
     kind = isFunctionalArgument
         ? CompletionSuggestionKind.IDENTIFIER
         : CompletionSuggestionKind.INVOCATION;
@@ -133,22 +126,19 @@ class InheritedReferenceContributor
           isFunctionalArgument: isFunctionalArgument);
     }
 
-    for (InterfaceType type in classElement.allSupertypes) {
+    for (var type in classElement.allSupertypes) {
       _addSuggestionsForType(type, optype,
           isFunctionalArgument: isFunctionalArgument);
     }
-    for (CompletionSuggestion suggestion in suggestions) {
+    for (var suggestion in suggestions) {
       collector.addSuggestion(suggestion);
     }
   }
 
-  /**
-   * Return the class containing the target
-   * or `null` if the target is in a static method or field
-   * or not in a class.
-   */
+  /// Return the class containing the target or `null` if the target is in a
+  /// static method or field or not in a class.
   ClassDeclaration _enclosingClass(CompletionTarget target) {
-    AstNode node = target.containingNode;
+    var node = target.containingNode;
     while (node != null) {
       if (node is ClassDeclaration) {
         return node;

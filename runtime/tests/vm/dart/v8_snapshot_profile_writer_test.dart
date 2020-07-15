@@ -2,16 +2,26 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import "dart:convert";
-import "dart:io";
+import 'dart:convert';
+import 'dart:io';
 
-import "package:expect/expect.dart";
+import 'package:expect/expect.dart';
 import 'package:path/path.dart' as path;
-import "package:vm/v8_snapshot_profile.dart";
+import 'package:vm_snapshot_analysis/v8_profile.dart';
 
 import 'use_flag_test_helper.dart';
 
-test({String dillPath, bool useAsm, bool stripFlag, bool stripUtil}) async {
+test(
+    {required String dillPath,
+    required bool useAsm,
+    required bool useBare,
+    required bool stripFlag,
+    required bool stripUtil,
+    bool disassemble = false}) async {
+  // We don't assume forced disassembler support in Product mode, so skip any
+  // disassembly test.
+  if (!const bool.fromEnvironment('dart.vm.product') && disassemble) return;
+
   // The assembler may add extra unnecessary information to the compiled
   // snapshot whether or not we generate DWARF information in the assembly, so
   // we force the use of a utility when generating assembly.
@@ -23,8 +33,10 @@ test({String dillPath, bool useAsm, bool stripFlag, bool stripUtil}) async {
 
   final tempDirPrefix = 'v8-snapshot-profile' +
       (useAsm ? '-assembly' : '-elf') +
+      (useBare ? '-bare' : '-nonbare') +
       (stripFlag ? '-intstrip' : '') +
-      (stripUtil ? '-extstrip' : '');
+      (stripUtil ? '-extstrip' : '') +
+      (disassemble ? '-disassembled' : '');
 
   await withTempDir(tempDirPrefix, (String tempDir) async {
     // Generate the snapshot profile.
@@ -32,7 +44,10 @@ test({String dillPath, bool useAsm, bool stripFlag, bool stripUtil}) async {
     final snapshotPath = path.join(tempDir, 'test.snap');
     final commonSnapshotArgs = [
       if (stripFlag) '--strip',
+      useBare ? '--use-bare-instructions' : '--no-use-bare-instructions',
       "--write-v8-snapshot-profile-to=$profilePath",
+      if (disassemble) '--disassemble',
+      '--ignore-unrecognized-flags',
       dillPath,
     ];
 
@@ -62,33 +77,54 @@ test({String dillPath, bool useAsm, bool stripFlag, bool stripUtil}) async {
       strippedPath = snapshotPath;
     }
 
-    final V8SnapshotProfile profile = V8SnapshotProfile.fromJson(
-        JsonDecoder().convert(File(profilePath).readAsStringSync()));
+    final profile =
+        Snapshot.fromJson(jsonDecode(File(profilePath).readAsStringSync()));
 
     // Verify that there are no "unknown" nodes. These are emitted when we see a
     // reference to an some object but no other metadata about the object was
     // recorded. We should at least record the type for every object in the
     // graph (in some cases the shallow size can legitimately be 0, e.g. for
     // "base objects").
-    for (final int node in profile.nodes) {
-      Expect.notEquals(profile[node].type, "Unknown",
-          "unknown node at ID ${profile[node].id}");
+    for (final node in profile.nodes) {
+      Expect.notEquals("Unknown", node.type, "unknown node at ID ${node.id}");
     }
 
-    // Verify that all nodes are reachable from the declared roots.
-    int unreachableNodes = 0;
-    Set<int> nodesReachableFromRoots = profile.preOrder(profile.root).toSet();
-    for (final int node in profile.nodes) {
-      Expect.isTrue(nodesReachableFromRoots.contains(node),
-          "unreachable node at ID ${profile[node].id}");
+    // HeapSnapshotWorker.HeapSnapshot.calculateDistances (from HeapSnapshot.js)
+    // assumes that the root does not have more than one edge to any other node
+    // (most likely an oversight).
+    final Set<int> roots = <int>{};
+    for (final edge in profile.nodeAt(0).edges) {
+      Expect.isTrue(roots.add(edge.target.index));
+    }
+
+    // Check that all nodes are reachable from the root (index 0).
+    final Set<int> reachable = {0};
+    final dfs = <int>[0];
+    while (!dfs.isEmpty) {
+      final next = dfs.removeLast();
+      for (final edge in profile.nodeAt(next).edges) {
+        final target = edge.target;
+        if (!reachable.contains(target.index)) {
+          reachable.add(target.index);
+          dfs.add(target.index);
+        }
+      }
+    }
+
+    if (reachable.length != profile.nodeCount) {
+      for (final node in profile.nodes) {
+        Expect.isTrue(reachable.contains(node.index),
+            "unreachable node at ID ${node.id}");
+      }
     }
 
     // Verify that the actual size of the snapshot is close to the sum of the
     // shallow sizes of all objects in the profile. They will not be exactly
     // equal because of global headers and padding.
     final actual = await File(strippedPath).length();
-    final expected = profile.accountedBytes;
+    final expected = profile.nodes.fold<int>(0, (size, n) => size + n.selfSize);
 
+    final bareUsed = useBare ? "bare" : "non-bare";
     final fileType = useAsm ? "assembly" : "ELF";
     String stripPrefix = "";
     if (stripFlag && stripUtil) {
@@ -100,12 +136,12 @@ test({String dillPath, bool useAsm, bool stripFlag, bool stripUtil}) async {
     }
 
     Expect.approxEquals(expected, actual, 0.03 * actual,
-        "failed on $stripPrefix$fileType snapshot type.");
+        "failed on $bareUsed $stripPrefix$fileType snapshot type.");
   });
 }
 
-Match matchComplete(RegExp regexp, String line) {
-  Match match = regexp.firstMatch(line);
+Match? matchComplete(RegExp regexp, String line) {
+  Match? match = regexp.firstMatch(line);
   if (match == null) return match;
   if (match.start != 0 || match.end != line.length) return null;
   return match;
@@ -130,11 +166,11 @@ testMacros() async {
       .cast<List<int>>()
       .transform(utf8.decoder)
       .transform(LineSplitter())) {
-    Match match = matchComplete(fieldEntry, line);
+    Match? match = matchComplete(fieldEntry, line);
     if (match != null) {
       fields
-          .putIfAbsent(match.group(1), () => Set<String>())
-          .add(match.group(2));
+          .putIfAbsent(match.group(1)!, () => Set<String>())
+          .add(match.group(2)!);
     }
   }
 
@@ -145,14 +181,14 @@ testMacros() async {
   final String rawObjectPath =
       path.join(sdkDir, 'runtime', 'vm', 'raw_object.h');
 
-  String currentClass;
+  String? currentClass;
   bool hasMissingFields = false;
   await for (String line in File(rawObjectPath)
       .openRead()
       .cast<List<int>>()
       .transform(utf8.decoder)
       .transform(LineSplitter())) {
-    Match match = matchComplete(classStart, line);
+    Match? match = matchComplete(classStart, line);
     if (match != null) {
       currentClass = match.group(1);
       continue;
@@ -171,9 +207,9 @@ testMacros() async {
         print("$currentClass is missing entirely.");
         continue;
       }
-      if (!fields[currentClass].contains(match.group(2))) {
+      if (!fields[currentClass]!.contains(match.group(2)!)) {
         hasMissingFields = true;
-        print("$currentClass is missing ${match.group(2)}.");
+        print("$currentClass is missing ${match.group(2)!}.");
       }
     }
   }
@@ -203,12 +239,41 @@ main() async {
     final _thisTestPath = path.join(sdkDir, 'runtime', 'tests', 'vm', 'dart',
         'v8_snapshot_profile_writer_test.dart');
     final dillPath = path.join(tempDir, 'test.dill');
-    await run(genKernel,
-        <String>['--platform', platformDill, '-o', dillPath, _thisTestPath]);
+    await run(genKernel, <String>[
+      '--aot',
+      '--platform',
+      platformDill,
+      ...Platform.executableArguments.where((arg) =>
+          arg.startsWith('--enable-experiment=') ||
+          arg == '--sound-null-safety' ||
+          arg == '--no-sound-null-safety'),
+      '-o',
+      dillPath,
+      _thisTestPath
+    ]);
 
     // Test stripped ELF generation directly.
     await test(
-        dillPath: dillPath, stripFlag: true, stripUtil: false, useAsm: false);
+        dillPath: dillPath,
+        stripFlag: true,
+        stripUtil: false,
+        useAsm: false,
+        useBare: false);
+    await test(
+        dillPath: dillPath,
+        stripFlag: true,
+        stripUtil: false,
+        useAsm: false,
+        useBare: true);
+
+    // Regression test for dartbug.com/41149.
+    await test(
+        dillPath: dillPath,
+        stripFlag: true,
+        stripUtil: false,
+        useAsm: false,
+        useBare: false,
+        disassemble: true);
 
     // We neither generate assembly nor have a stripping utility on Windows.
     if (Platform.isWindows) {
@@ -222,7 +287,17 @@ main() async {
     } else {
       // Test unstripped ELF generation that is then stripped externally.
       await test(
-          dillPath: dillPath, stripFlag: false, stripUtil: true, useAsm: false);
+          dillPath: dillPath,
+          stripFlag: false,
+          stripUtil: true,
+          useAsm: false,
+          useBare: false);
+      await test(
+          dillPath: dillPath,
+          stripFlag: false,
+          stripUtil: true,
+          useAsm: false,
+          useBare: true);
     }
 
     // TODO(sstrickl): Currently we can't assemble for SIMARM64 on MacOSX.
@@ -235,9 +310,29 @@ main() async {
 
     // Test stripped assembly generation that is then compiled and stripped.
     await test(
-        dillPath: dillPath, stripFlag: true, stripUtil: true, useAsm: true);
+        dillPath: dillPath,
+        stripFlag: true,
+        stripUtil: true,
+        useAsm: true,
+        useBare: false);
+    await test(
+        dillPath: dillPath,
+        stripFlag: true,
+        stripUtil: true,
+        useAsm: true,
+        useBare: true);
     // Test unstripped assembly generation that is then compiled and stripped.
     await test(
-        dillPath: dillPath, stripFlag: false, stripUtil: true, useAsm: true);
+        dillPath: dillPath,
+        stripFlag: false,
+        stripUtil: true,
+        useAsm: true,
+        useBare: false);
+    await test(
+        dillPath: dillPath,
+        stripFlag: false,
+        stripUtil: true,
+        useAsm: true,
+        useBare: true);
   });
 }

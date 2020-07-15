@@ -37,18 +37,20 @@
 import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
+import 'package:analyzer/dart/element/scope.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/dart/element/type_system.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/src/dart/constant/evaluation.dart';
+import 'package:analyzer/src/dart/resolver/scope.dart' show Namespace;
 import 'package:analyzer/src/generated/engine.dart' show AnalysisContext;
 import 'package:analyzer/src/generated/java_engine.dart';
-import 'package:analyzer/src/generated/resolver.dart' show Namespace;
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:analyzer/src/task/api/model.dart' show AnalysisTarget;
 import 'package:meta/meta.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 /// An element that represents a class or a mixin. The class can be defined by
 /// either a class declaration (with a class body), a mixin application (without
@@ -82,6 +84,7 @@ abstract class ClassElement
   /// hence cannot be used as a mixin), or `false` if this element represents a
   /// mixin, even if the mixin has a reference to `super`, because it is allowed
   /// to be used as a mixin.
+  @Deprecated('It was used internally, should not be part of API')
   bool get hasReferenceToSuper;
 
   /// Return `true` if this class declares a static member.
@@ -119,9 +122,15 @@ abstract class ClassElement
 
   /// Return `true` if this class [isProxy], or if it inherits the proxy
   /// annotation from a supertype.
+  @Deprecated(
+    'The @proxy annotation is deprecated in the langauge, and will be removed',
+  )
   bool get isOrInheritsProxy;
 
   /// Return `true` if this element has an annotation of the form '@proxy'.
+  @Deprecated(
+    'The @proxy annotation is deprecated in the langauge, and will be removed',
+  )
   bool get isProxy;
 
   /// Return `true` if this class can validly be used as a mixin when defining
@@ -232,6 +241,7 @@ abstract class ClassElement
   /// Create the [InterfaceType] for this class with type arguments that
   /// correspond to the bounds of the type parameters, and the given
   /// [nullabilitySuffix].
+  @Deprecated('Use TypeSystem.instantiateToBounds2() instead')
   InterfaceType instantiateToBounds({
     @required NullabilitySuffix nullabilitySuffix,
   });
@@ -478,6 +488,9 @@ abstract class ConstructorElement
   /// if this constructor does not redirect to another constructor or if the
   /// library containing this constructor has not yet been resolved.
   ConstructorElement get redirectedConstructor;
+
+  @override
+  InterfaceType get returnType;
 }
 
 /// The base class for all of the elements in the element model. Generally
@@ -814,62 +827,64 @@ class ElementKind implements Comparable<ElementKind> {
 
   static const ElementKind DYNAMIC = ElementKind('DYNAMIC', 3, "<dynamic>");
 
-  static const ElementKind ERROR = ElementKind('ERROR', 4, "<error>");
+  static const ElementKind ENUM = ElementKind('ENUM', 4, "enum");
+
+  static const ElementKind ERROR = ElementKind('ERROR', 5, "<error>");
 
   static const ElementKind EXPORT =
-      ElementKind('EXPORT', 5, "export directive");
+      ElementKind('EXPORT', 6, "export directive");
 
-  static const ElementKind EXTENSION =
-      ElementKind('EXTENSION', 24, "extension");
+  static const ElementKind EXTENSION = ElementKind('EXTENSION', 7, "extension");
 
-  static const ElementKind FIELD = ElementKind('FIELD', 6, "field");
+  static const ElementKind FIELD = ElementKind('FIELD', 8, "field");
 
-  static const ElementKind FUNCTION = ElementKind('FUNCTION', 7, "function");
+  static const ElementKind FUNCTION = ElementKind('FUNCTION', 9, "function");
 
   static const ElementKind GENERIC_FUNCTION_TYPE =
-      ElementKind('GENERIC_FUNCTION_TYPE', 8, 'generic function type');
+      ElementKind('GENERIC_FUNCTION_TYPE', 10, 'generic function type');
 
-  static const ElementKind GETTER = ElementKind('GETTER', 9, "getter");
+  static const ElementKind GETTER = ElementKind('GETTER', 11, "getter");
 
   static const ElementKind IMPORT =
-      ElementKind('IMPORT', 10, "import directive");
+      ElementKind('IMPORT', 12, "import directive");
 
-  static const ElementKind LABEL = ElementKind('LABEL', 11, "label");
+  static const ElementKind LABEL = ElementKind('LABEL', 13, "label");
 
-  static const ElementKind LIBRARY = ElementKind('LIBRARY', 12, "library");
+  static const ElementKind LIBRARY = ElementKind('LIBRARY', 14, "library");
 
   static const ElementKind LOCAL_VARIABLE =
-      ElementKind('LOCAL_VARIABLE', 13, "local variable");
+      ElementKind('LOCAL_VARIABLE', 15, "local variable");
 
-  static const ElementKind METHOD = ElementKind('METHOD', 14, "method");
+  static const ElementKind METHOD = ElementKind('METHOD', 16, "method");
 
-  static const ElementKind NAME = ElementKind('NAME', 15, "<name>");
+  static const ElementKind NAME = ElementKind('NAME', 17, "<name>");
 
-  static const ElementKind NEVER = ElementKind('NEVER', 16, "<never>");
+  static const ElementKind NEVER = ElementKind('NEVER', 18, "<never>");
 
   static const ElementKind PARAMETER =
-      ElementKind('PARAMETER', 17, "parameter");
+      ElementKind('PARAMETER', 19, "parameter");
 
-  static const ElementKind PREFIX = ElementKind('PREFIX', 18, "import prefix");
+  static const ElementKind PREFIX = ElementKind('PREFIX', 20, "import prefix");
 
-  static const ElementKind SETTER = ElementKind('SETTER', 19, "setter");
+  static const ElementKind SETTER = ElementKind('SETTER', 21, "setter");
 
   static const ElementKind TOP_LEVEL_VARIABLE =
-      ElementKind('TOP_LEVEL_VARIABLE', 20, "top level variable");
+      ElementKind('TOP_LEVEL_VARIABLE', 22, "top level variable");
 
   static const ElementKind FUNCTION_TYPE_ALIAS =
-      ElementKind('FUNCTION_TYPE_ALIAS', 21, "function type alias");
+      ElementKind('FUNCTION_TYPE_ALIAS', 23, "function type alias");
 
   static const ElementKind TYPE_PARAMETER =
-      ElementKind('TYPE_PARAMETER', 22, "type parameter");
+      ElementKind('TYPE_PARAMETER', 24, "type parameter");
 
-  static const ElementKind UNIVERSE = ElementKind('UNIVERSE', 23, "<universe>");
+  static const ElementKind UNIVERSE = ElementKind('UNIVERSE', 25, "<universe>");
 
   static const List<ElementKind> values = [
     CLASS,
     COMPILATION_UNIT,
     CONSTRUCTOR,
     DYNAMIC,
+    ENUM,
     ERROR,
     EXPORT,
     FIELD,
@@ -1047,7 +1062,7 @@ abstract class ExportElement implements Element, UriReferencedElement {
   List<NamespaceCombinator> get combinators;
 
   /// Return the library that is exported from this library by this export
-  /// directive.
+  /// directive, or `null` if the URI has invalid syntax or cannot be resolved.
   LibraryElement get exportedLibrary;
 }
 
@@ -1191,6 +1206,7 @@ abstract class FunctionTypeAliasElement
   /// generic function, with type formals. For example, if the typedef is:
   ///     typedef F<T> = void Function<U>(T, U);
   /// then `F<int>` will produce `void Function<U>(int, U)`.
+  @Deprecated('Use TypeSystem.instantiateToBounds2() instead')
   FunctionType instantiateToBounds({
     @required NullabilitySuffix nullabilitySuffix,
   });
@@ -1244,7 +1260,7 @@ abstract class ImportElement implements Element, UriReferencedElement {
   List<NamespaceCombinator> get combinators;
 
   /// Return the library that is imported into this library by this import
-  /// directive.
+  /// directive, or `null` if the URI has invalid syntax or cannot be resolved.
   LibraryElement get importedLibrary;
 
   /// Return `true` if this import is for a deferred library.
@@ -1330,6 +1346,17 @@ abstract class LibraryElement implements Element {
 
   bool get isNonNullableByDefault;
 
+  /// The language version for this library.
+  LibraryLanguageVersion get languageVersion;
+
+  /// The major component of the language version for this library.
+  @Deprecated("Use 'languageVersion'")
+  int get languageVersionMajor;
+
+  /// The minor component of the language version for this library.
+  @Deprecated("Use 'languageVersion'")
+  int get languageVersionMinor;
+
   /// Return the element representing the synthetic function `loadLibrary` that
   /// is implicitly defined for this library if the library is imported using a
   /// deferred import.
@@ -1348,6 +1375,10 @@ abstract class LibraryElement implements Element {
   /// The public [Namespace] of this library, `null` if it has not been
   /// computed yet.
   Namespace get publicNamespace;
+
+  /// Return the name lookup scope for this library. It consists of elements
+  /// that are either declared in the library, or imported into it.
+  Scope get scope;
 
   /// Return the top-level elements defined in each of the compilation units
   /// that are included in this library. This includes both public and private
@@ -1372,6 +1403,32 @@ abstract class LibraryElement implements Element {
   /// Return the class defined in this library that has the given [name], or
   /// `null` if this library does not define a class with the given name.
   ClassElement getType(String className);
+
+  /// If a legacy library, return the legacy view on the [element].
+  /// Otherwise, return the original element.
+  T toLegacyElementIfOptOut<T extends Element>(T element);
+
+  /// If a legacy library, return the legacy version of the [type].
+  /// Otherwise, return the original type.
+  DartType toLegacyTypeIfOptOut(DartType type);
+}
+
+class LibraryLanguageVersion {
+  /// The version for the whole package that contains this library.
+  final Version package;
+
+  /// The version specified using `@dart` override, `null` if absent or invalid.
+  final Version override;
+
+  LibraryLanguageVersion({
+    @required this.package,
+    @required this.override,
+  });
+
+  /// The effective language version for the library.
+  Version get effective {
+    return override ?? package;
+  }
 }
 
 /// An element that can be (but is not required to be) defined within a method
@@ -1522,6 +1579,11 @@ abstract class ParameterElement
 abstract class PrefixElement implements Element {
   @override
   LibraryElement get enclosingElement;
+
+  /// Return the name lookup scope for this import prefix. It consists of
+  /// elements imported into the enclosing library with this prefix. The
+  /// namespace combinators of the import directives are taken into account.
+  Scope get scope;
 }
 
 /// A variable that might be subject to type promotion.  This might be a local
@@ -1713,6 +1775,7 @@ abstract class VariableElement implements Element, ConstantEvaluationTarget {
   /// Return `null` if either this variable was not declared with the 'const'
   /// modifier or if the value of this variable could not be computed because of
   /// errors.
+  @Deprecated('Use computeConstantValue() instead')
   DartObject get constantValue;
 
   @override

@@ -8,13 +8,16 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
+import 'package:analyzer/src/dart/element/generic_inferrer.dart';
 import 'package:analyzer/src/dart/element/member.dart';
+import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
+import 'package:analyzer/src/dart/element/type_schema.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/resolver/resolution_result.dart';
 import 'package:analyzer/src/dart/resolver/scope.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/resolver.dart';
-import 'package:analyzer/src/generated/type_system.dart';
 
 class ExtensionMemberResolver {
   final ResolverVisitor _resolver;
@@ -133,6 +136,10 @@ class ExtensionMemberResolver {
     var receiverExpression = arguments[0];
     var receiverType = receiverExpression.staticType;
 
+    if (node.isNullAware) {
+      receiverType = _typeSystem.promoteToNonNull(receiverType);
+    }
+
     var typeArgumentTypes = _inferTypeArguments(node, receiverType);
     nodeImpl.typeArgumentTypes = typeArgumentTypes;
 
@@ -153,7 +160,7 @@ class ExtensionMemberResolver {
     if (receiverType.isVoid) {
       _errorReporter.reportErrorForNode(
           StaticWarningCode.USE_OF_VOID_RESULT, receiverExpression);
-    } else if (!_typeSystem.isAssignableTo(receiverType, node.extendedType)) {
+    } else if (!_typeSystem.isAssignableTo2(receiverType, node.extendedType)) {
       _errorReporter.reportErrorForNode(
         CompileTimeErrorCode.EXTENSION_OVERRIDE_ARGUMENT_NOT_ASSIGNABLE,
         receiverExpression,
@@ -212,7 +219,7 @@ class ExtensionMemberResolver {
         var boundType = typeParameters[i].bound;
         if (boundType != null) {
           boundType = substitution.substituteType(boundType);
-          if (!_typeSystem.isSubtypeOf(argType, boundType)) {
+          if (!_typeSystem.isSubtypeOf2(argType, boundType)) {
             _errorReporter.reportErrorForNode(
               CompileTimeErrorCode.TYPE_ARGUMENT_NOT_MATCHING_BOUNDS,
               typeArgumentList.arguments[i],
@@ -250,28 +257,40 @@ class ExtensionMemberResolver {
   /// Return extensions for the [type] that match the given [name] in the
   /// current scope.
   List<_InstantiatedExtension> _getApplicable(DartType type, String name) {
+    if (identical(type, NeverTypeImpl.instance)) {
+      return const <_InstantiatedExtension>[];
+    }
+
     var candidates = _getExtensionsWithMember(name);
 
     var instantiatedExtensions = <_InstantiatedExtension>[];
     for (var candidate in candidates) {
-      var typeParameters = candidate.extension.typeParameters;
-      var inferrer = GenericInferrer(_typeSystem, typeParameters);
+      var extension = candidate.extension;
+
+      var freshTypes = getFreshTypeParameters(extension.typeParameters);
+      var freshTypeParameters = freshTypes.freshTypeParameters;
+      var rawExtendedType = freshTypes.substitute(extension.extendedType);
+
+      var inferrer = GenericInferrer(_typeSystem, freshTypeParameters);
       inferrer.constrainArgument(
         type,
-        candidate.extension.extendedType,
+        rawExtendedType,
         'extendedType',
       );
-      var typeArguments = inferrer.infer(typeParameters, failAtError: true);
+      var typeArguments = inferrer.infer(
+        freshTypeParameters,
+        failAtError: true,
+      );
       if (typeArguments == null) {
         continue;
       }
 
       var substitution = Substitution.fromPairs(
-        typeParameters,
+        extension.typeParameters,
         typeArguments,
       );
       var extendedType = substitution.substituteType(
-        candidate.extension.extendedType,
+        extension.extendedType,
       );
       if (!_isSubtypeOf(type, extendedType)) {
         continue;
@@ -429,7 +448,7 @@ class ExtensionMemberResolver {
 
   /// Ask the type system for a subtype check.
   bool _isSubtypeOf(DartType type1, DartType type2) =>
-      _typeSystem.isSubtypeOf(type1, type2);
+      _typeSystem.isSubtypeOf2(type1, type2);
 
   List<DartType> _listOfDynamic(List<TypeParameterElement> parameters) {
     return List<DartType>.filled(parameters.length, _dynamicType);

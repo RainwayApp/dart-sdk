@@ -26,19 +26,29 @@ for arg in "$@"; do
     PACKAGES="$arg"
     ;;
     --enable-asserts | \
+    --sound-null-safety | \
+    --no-sound-null-safety | \
     --enable-experiment=*)
     GEN_KERNEL_OPTIONS+=("$arg")
     OPTIONS+=("$arg")
     ;;
     --tfa | \
     --no-tfa | \
+    --protobuf-tree-shaker | \
+    --protobuf-tree-shaker-v2 | \
     --gen-bytecode | \
     --no-gen-bytecode | \
+    --bytecode-options=* | \
+    --minimal-kernel | \
+    --no-embed-sources | \
     -D* )
     GEN_KERNEL_OPTIONS+=("$arg")
     ;;
     --build-assembly)
     BUILD_ASM=1
+    ;;
+    -v*)
+    set -x
     ;;
     --*)
     OPTIONS+=("$arg")

@@ -4,7 +4,9 @@
 
 import 'dart:async';
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
+import 'package:analyzer/src/generated/engine.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../src/dart/resolution/driver_resolution.dart';
@@ -12,6 +14,7 @@ import '../src/dart/resolution/driver_resolution.dart';
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(InvalidCodeTest);
+    defineReflectiveTests(InvalidCodeWithNullSafetyTest);
   });
 }
 
@@ -49,6 +52,24 @@ class C {
 ''');
   }
 
+  test_duplicateName_class_enum() async {
+    await _assertCanBeAnalyzed('''
+class A<T> {
+  void foo(B b) {
+    b.bar(this);
+  }
+}
+
+class B {
+  void bar(A a) {}
+}
+
+enum A {
+  a, b, c
+}
+''');
+  }
+
   test_extensionOverrideInAnnotationContext() async {
     await _assertCanBeAnalyzed('''
 class R {
@@ -69,6 +90,14 @@ extension E on Object {
 }
 
 const e = E(null).f();
+''');
+  }
+
+  test_fieldFormalParameter_annotation_localFunction() async {
+    await _assertCanBeAnalyzed(r'''
+void main() {
+  void foo(@deprecated this.bar) {}
+}
 ''');
   }
 
@@ -298,6 +327,33 @@ class C {
 class C {
   C() : this = 0;
 }
+''');
+  }
+
+  Future<void> _assertCanBeAnalyzed(String text) async {
+    await resolveTestCode(text);
+    assertHasTestErrors();
+  }
+}
+
+@reflectiveTest
+class InvalidCodeWithNullSafetyTest extends DriverResolutionTest {
+  @override
+  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
+    ..contextFeatures = FeatureSet.forTesting(
+        sdkVersion: '2.3.0', additionalFeatures: [Feature.non_nullable]);
+
+  @override
+  bool get typeToStringWithNullability => true;
+
+  test_issue_40837() async {
+    await _assertCanBeAnalyzed('''
+class A {
+  const A(_);
+}
+
+@A(() => 0)
+class B {}
 ''');
   }
 

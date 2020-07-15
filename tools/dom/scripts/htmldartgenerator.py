@@ -16,6 +16,7 @@ from htmlrenamer import convert_to_future_members, custom_html_constructors, \
     removed_html_members
 from generator import TypeOrVar
 import logging
+from mdnreader import MDNReader
 import monitored
 import sys
 
@@ -49,6 +50,7 @@ class HtmlDartGenerator(object):
         self._renamer = options.renamer
         self._metadata = options.metadata
         self._library_name = self._renamer.GetLibraryName(self._interface)
+        self._mdn_reader = MDNReader()
         _logger.setLevel(logger.level)
 
     def EmitSupportCheck(self):
@@ -313,10 +315,12 @@ class HtmlDartGenerator(object):
         # We don't yet handle inconsistent renames of the getter and setter yet.
         assert (not html_setter_name or attr_name == html_setter_name)
 
+        # any is assumed to be nullable
+        if attribute.type.id == 'any':
+            attribute.type.nullable = True
+
         if declare_only:
-            self.DeclareAttribute(attribute,
-                                  self.SecureOutputType(attribute.type.id),
-                                  attr_name, read_only)
+            self.DeclareAttribute(attribute, attr_name, read_only)
         else:
             self.EmitAttribute(attribute, attr_name, read_only)
 
@@ -344,7 +348,9 @@ class HtmlDartGenerator(object):
             return
 
         if declare_only:
-            self.DeclareOperation(info, self.SecureOutputType(info.type_name),
+            self.DeclareOperation(info,
+                                  self.SecureOutputType(info.type_name,
+                                      nullable=info.type_nullable),
                                   method_name)
         else:
             self.EmitOperation(info, method_name, dart_js_interop)
@@ -511,6 +517,8 @@ class HtmlDartGenerator(object):
         if self._interface_type_info.list_item_type():
             item_type = self._type_registry.TypeInfo(
                 self._interface_type_info.list_item_type()).dart_type()
+            if self._interface_type_info.list_item_type_nullable():
+                item_type += '?'
             implements.append('List<%s>' % item_type)
         return implements
 
@@ -519,6 +527,8 @@ class HtmlDartGenerator(object):
         if self._interface_type_info.list_item_type():
             item_type = self._type_registry.TypeInfo(
                 self._interface_type_info.list_item_type()).dart_type()
+            if self._interface_type_info.list_item_type_nullable():
+                item_type += '?'
             mixins.append('ListMixin<%s>' % item_type)
             mixins.append('ImmutableListMixin<%s>' % item_type)
 
@@ -767,7 +777,8 @@ class HtmlDartGenerator(object):
         if '_RenamingAnnotation' in dir(self):
             metadata = (
                 self._RenamingAnnotation(info.declared_name, html_name) +
-                self._Metadata(info.type_name, info.declared_name, None))
+                self._Metadata(info.type_name, info.declared_name, None,
+                    info.type_nullable))
         self._members_emitter.Emit(
             '\n'
             '  $METADATA$MODIFIERS$TYPE$FUTURE_GENERIC $NAME($PARAMS) {\n'
@@ -782,7 +793,8 @@ class HtmlDartGenerator(object):
             '  }\n',
             METADATA=metadata,
             MODIFIERS='static ' if info.IsStatic() else '',
-            TYPE=self.SecureOutputType(info.type_name),
+            TYPE=self.SecureOutputType(info.type_name,
+                nullable=info.type_nullable),
             NAME=html_name[1:],
             PARAMS=info.
             ParametersAsDeclaration(self._NarrowInputType if '_NarrowInputType'
@@ -811,7 +823,7 @@ class HtmlDartGenerator(object):
                 'throw new UnsupportedError("Not supported"); }\n',
                 CLASSNAME=self._interface_type_info.implementation_name())
 
-    def DeclareAttribute(self, attribute, type_name, attr_name, read_only):
+    def DeclareAttribute(self, attribute, attr_name, read_only):
         """ Declares an attribute but does not include the code to invoke it.
     """
         if read_only:
@@ -823,9 +835,17 @@ class HtmlDartGenerator(object):
             else:
                 template = '\n  $TYPE get $NAME;\n'
         else:
-            template = '\n  $TYPE $NAME;\n'
+            template = '\n  $TYPE get $NAME native;\n' \
+                       '\n  set $NAME($TYPE value) native;\n'
 
-        self._members_emitter.Emit(template, NAME=attr_name, TYPE=type_name)
+        # Nullability is determined by attribute compatibility.
+        is_compat = self._mdn_reader.is_compatible(attribute)
+        nullable = attribute.type.nullable or not is_compat
+
+        self._members_emitter.Emit(template,
+                                   NAME=attr_name,
+                                   TYPE=self.SecureOutputType(
+                                       attribute.type.id, nullable=nullable))
 
     def DeclareOperation(self, operation, return_type_name, method_name):
         """ Declares an operation but does not include the code to invoke it.
@@ -890,6 +910,7 @@ class HtmlDartGenerator(object):
             })
         if nullable:
             element_js = element_name + "|Null"
+            element_name += '?'
         else:
             element_js = element_name
         self._members_emitter.Emit(
@@ -898,7 +919,8 @@ class HtmlDartGenerator(object):
     def SecureOutputType(self,
                          type_name,
                          is_dart_type=False,
-                         can_narrow_type=False):
+                         can_narrow_type=False,
+                         nullable=False):
         """ Converts the type name to the secure type name for return types.
     Arguments:
       can_narrow_type - True if the output type can be narrowed further than
@@ -917,7 +939,11 @@ class HtmlDartGenerator(object):
         # returned in generated code.
         assert (dart_name != 'HistoryBase' and dart_name != 'LocationBase')
         if dart_name == 'Window':
-            return _secure_base_types[dart_name]
+            dart_name = _secure_base_types[dart_name]
+        if type_name == 'any':
+            dart_name = 'Object'
+        if nullable and dart_name != 'dynamic':
+            dart_name = dart_name + '?'
         return dart_name
 
     def SecureBaseName(self, type_name):
@@ -971,14 +997,17 @@ class HtmlDartGenerator(object):
                 temp_version[0] += 1
                 temp_name = '%s_%s' % (param_name, temp_version[0])
                 temp_type = conversion.output_type
+                null_assert_needed = info.param_infos[position].is_nullable \
+                    and not conversion.nullable_input
                 stmts_emitter.Emit(
-                    '$(INDENT)$TYPE $NAME = $CONVERT($ARG);\n'
+                    '$(INDENT)$TYPE $NAME = $CONVERT($ARG$NULLASSERT);\n'
                     if callBackInfo is None else
-                    '$(INDENT)$TYPE $NAME = $CONVERT($ARG, $ARITY);\n',
+                    '$(INDENT)$TYPE $NAME = $CONVERT($ARG$NULLASSERT, $ARITY);\n',
                     TYPE=TypeOrVar(temp_type),
                     NAME=temp_name,
                     CONVERT=conversion.function_name,
                     ARG=info.param_infos[position].name,
+                    NULLASSERT='!' if null_assert_needed else '',
                     ARITY=callBackInfo)
                 converted_arguments.append(temp_name)
                 param_type = temp_type
@@ -1002,9 +1031,17 @@ class HtmlDartGenerator(object):
                                 'Object'
                         ]:
                             param_type = 'dynamic'
-
+            arg_is_nullable = arg.type.nullable
+            # If the parameter is either nullable or optional with no non-null
+            # default value, it is nullable.
+            if (info.param_infos[position].is_optional and
+                (info.param_infos[position].default_value_is_null == True or
+                 info.param_infos[position].default_value == None)
+               ) or info.param_infos[position].is_nullable:
+                arg_is_nullable = True
             target_parameters.append(
-                '%s%s' % (TypeOrNothing(param_type), param_name))
+                '%s%s' % (TypeOrNothing(param_type, nullable=arg_is_nullable),
+                          param_name))
             calling_parameters.append(',%s ' % param_name)
 
         return target_parameters, converted_arguments, calling_parameters

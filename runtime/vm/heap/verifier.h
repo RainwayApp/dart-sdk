@@ -15,25 +15,24 @@
 namespace dart {
 
 // Forward declarations.
-class Isolate;
+class IsolateGroup;
 class ObjectSet;
-class RawObject;
 
 enum MarkExpectation { kForbidMarked, kAllowMarked, kRequireMarked };
 
 class VerifyObjectVisitor : public ObjectVisitor {
  public:
-  VerifyObjectVisitor(Isolate* isolate,
+  VerifyObjectVisitor(IsolateGroup* isolate_group,
                       ObjectSet* allocated_set,
                       MarkExpectation mark_expectation)
-      : isolate_(isolate),
+      : isolate_group_(isolate_group),
         allocated_set_(allocated_set),
         mark_expectation_(mark_expectation) {}
 
-  virtual void VisitObject(RawObject* obj);
+  virtual void VisitObject(ObjectPtr obj);
 
  private:
-  Isolate* isolate_;
+  IsolateGroup* isolate_group_;
   ObjectSet* allocated_set_;
   MarkExpectation mark_expectation_;
 
@@ -44,10 +43,11 @@ class VerifyObjectVisitor : public ObjectVisitor {
 // the pointers visited are contained in the isolate heap.
 class VerifyPointersVisitor : public ObjectPointerVisitor {
  public:
-  explicit VerifyPointersVisitor(Isolate* isolate, ObjectSet* allocated_set)
-      : ObjectPointerVisitor(isolate), allocated_set_(allocated_set) {}
+  explicit VerifyPointersVisitor(IsolateGroup* isolate_group,
+                                 ObjectSet* allocated_set)
+      : ObjectPointerVisitor(isolate_group), allocated_set_(allocated_set) {}
 
-  virtual void VisitPointers(RawObject** first, RawObject** last);
+  virtual void VisitPointers(ObjectPtr* first, ObjectPtr* last);
 
   static void VerifyPointers(MarkExpectation mark_expectation = kForbidMarked);
 
@@ -76,7 +76,7 @@ class VerifyWeakPointersVisitor : public HandleVisitor {
 class VerifyCanonicalVisitor : public ObjectVisitor {
  public:
   explicit VerifyCanonicalVisitor(Thread* thread);
-  virtual void VisitObject(RawObject* obj);
+  virtual void VisitObject(ObjectPtr obj);
 
  private:
   Thread* thread_;

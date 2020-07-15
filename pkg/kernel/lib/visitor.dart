@@ -276,6 +276,7 @@ class DartTypeVisitor<R> {
   R visitVoidType(VoidType node) => defaultDartType(node);
   R visitBottomType(BottomType node) => defaultDartType(node);
   R visitInterfaceType(InterfaceType node) => defaultDartType(node);
+  R visitFutureOrType(FutureOrType node) => defaultDartType(node);
   R visitFunctionType(FunctionType node) => defaultDartType(node);
   R visitTypeParameterType(TypeParameterType node) => defaultDartType(node);
   R visitTypedefType(TypedefType node) => defaultDartType(node);
@@ -290,6 +291,7 @@ class DartTypeVisitor1<R, T> {
   R visitVoidType(VoidType node, T arg) => defaultDartType(node, arg);
   R visitBottomType(BottomType node, T arg) => defaultDartType(node, arg);
   R visitInterfaceType(InterfaceType node, T arg) => defaultDartType(node, arg);
+  R visitFutureOrType(FutureOrType node, T arg) => defaultDartType(node, arg);
   R visitFunctionType(FunctionType node, T arg) => defaultDartType(node, arg);
   R visitTypeParameterType(TypeParameterType node, T arg) =>
       defaultDartType(node, arg);
@@ -423,7 +425,14 @@ class ComputeOnceConstantVisitor<R> implements _ConstantCallback<R> {
   /// Call this method to compute values for subnodes recursively, while only
   /// visiting each subnode once.
   R visitConstant(Constant node) {
-    return cache[node] ??= node.accept(_visitor);
+    return cache[node] ??= processValue(node, node.accept(_visitor));
+  }
+
+  /// Returns the computed [value] for [node].
+  ///
+  /// Override this method to process the computed value before caching.
+  R processValue(Constant node, R value) {
+    return value;
   }
 
   R defaultConstant(Constant node) => null;
@@ -520,6 +529,7 @@ class Visitor<R> extends TreeVisitor<R>
   R visitVoidType(VoidType node) => defaultDartType(node);
   R visitBottomType(BottomType node) => defaultDartType(node);
   R visitInterfaceType(InterfaceType node) => defaultDartType(node);
+  R visitFutureOrType(FutureOrType node) => defaultDartType(node);
   R visitFunctionType(FunctionType node) => defaultDartType(node);
   R visitTypeParameterType(TypeParameterType node) => defaultDartType(node);
   R visitTypedefType(TypedefType node) => defaultDartType(node);

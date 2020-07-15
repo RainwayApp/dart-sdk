@@ -23,6 +23,12 @@ abstract class SimpleEditCommandHandler
 
   String get commandName;
 
+  bool hasScanParseErrors(List<engine.AnalysisError> errors) {
+    return errors.any((error) =>
+        error.errorCode is engine.ScannerErrorCode ||
+        error.errorCode is engine.ParserErrorCode);
+  }
+
   Future<ErrorOr<void>> sendSourceEditsToClient(
       VersionedTextDocumentIdentifier docIdentifier,
       CompilationUnit unit,
@@ -46,7 +52,7 @@ abstract class SimpleEditCommandHandler
     // Send the edit to the client via a applyEdit request (this is a request
     // from server -> client and the client will provide a response).
     final editResponse = await server.sendRequest(Method.workspace_applyEdit,
-        ApplyWorkspaceEditParams(commandName, workspaceEdit));
+        ApplyWorkspaceEditParams(label: commandName, edit: workspaceEdit));
 
     if (editResponse.error != null) {
       return error(
@@ -73,11 +79,5 @@ abstract class SimpleEditCommandHandler
         workspaceEdit.toString(),
       );
     }
-  }
-
-  bool hasScanParseErrors(List<engine.AnalysisError> errors) {
-    return errors.any((error) =>
-        error.errorCode is engine.ScannerErrorCode ||
-        error.errorCode is engine.ParserErrorCode);
   }
 }

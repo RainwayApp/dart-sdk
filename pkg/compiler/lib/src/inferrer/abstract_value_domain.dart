@@ -206,6 +206,10 @@ abstract class AbstractValueDomain {
   /// the input's abstract type. The check can only be removed with additional
   /// reasoning, for example, that a dominating check uses the same type
   /// expression.
+  ///
+  /// [nullable] determines if the type in weak or legacy mode should be
+  /// interpreted as nullable. This is passed as `false` for is-tests and `true`
+  /// for as-checks and other contexts (e.g. parameter checks).
   AbstractValueWithPrecision createFromStaticType(DartType type,
       {ClassRelation classRelation = ClassRelation.subtype, bool nullable});
 
@@ -560,10 +564,6 @@ abstract class AbstractValueDomain {
   /// method. May return `null`, for example, if [parameterType] is not modelled
   /// precisely by an [AbstractValue].
   AbstractValue getAbstractValueForNativeMethodParameterType(DartType type);
-
-  /// Returns an [AbstractBool] that describes if the set of runtime values of
-  /// [subset] are known to all be in the set of runtime values of [superset].
-  AbstractBool contains(AbstractValue superset, AbstractValue subset);
 
   /// Returns an [AbstractBool] that describes if the set of runtime values of
   /// [subset] are known to all be in the set of runtime values of [superset].

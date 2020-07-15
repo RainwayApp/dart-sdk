@@ -8,7 +8,9 @@ class ErrorNotifier extends NoopInstrumentationService {
   AbstractAnalysisServer server;
 
   @override
-  void logException(dynamic exception, [StackTrace stackTrace]) {
+  void logException(dynamic exception,
+      [StackTrace stackTrace,
+      List<InstrumentationServiceAttachment> attachments]) {
     if (exception is SilentException) {
       // Silent exceptions should not be reported to the user.
       return;
@@ -21,7 +23,7 @@ class ErrorNotifier extends NoopInstrumentationService {
       exception = exception.rootCaughtException;
       // TODO(mfairhurst): Use the outermost message rather than the innermost
       // exception as its own message.
-      message = exception.exception;
+      message = exception.message;
     }
 
     server.sendServerErrorNotification(message, exception, stackTrace,

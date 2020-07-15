@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_SEXPRESSION_H_
 #define RUNTIME_VM_COMPILER_BACKEND_SEXPRESSION_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "platform/text_buffer.h"
 
 #include "vm/allocation.h"
@@ -191,7 +195,7 @@ class SExpParser : public ValueObject {
       : SExpParser(zone, cstr, strlen(cstr)) {}
   SExpParser(Zone* zone, const char* cstr, intptr_t len)
       : zone_(zone),
-        buffer_(cstr),
+        buffer_(ASSERT_NOTNULL(cstr)),
         buffer_size_(strnlen(cstr, len)),
         cur_label_(nullptr),
         cur_value_(nullptr),
@@ -228,6 +232,7 @@ class SExpParser : public ValueObject {
   intptr_t error_pos() const { return error_pos_; }
   const char* error_message() const { return error_message_; }
 
+  const char* Input() const { return buffer_; }
   SExpression* Parse();
   DART_NORETURN void ReportError() const;
 

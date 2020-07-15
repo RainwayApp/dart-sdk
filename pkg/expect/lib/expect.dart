@@ -10,6 +10,12 @@ library expect;
 
 import 'package:meta/meta.dart';
 
+/// Whether the program is running with weak null safety checking.
+bool get isWeakMode => const <Null>[] is List<Object>;
+
+/// Whether the program is running with strong null safety checking.
+bool get isStrongMode => !isWeakMode;
+
 /**
  * Expect is used for tests that do not want to make use of the
  * Dart unit test library - for example, the core language tests.
@@ -112,7 +118,7 @@ class Expect {
   /**
    * Checks whether the expected and actual values are equal (using `==`).
    */
-  static void equals(var expected, var actual, [String reason = ""]) {
+  static void equals(dynamic expected, dynamic actual, [String reason = ""]) {
     if (expected == actual) return;
     String msg = _getMessage(reason);
     if (expected is String && actual is String) {
@@ -129,7 +135,7 @@ class Expect {
   /**
    * Checks whether the actual value is a bool and its value is true.
    */
-  static void isTrue(var actual, [String reason = ""]) {
+  static void isTrue(dynamic actual, [String reason = ""]) {
     if (_identical(actual, true)) return;
     String msg = _getMessage(reason);
     _fail("Expect.isTrue($actual$msg) fails.");
@@ -138,7 +144,7 @@ class Expect {
   /**
    * Checks whether the actual value is a bool and its value is false.
    */
-  static void isFalse(var actual, [String reason = ""]) {
+  static void isFalse(dynamic actual, [String reason = ""]) {
     if (_identical(actual, false)) return;
     String msg = _getMessage(reason);
     _fail("Expect.isFalse($actual$msg) fails.");
@@ -147,7 +153,7 @@ class Expect {
   /**
    * Checks whether [actual] is null.
    */
-  static void isNull(actual, [String reason = ""]) {
+  static void isNull(dynamic actual, [String reason = ""]) {
     if (null == actual) return;
     String msg = _getMessage(reason);
     _fail("Expect.isNull(actual: <$actual>$msg) fails.");
@@ -156,7 +162,7 @@ class Expect {
   /**
    * Checks whether [actual] is not null.
    */
-  static void isNotNull(actual, [String reason = ""]) {
+  static void isNotNull(dynamic actual, [String reason = ""]) {
     if (null != actual) return;
     String msg = _getMessage(reason);
     _fail("Expect.isNotNull(actual: <$actual>$msg) fails.");
@@ -166,7 +172,8 @@ class Expect {
    * Checks whether the expected and actual values are identical
    * (using `identical`).
    */
-  static void identical(var expected, var actual, [String reason = ""]) {
+  static void identical(dynamic expected, dynamic actual,
+      [String reason = ""]) {
     if (_identical(expected, actual)) return;
     String msg = _getMessage(reason);
     if (expected is String && actual is String) {
@@ -189,7 +196,7 @@ class Expect {
    *
    * Uses `[]` for objects that are only identical to themselves.
    */
-  static List<List<int>> _findEquivalences(List<Object> objects) {
+  static List<List<int>> _findEquivalences(List<dynamic> objects) {
     var equivalences = new List<List<int>>.generate(objects.length, (_) => []);
     for (int i = 0; i < objects.length; i++) {
       if (equivalences[i].isNotEmpty) continue;
@@ -207,8 +214,8 @@ class Expect {
     return equivalences;
   }
 
-  static void _writeEquivalences(
-      List<Object> objects, List<List<int>> equivalences, StringBuffer buffer) {
+  static void _writeEquivalences(List<dynamic> objects,
+      List<List<int>> equivalences, StringBuffer buffer) {
     var separator = "";
     for (int i = 0; i < objects.length; i++) {
       buffer.write(separator);
@@ -226,7 +233,7 @@ class Expect {
     }
   }
 
-  static void allIdentical(List<Object> objects, [String reason = ""]) {
+  static void allIdentical(List<dynamic> objects, [String reason = ""]) {
     if (objects.length <= 1) return;
     String msg = _getMessage(reason);
     var equivalences = _findEquivalences(objects);
@@ -251,7 +258,7 @@ class Expect {
   /**
    * Checks that no two [objects] are `identical`.
    */
-  static void allDistinct(List<Object> objects, [String reason = ""]) {
+  static void allDistinct(List<dynamic> objects, [String reason = ""]) {
     String msg = _getMessage(reason);
     var equivalences = _findEquivalences(objects);
 
@@ -433,6 +440,22 @@ class Expect {
     _fail("$defaultMessage$diff");
   }
 
+  /// Checks that [actual] contains a given list of [substrings] in order.
+  ///
+  /// For example, this succeeds:
+  ///
+  ///     Expect.stringContainsInOrder("abcdefg", ["a", "c", "e"]);
+  static void stringContainsInOrder(String actual, List<String> substrings) {
+    var start = 0;
+    for (var s in substrings) {
+      start = actual.indexOf(s, start);
+      if (start < 0) {
+        _fail("String '$actual' did not contain '$s' in the expected order: " +
+            substrings.map((s) => "'$s'").join(", "));
+      }
+    }
+  }
+
   /**
    * Checks that every element of [expected] is also in [actual], and that
    * every element of [actual] is also in [expected].
@@ -473,7 +496,7 @@ class Expect {
    *
    * If the objects are iterables or maps, recurses into them.
    */
-  static void deepEquals(Object expected, Object actual) {
+  static void deepEquals(dynamic expected, dynamic actual) {
     // Early exit check for equality.
     if (expected == actual) return;
 
@@ -543,8 +566,10 @@ class Expect {
     // TODO(vsm): Make check and reason nullable or change call sites.
     // Existing tests pass null to set a reason and/or pass them through
     // via helpers.
-    check ??= _defaultCheck;
-    reason ??= "";
+    // TODO(rnystrom): Using the strange form below instead of "??=" to avoid
+    // warnings of unnecessary null checks when analyzed as NNBD code.
+    if ((check as dynamic) == null) check = _defaultCheck;
+    if ((reason as dynamic) == null) reason = "";
     String msg = reason.isEmpty ? "" : "($reason)";
     if (f is! Function()) {
       // Only throws from executing the function body should count as throwing.
@@ -553,7 +578,7 @@ class Expect {
     }
     try {
       f();
-    } on Object catch (e, s) {
+    } catch (e, s) {
       // A test failure doesn't count as throwing.
       if (e is ExpectException) rethrow;
       if (e is T && check(e as dynamic)) return;
@@ -577,10 +602,6 @@ class Expect {
     Expect.throws(f, (error) => error is AssertionError, reason);
   }
 
-  static void throwsCastError(void f(), [String reason = "CastError"]) {
-    Expect.throws(f, (error) => error is CastError, reason);
-  }
-
   static void throwsFormatException(void f(),
       [String reason = "FormatException"]) {
     Expect.throws(f, (error) => error is FormatException, reason);
@@ -589,6 +610,19 @@ class Expect {
   static void throwsNoSuchMethodError(void f(),
       [String reason = "NoSuchMethodError"]) {
     Expect.throws(f, (error) => error is NoSuchMethodError, reason);
+  }
+
+  /// Checks that [f] throws an appropriate error on a null argument.
+  ///
+  /// In strong mode, this is expected to be a [TypeError] when casting the
+  /// `null` to some non-nullable type. In weak mode, that cast is ignored and
+  /// some later explicit validation should handle it and [ArgumentError].
+  static void throwsNullCheckError(void f()) {
+    if (isStrongMode) {
+      throwsTypeError(f);
+    } else {
+      throwsArgumentError(f);
+    }
   }
 
   static void throwsRangeError(void f(), [String reason = "RangeError"]) {
@@ -634,8 +668,7 @@ class Expect {
   }
 
   /// Checks that `Sub` is a subtype of `Super` at compile time and run time.
-  static bool subtype<Sub extends Super, Super>() {
-    List<Super> list = <Sub>[];
+  static void subtype<Sub extends Super, Super>() {
     _subtypeAtRuntime<Sub, Super>();
   }
 
@@ -644,14 +677,14 @@ class Expect {
   /// This is similar to [subtype] but without the `Sub extends Super` generic
   /// constraint, so a compiler is less likely to optimize away the `is` check
   /// because the types appear to be unrelated.
-  static bool _subtypeAtRuntime<Sub, Super>() {
+  static void _subtypeAtRuntime<Sub, Super>() {
     if (<Sub>[] is! List<Super>) {
       fail("$Sub is not a subtype of $Super");
     }
   }
 
   /// Checks that `Sub` is not a subtype of `Super` at run time.
-  static bool notSubtype<Sub, Super>() {
+  static void notSubtype<Sub, Super>() {
     if (<Sub>[] is List<Super>) {
       fail("$Sub is a subtype of $Super");
     }
@@ -673,9 +706,29 @@ bool _identical(a, b) => identical(a, b);
 ///
 /// Always recognized by [Expect.throws] as an unexpected error.
 class ExpectException {
+  /// Call this to provide a function that associates a test name with this
+  /// failure.
+  ///
+  /// Used by async_helper/async_minitest.dart to inject logic to bind the
+  /// `group()` and `test()` name strings to a test failure.
+  static void setTestNameCallback(String Function() getName) {
+    _getTestName = getName;
+  }
+
+  // TODO(rnystrom): Type this `String Function()?` once this library doesn't
+  // need to be NNBD-agnostic.
+  static dynamic _getTestName;
+
   final String message;
-  ExpectException(this.message);
-  String toString() => message;
+  final String name;
+
+  ExpectException(this.message)
+      : name = (_getTestName == null) ? "" : _getTestName();
+
+  String toString() {
+    if (name != "") return 'In test "$name" $message';
+    return message;
+  }
 }
 
 /// Is true iff type assertions are enabled.

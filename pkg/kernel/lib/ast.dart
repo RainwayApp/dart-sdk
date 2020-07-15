@@ -73,12 +73,17 @@ export 'visitor.dart';
 import 'canonical_name.dart' show CanonicalName;
 export 'canonical_name.dart' show CanonicalName;
 
+import 'default_language_version.dart' show defaultLanguageVersion;
+export 'default_language_version.dart' show defaultLanguageVersion;
+
 import 'transformations/flags.dart';
-import 'text/ast_to_text.dart';
+import 'text/ast_to_text.dart' as astToText;
 import 'core_types.dart';
 import 'type_algebra.dart';
 import 'type_environment.dart';
 import 'src/assumptions.dart';
+import 'src/printer.dart';
+import 'src/text_util.dart';
 
 /// Any type of node in the IR.
 abstract class Node {
@@ -89,22 +94,40 @@ abstract class Node {
 
   /// Returns the textual representation of this node for use in debugging.
   ///
-  /// [toString] should only be used for debugging and short-running test tools
-  /// as it can cause serious memory leaks.
+  /// [toString] should only be used for debugging, but should not leak.
   ///
-  /// Synthetic names are cached globally to retain consistency across different
-  /// [toString] calls (hence the memory leak).
+  /// The data is generally bare-bones, but can easily be updated for your
+  /// specific debugging needs.
+  String toString();
+
+  /// Returns the textual representation of this node for use in debugging.
   ///
-  /// Nodes that are named, such as [Class] and [Member], return their
-  /// (possibly synthesized) name, whereas other AST nodes return the complete
-  /// textual representation of their subtree.
-  String toString() => debugNodeToString(this);
+  /// [toStringInternal] should only be used for debugging, but should not leak.
+  ///
+  /// The data is generally bare-bones, but can easily be updated for your
+  /// specific debugging needs.
+  ///
+  /// This method is called internally by toString methods to create conciser
+  /// textual representations.
+  String toStringInternal() => toText(defaultAstTextStrategy);
 
   /// Returns the textual representation of this node for use in debugging.
   ///
   /// Note that this adds some nodes to a static map to ensure consistent
-  /// naming, but that it thus also leaks memory.
-  String leakingDebugToString() => debugNodeToString(this);
+  /// naming, but that it thus also leaks memory. [leakingDebugToString] should
+  /// thus only be used for debugging and short-running test tools.
+  ///
+  /// Synthetic names are cached globally to retain consistency across different
+  /// [leakingDebugToString] calls (hence the memory leak).
+  String leakingDebugToString() => astToText.debugNodeToString(this);
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    toTextInternal(printer);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer);
 }
 
 /// A mutable AST node with a parent pointer.
@@ -252,11 +275,15 @@ class Reference {
   }
 
   String toString() {
+    return "Reference to ${toStringInternal()}";
+  }
+
+  String toStringInternal() {
     if (canonicalName != null) {
-      return 'Reference to $canonicalName';
+      return '${canonicalName.toStringInternal()}';
     }
     if (node != null) {
-      return 'Reference to $node';
+      return node.toStringInternal();
     }
     return 'Unbound reference';
   }
@@ -315,6 +342,8 @@ class Reference {
 //                      LIBRARIES and CLASSES
 // ------------------------------------------------------------------------
 
+enum NonNullableByDefaultCompiledMode { Disabled, Weak, Strong, Agnostic }
+
 class Library extends NamedNode
     implements Annotatable, Comparable<Library>, FileUriNode {
   /// An import path to this library.
@@ -327,26 +356,20 @@ class Library extends NamedNode
   /// The URI of the source file this library was loaded from.
   Uri fileUri;
 
-  // TODO(jensj): Do we have a better option than this?
-  static int defaultLanguageVersionMajor = 2;
-  static int defaultLanguageVersionMinor = 8;
+  Version _languageVersion;
+  Version get languageVersion => _languageVersion ?? defaultLanguageVersion;
 
-  int _languageVersionMajor;
-  int _languageVersionMinor;
-  int get languageVersionMajor =>
-      _languageVersionMajor ?? defaultLanguageVersionMajor;
-  int get languageVersionMinor =>
-      _languageVersionMinor ?? defaultLanguageVersionMinor;
-  void setLanguageVersion(int languageVersionMajor, int languageVersionMinor) {
-    if (languageVersionMajor == null || languageVersionMinor == null) {
+  void setLanguageVersion(Version languageVersion) {
+    if (languageVersion == null) {
       throw new StateError("Trying to set language version 'null'");
     }
-    _languageVersionMajor = languageVersionMajor;
-    _languageVersionMinor = languageVersionMinor;
+    _languageVersion = languageVersion;
   }
 
   static const int SyntheticFlag = 1 << 1;
   static const int NonNullableByDefaultFlag = 1 << 2;
+  static const int NonNullableByDefaultModeBit1Weak = 1 << 3;
+  static const int NonNullableByDefaultModeBit2Strong = 1 << 4;
 
   int flags = 0;
 
@@ -362,6 +385,38 @@ class Library extends NamedNode
     flags = value
         ? (flags | NonNullableByDefaultFlag)
         : (flags & ~NonNullableByDefaultFlag);
+  }
+
+  NonNullableByDefaultCompiledMode get nonNullableByDefaultCompiledMode {
+    bool weak = (flags & NonNullableByDefaultModeBit1Weak) != 0;
+    bool strong = (flags & NonNullableByDefaultModeBit2Strong) != 0;
+
+    if (weak && strong) return NonNullableByDefaultCompiledMode.Agnostic;
+    if (strong) return NonNullableByDefaultCompiledMode.Strong;
+    if (weak) return NonNullableByDefaultCompiledMode.Weak;
+    return NonNullableByDefaultCompiledMode.Disabled;
+  }
+
+  void set nonNullableByDefaultCompiledMode(
+      NonNullableByDefaultCompiledMode mode) {
+    switch (mode) {
+      case NonNullableByDefaultCompiledMode.Disabled:
+        flags = (flags & ~NonNullableByDefaultModeBit1Weak) &
+            ~NonNullableByDefaultModeBit2Strong;
+        break;
+      case NonNullableByDefaultCompiledMode.Weak:
+        flags = (flags | NonNullableByDefaultModeBit1Weak) &
+            ~NonNullableByDefaultModeBit2Strong;
+        break;
+      case NonNullableByDefaultCompiledMode.Strong:
+        flags = (flags & ~NonNullableByDefaultModeBit1Weak) |
+            NonNullableByDefaultModeBit2Strong;
+        break;
+      case NonNullableByDefaultCompiledMode.Agnostic:
+        flags = (flags | NonNullableByDefaultModeBit1Weak) |
+            NonNullableByDefaultModeBit2Strong;
+        break;
+    }
   }
 
   String name;
@@ -519,7 +574,6 @@ class Library extends NamedNode
   /// named node.
   void relink() {
     _relinkNode();
-    assert(canonicalName != null);
     for (int i = 0; i < typedefs.length; ++i) {
       Typedef typedef_ = typedefs[i];
       typedef_._relinkNode();
@@ -581,11 +635,19 @@ class Library extends NamedNode
 
   /// Returns a possibly synthesized name for this library, consistent with
   /// the names across all [toString] calls.
-  String toString() => debugLibraryName(this);
+  @override
+  String toString() => libraryNameToString(this);
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(libraryNameToString(this));
+  }
 
   Location _getLocationInEnclosingFile(int offset) {
     return _getLocationInComponent(enclosingComponent, fileUri, offset);
   }
+
+  String leakingDebugToString() => astToText.debugLibraryToString(this);
 }
 
 /// An import or export declaration in a library.
@@ -664,6 +726,16 @@ class LibraryDependency extends TreeNode {
     transformList(annotations, v, this);
     transformList(combinators, v, this);
   }
+
+  @override
+  String toString() {
+    return "LibraryDependency(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// A part declaration in a library.
@@ -692,6 +764,16 @@ class LibraryPart extends TreeNode {
   transformChildren(Transformer v) {
     transformList(annotations, v, this);
   }
+
+  @override
+  String toString() {
+    return "LibraryPart(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// A `show` or `hide` clause for an import or export.
@@ -716,6 +798,16 @@ class Combinator extends TreeNode {
 
   @override
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "Combinator(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// Declaration of a type alias.
@@ -782,6 +874,16 @@ class Typedef extends NamedNode implements FileUriNode {
 
   Location _getLocationInEnclosingFile(int offset) {
     return _getLocationInComponent(enclosingComponent, fileUri, offset);
+  }
+
+  @override
+  String toString() {
+    return "Typedef(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeTypedefName(reference);
   }
 }
 
@@ -913,6 +1015,7 @@ class Class extends NamedNode implements Annotatable, FileUriNode {
   static const int FlagAnonymousMixin = 1 << 4;
   static const int FlagEliminatedMixin = 1 << 5;
   static const int FlagMixinDeclaration = 1 << 6;
+  static const int FlagHasConstConstructor = 1 << 7;
 
   int flags = 0;
 
@@ -969,6 +1072,15 @@ class Class extends NamedNode implements Annotatable, FileUriNode {
     flags = value
         ? (flags | FlagMixinDeclaration)
         : (flags & ~FlagMixinDeclaration);
+  }
+
+  /// True if this class declares one or more constant constructors.
+  bool get hasConstConstructor => flags & FlagHasConstConstructor != 0;
+
+  void set hasConstConstructor(bool value) {
+    flags = value
+        ? (flags | FlagHasConstConstructor)
+        : (flags & ~FlagHasConstConstructor);
   }
 
   List<Supertype> superclassConstraints() {
@@ -1282,9 +1394,13 @@ class Class extends NamedNode implements Annotatable, FileUriNode {
     return coreTypes.thisInterfaceType(this, nullability);
   }
 
-  /// Returns a possibly synthesized name for this class, consistent with
-  /// the names used across all [toString] calls.
-  String toString() => debugQualifiedClassName(this);
+  @override
+  String toString() => 'Class(${toStringInternal()})';
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeClassName(reference);
+  }
 
   visitChildren(Visitor v) {
     visitList(annotations, v);
@@ -1355,7 +1471,7 @@ class Extension extends NamedNode implements FileUriNode {
       {this.name,
       List<TypeParameter> typeParameters,
       this.onType,
-      List<Reference> members,
+      List<ExtensionMemberDescriptor> members,
       this.fileUri,
       Reference reference})
       : this.typeParameters = typeParameters ?? <TypeParameter>[],
@@ -1381,6 +1497,16 @@ class Extension extends NamedNode implements FileUriNode {
     if (onType != null) {
       onType = v.visitDartType(onType);
     }
+  }
+
+  @override
+  String toString() {
+    return "Extension(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExtensionName(reference);
   }
 }
 
@@ -1532,12 +1658,23 @@ abstract class Member extends NamedNode implements Annotatable, FileUriNode {
   ///
   bool get isExtensionMember;
 
+  /// If `true` this member is defined in a library for which non-nullable by
+  /// default is enabled.
+  bool get isNonNullableByDefault;
+  void set isNonNullableByDefault(bool value);
+
   /// The body of the procedure or constructor, or `null` if this is a field.
   FunctionNode get function => null;
 
   /// Returns a possibly synthesized name for this member, consistent with
   /// the names used across all [toString] calls.
-  String toString() => debugQualifiedMemberName(this);
+  @override
+  String toString() => toStringInternal();
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeMemberName(reference);
+  }
 
   void addAnnotation(Expression node) {
     if (annotations.isEmpty) {
@@ -1586,7 +1723,10 @@ class Field extends Member {
     this.isStatic = isStatic;
     this.isLate = isLate;
     this.hasImplicitGetter = hasImplicitGetter ?? !isStatic;
-    this.hasImplicitSetter = hasImplicitSetter ?? (!isStatic && !isFinal);
+    this.hasImplicitSetter = hasImplicitSetter ??
+        (!isStatic &&
+            !isConst &&
+            (!isFinal || (isLate && initializer == null)));
     this.transformerFlags = transformerFlags;
   }
 
@@ -1599,6 +1739,8 @@ class Field extends Member {
   static const int FlagGenericCovariantImpl = 1 << 6;
   static const int FlagLate = 1 << 7;
   static const int FlagExtensionMember = 1 << 8;
+  static const int FlagNonNullableByDefault = 1 << 9;
+  static const int FlagInternalImplementation = 1 << 10;
 
   /// Whether the field is declared with the `covariant` keyword.
   bool get isCovariant => flags & FlagCovariant != 0;
@@ -1639,6 +1781,13 @@ class Field extends Member {
 
   /// Whether the field is declared with the `late` keyword.
   bool get isLate => flags & FlagLate != 0;
+
+  // If `true` this field is not part of the interface but only part of the
+  // class members.
+  //
+  // This is `true` for instance for synthesized fields added for the late
+  // lowering.
+  bool get isInternalImplementation => flags & FlagInternalImplementation != 0;
 
   void set isCovariant(bool value) {
     flags = value ? (flags | FlagCovariant) : (flags & ~FlagCovariant);
@@ -1683,6 +1832,12 @@ class Field extends Member {
     flags = value ? (flags | FlagLate) : (flags & ~FlagLate);
   }
 
+  void set isInternalImplementation(bool value) {
+    flags = value
+        ? (flags | FlagInternalImplementation)
+        : (flags & ~FlagInternalImplementation);
+  }
+
   /// True if the field is neither final nor const.
   bool get isMutable => flags & (FlagFinal | FlagConst) == 0;
   bool get isInstanceMember => !isStatic;
@@ -1692,6 +1847,16 @@ class Field extends Member {
   bool get isExternal => false;
   void set isExternal(bool value) {
     if (value) throw 'Fields cannot be external';
+  }
+
+  @override
+  bool get isNonNullableByDefault => flags & FlagNonNullableByDefault != 0;
+
+  @override
+  void set isNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagNonNullableByDefault)
+        : (flags & ~FlagNonNullableByDefault);
   }
 
   R accept<R>(MemberVisitor<R> v) => v.visitField(this);
@@ -1766,6 +1931,7 @@ class Constructor extends Member {
   static const int FlagConst = 1 << 0; // Must match serialized bit positions.
   static const int FlagExternal = 1 << 1;
   static const int FlagSynthetic = 1 << 2;
+  static const int FlagNonNullableByDefault = 1 << 3;
 
   bool get isConst => flags & FlagConst != 0;
   bool get isExternal => flags & FlagExternal != 0;
@@ -1792,6 +1958,16 @@ class Constructor extends Member {
 
   @override
   bool get isExtensionMember => false;
+
+  @override
+  bool get isNonNullableByDefault => flags & FlagNonNullableByDefault != 0;
+
+  @override
+  void set isNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagNonNullableByDefault)
+        : (flags & ~FlagNonNullableByDefault);
+  }
 
   R accept<R>(MemberVisitor<R> v) => v.visitConstructor(this);
 
@@ -1901,6 +2077,7 @@ class RedirectingFactoryConstructor extends Member {
 
   static const int FlagConst = 1 << 0; // Must match serialized bit positions.
   static const int FlagExternal = 1 << 1;
+  static const int FlagNonNullableByDefault = 1 << 2;
 
   bool get isConst => flags & FlagConst != 0;
   bool get isExternal => flags & FlagExternal != 0;
@@ -1921,6 +2098,16 @@ class RedirectingFactoryConstructor extends Member {
   bool get isExtensionMember => false;
 
   bool get isUnresolved => targetReference == null;
+
+  @override
+  bool get isNonNullableByDefault => flags & FlagNonNullableByDefault != 0;
+
+  @override
+  void set isNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagNonNullableByDefault)
+        : (flags & ~FlagNonNullableByDefault);
+  }
 
   Member get target => targetReference?.asMember;
 
@@ -2018,18 +2205,20 @@ class Procedure extends Member {
       bool isConst: false,
       bool isForwardingStub: false,
       bool isForwardingSemiStub: false,
+      bool isMemberSignature: false,
       bool isExtensionMember: false,
       int transformerFlags: 0,
       Uri fileUri,
       Reference reference,
       Member forwardingStubSuperTarget,
       Member forwardingStubInterfaceTarget})
-      : this.byReference(name, kind, function,
+      : this._byReferenceRenamed(name, kind, function,
             isAbstract: isAbstract,
             isStatic: isStatic,
             isExternal: isExternal,
             isConst: isConst,
             isForwardingStub: isForwardingStub,
+            isMemberSignature: isMemberSignature,
             isForwardingSemiStub: isForwardingSemiStub,
             isExtensionMember: isExtensionMember,
             transformerFlags: transformerFlags,
@@ -2040,13 +2229,14 @@ class Procedure extends Member {
             forwardingStubInterfaceTargetReference:
                 getMemberReference(forwardingStubInterfaceTarget));
 
-  Procedure.byReference(Name name, this.kind, this.function,
+  Procedure._byReferenceRenamed(Name name, this.kind, this.function,
       {bool isAbstract: false,
       bool isStatic: false,
       bool isExternal: false,
       bool isConst: false,
       bool isForwardingStub: false,
       bool isForwardingSemiStub: false,
+      bool isMemberSignature: false,
       bool isExtensionMember: false,
       int transformerFlags: 0,
       Uri fileUri,
@@ -2061,6 +2251,7 @@ class Procedure extends Member {
     this.isConst = isConst;
     this.isForwardingStub = isForwardingStub;
     this.isForwardingSemiStub = isForwardingSemiStub;
+    this.isMemberSignature = isMemberSignature;
     this.isExtensionMember = isExtensionMember;
     this.transformerFlags = transformerFlags;
   }
@@ -2075,6 +2266,8 @@ class Procedure extends Member {
   static const int FlagRedirectingFactoryConstructor = 1 << 6;
   static const int FlagNoSuchMethodForwarder = 1 << 7;
   static const int FlagExtensionMember = 1 << 8;
+  static const int FlagMemberSignature = 1 << 9;
+  static const int FlagNonNullableByDefault = 1 << 10;
 
   bool get isStatic => flags & FlagStatic != 0;
   bool get isAbstract => flags & FlagAbstract != 0;
@@ -2097,6 +2290,15 @@ class Procedure extends Member {
   /// If set, this flag indicates that although this function is a forwarding
   /// stub, it was present in the original source as an abstract method.
   bool get isForwardingSemiStub => flags & FlagForwardingSemiStub != 0;
+
+  /// If set, this method is a class member added to show the type of an
+  /// inherited member.
+  ///
+  /// This is used when the type of the inherited member cannot be computed
+  /// directly from the member(s) in the supertypes. For instance in case of
+  /// an nnbd opt-out class inheriting from an nnbd opt-in class; here all nnbd-
+  /// aware types are replaced with legacy types in the inherited signature.
+  bool get isMemberSignature => flags & FlagMemberSignature != 0;
 
   // Indicates if this [Procedure] represents a redirecting factory constructor
   // and doesn't have a runnable body.
@@ -2141,6 +2343,11 @@ class Procedure extends Member {
         : (flags & ~FlagForwardingSemiStub);
   }
 
+  void set isMemberSignature(bool value) {
+    flags =
+        value ? (flags | FlagMemberSignature) : (flags & ~FlagMemberSignature);
+  }
+
   void set isRedirectingFactoryConstructor(bool value) {
     flags = value
         ? (flags | FlagRedirectingFactoryConstructor)
@@ -2165,6 +2372,16 @@ class Procedure extends Member {
   bool get hasGetter => kind != ProcedureKind.Setter;
   bool get hasSetter => kind == ProcedureKind.Setter;
   bool get isFactory => kind == ProcedureKind.Factory;
+
+  @override
+  bool get isNonNullableByDefault => flags & FlagNonNullableByDefault != 0;
+
+  @override
+  void set isNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagNonNullableByDefault)
+        : (flags & ~FlagNonNullableByDefault);
+  }
 
   Member get forwardingStubSuperTarget =>
       forwardingStubSuperTargetReference?.asMember;
@@ -2247,6 +2464,16 @@ class InvalidInitializer extends Initializer {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "InvalidInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// A field assignment `field = value` occurring in the initializer list of
@@ -2287,6 +2514,16 @@ class FieldInitializer extends Initializer {
       value = value.accept<TreeNode>(v);
       value?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "FieldInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -2330,6 +2567,16 @@ class SuperInitializer extends Initializer {
       arguments?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "SuperInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// A redirecting call `this(x,y)` occurring in the initializer list of
@@ -2368,6 +2615,16 @@ class RedirectingInitializer extends Initializer {
       arguments?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "RedirectingInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 /// Binding of a temporary variable in the initializer list of a constructor.
@@ -2393,6 +2650,16 @@ class LocalInitializer extends Initializer {
       variable?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "LocalInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
+  }
 }
 
 class AssertInitializer extends Initializer {
@@ -2411,6 +2678,16 @@ class AssertInitializer extends Initializer {
   transformChildren(Transformer v) {
     statement = statement.accept<TreeNode>(v);
     statement.parent = this;
+  }
+
+  @override
+  String toString() {
+    return "AssertInitializer(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -2541,6 +2818,94 @@ class FunctionNode extends TreeNode {
             .applyToFunctionType(computeThisFunctionType(nullability));
   }
 
+  /// Return function type of node returning [typedefType] reuse type parameters
+  ///
+  /// When this getter is invoked, the parent must be a [Constructor].
+  /// This getter works similarly to [computeThisFunctionType], but uses
+  /// [typedef] to compute the return type of the returned function type. It
+  /// is useful in some contexts, especially during inference of aliased
+  /// constructor invocations.
+  FunctionType computeAliasedConstructorFunctionType(
+      Typedef typedef, Library library) {
+    TreeNode parent = this.parent;
+    assert(parent is Constructor, "Only run this method on constructors");
+    Constructor parentConstructor = parent;
+    // We need create a copy of the list of type parameters, otherwise
+    // transformations like erasure don't work.
+    List<TypeParameter> classTypeParametersCopy =
+        List.from(parentConstructor.enclosingClass.typeParameters);
+    List<TypeParameter> typedefTypeParametersCopy =
+        List.from(typedef.typeParameters);
+    List<DartType> asTypeArguments =
+        getAsTypeArguments(typedefTypeParametersCopy, library);
+    TypedefType typedefType =
+        TypedefType(typedef, library.nonNullable, asTypeArguments);
+    DartType unaliasedTypedef = typedefType.unalias;
+    assert(unaliasedTypedef is InterfaceType,
+        "[typedef] is assumed to resolve to an interface type");
+    InterfaceType targetType = unaliasedTypedef;
+    Substitution substitution = Substitution.fromPairs(
+        classTypeParametersCopy, targetType.typeArguments);
+    List<DartType> positional = positionalParameters
+        .map((VariableDeclaration decl) =>
+            substitution.substituteType(decl.type))
+        .toList(growable: false);
+    List<NamedType> named = namedParameters
+        .map((VariableDeclaration decl) => NamedType(
+            decl.name, substitution.substituteType(decl.type),
+            isRequired: decl.isRequired))
+        .toList(growable: false);
+    named.sort();
+    return FunctionType(positional, typedefType.unalias, library.nonNullable,
+        namedParameters: named,
+        typeParameters: typedefTypeParametersCopy,
+        requiredParameterCount: requiredParameterCount);
+  }
+
+  /// Return function type of node returning [typedefType] reuse type parameters
+  ///
+  /// When this getter is invoked, the parent must be a [Procedure] which is a
+  /// redirecting factory constructor. This getter works similarly to
+  /// [computeThisFunctionType], but uses [typedef] to compute the return type
+  /// of the returned function type. It is useful in some contexts, especially
+  /// during inference of aliased factory invocations.
+  FunctionType computeAliasedFactoryFunctionType(
+      Typedef typedef, Library library) {
+    assert(
+        parent is Procedure &&
+            (parent as Procedure).kind == ProcedureKind.Factory,
+        "Only run this method on a factory");
+    // We need create a copy of the list of type parameters, otherwise
+    // transformations like erasure don't work.
+    List<TypeParameter> classTypeParametersCopy = List.from(typeParameters);
+    List<TypeParameter> typedefTypeParametersCopy =
+        List.from(typedef.typeParameters);
+    List<DartType> asTypeArguments =
+        getAsTypeArguments(typedefTypeParametersCopy, library);
+    TypedefType typedefType =
+        TypedefType(typedef, library.nonNullable, asTypeArguments);
+    DartType unaliasedTypedef = typedefType.unalias;
+    assert(unaliasedTypedef is InterfaceType,
+        "[typedef] is assumed to resolve to an interface type");
+    InterfaceType targetType = unaliasedTypedef;
+    Substitution substitution = Substitution.fromPairs(
+        classTypeParametersCopy, targetType.typeArguments);
+    List<DartType> positional = positionalParameters
+        .map((VariableDeclaration decl) =>
+            substitution.substituteType(decl.type))
+        .toList(growable: false);
+    List<NamedType> named = namedParameters
+        .map((VariableDeclaration decl) => NamedType(
+            decl.name, substitution.substituteType(decl.type),
+            isRequired: decl.isRequired))
+        .toList(growable: false);
+    named.sort();
+    return FunctionType(positional, typedefType.unalias, library.nonNullable,
+        namedParameters: named,
+        typeParameters: typedefTypeParametersCopy,
+        requiredParameterCount: requiredParameterCount);
+  }
+
   R accept<R>(TreeVisitor<R> v) => v.visitFunctionNode(this);
 
   visitChildren(Visitor v) {
@@ -2560,6 +2925,16 @@ class FunctionNode extends TreeNode {
       body = body.accept<TreeNode>(v);
       body?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "FunctionNode(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -2666,6 +3041,16 @@ abstract class Expression extends TreeNode {
 
   R accept<R>(ExpressionVisitor<R> v);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg);
+
+  int get precedence => astToText.Precedence.of(this);
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeExpression(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer);
 }
 
 /// An expression containing compile-time errors.
@@ -2687,6 +3072,18 @@ class InvalidExpression extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "InvalidExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('<invalid:');
+    printer.write(message);
+    printer.write('>');
+  }
 }
 
 /// Read a local variable, a local function, or a function parameter.
@@ -2711,6 +3108,21 @@ class VariableGet extends Expression {
   transformChildren(Transformer v) {
     if (promotedType != null) {
       promotedType = v.visitDartType(promotedType);
+    }
+  }
+
+  @override
+  String toString() {
+    return "VariableGet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(printer.getVariableName(variable));
+    if (promotedType != null) {
+      printer.write('{');
+      printer.writeType(promotedType);
+      printer.write('}');
     }
   }
 }
@@ -2742,6 +3154,18 @@ class VariableSet extends Expression {
       value = value.accept<TreeNode>(v);
       value?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "VariableSet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(printer.getVariableName(variable));
+    printer.write(' = ');
+    printer.writeExpression(value);
   }
 }
 
@@ -2803,6 +3227,19 @@ class PropertyGet extends Expression {
       receiver?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "PropertyGet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+  }
 }
 
 /// Expression of form `x.field = value`.
@@ -2858,6 +3295,21 @@ class PropertySet extends Expression {
       value?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "PropertySet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+    printer.write(' = ');
+    printer.writeExpression(value);
+  }
 }
 
 /// Directly read a field, call a getter, or tear off a method.
@@ -2877,6 +3329,8 @@ class DirectPropertyGet extends Expression {
   void set target(Member target) {
     targetReference = getMemberReference(target);
   }
+
+  Name get name => target?.name;
 
   visitChildren(Visitor v) {
     receiver?.accept(v);
@@ -2899,6 +3353,19 @@ class DirectPropertyGet extends Expression {
     var receiverType = receiver.getStaticTypeAsInstanceOf(superclass, context);
     return Substitution.fromInterfaceType(receiverType)
         .substituteType(target.getterType);
+  }
+
+  @override
+  String toString() {
+    return "DirectPropertyGet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(targetReference, name);
   }
 }
 
@@ -2925,6 +3392,8 @@ class DirectPropertySet extends Expression {
     targetReference = getMemberReference(target);
   }
 
+  Name get name => target?.name;
+
   visitChildren(Visitor v) {
     receiver?.accept(v);
     target?.acceptReference(v);
@@ -2948,6 +3417,21 @@ class DirectPropertySet extends Expression {
 
   DartType getStaticType(StaticTypeContext context) =>
       value.getStaticType(context);
+
+  @override
+  String toString() {
+    return "DirectPropertySet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(targetReference, name);
+    printer.write(' = ');
+    printer.writeExpression(value);
+  }
 }
 
 /// Directly call an instance method, bypassing ordinary dispatch.
@@ -3009,6 +3493,20 @@ class DirectMethodInvocation extends InvocationExpression {
             target.function.typeParameters, arguments.types)
         .substituteType(returnType);
   }
+
+  @override
+  String toString() {
+    return "DirectMethodInvocation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(targetReference, name);
+    printer.writeArguments(arguments);
+  }
 }
 
 /// Expression of form `super.field`.
@@ -3057,6 +3555,17 @@ class SuperPropertyGet extends Expression {
   }
 
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "SuperPropertyGet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('super.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+  }
 }
 
 /// Expression of form `super.field = value`.
@@ -3103,6 +3612,19 @@ class SuperPropertySet extends Expression {
       value?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "SuperPropertySet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('super.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+    printer.write(' = ');
+    printer.writeExpression(value);
+  }
 }
 
 /// Read a static field, call a static getter, or tear off a static method.
@@ -3131,6 +3653,16 @@ class StaticGet extends Expression {
   }
 
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "StaticGet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeMemberName(targetReference);
+  }
 }
 
 /// Assign a static field or call a static setter.
@@ -3171,6 +3703,18 @@ class StaticSet extends Expression {
       value = value.accept<TreeNode>(v);
       value?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "StaticSet(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeMemberName(targetReference);
+    printer.write(' = ');
+    printer.writeExpression(value);
   }
 }
 
@@ -3219,6 +3763,42 @@ class Arguments extends TreeNode {
     transformList(positional, v, this);
     transformList(named, v, this);
   }
+
+  @override
+  String toString() {
+    return "Arguments(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeArguments(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer, {bool includeTypeArguments: true}) {
+    if (includeTypeArguments) {
+      printer.writeTypeArguments(types);
+    }
+    printer.write('(');
+    for (int index = 0; index < positional.length; index++) {
+      if (index > 0) {
+        printer.write(', ');
+      }
+      printer.writeExpression(positional[index]);
+    }
+    if (named.isNotEmpty) {
+      if (positional.isNotEmpty) {
+        printer.write(', ');
+      }
+      for (int index = 0; index < named.length; index++) {
+        if (index > 0) {
+          printer.write(', ');
+        }
+        printer.writeNamedExpression(named[index]);
+      }
+    }
+    printer.write(')');
+  }
 }
 
 /// A named argument, `name: value`.
@@ -3241,6 +3821,23 @@ class NamedExpression extends TreeNode {
       value = value.accept<TreeNode>(v);
       value?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "NamedExpression(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    toTextInternal(printer);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    printer.write(name);
+    printer.write(': ');
+    printer.writeExpression(value);
   }
 }
 
@@ -3371,6 +3968,20 @@ class MethodInvocation extends InvocationExpression {
       arguments?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "MethodInvocation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(receiver,
+        minimumPrecedence: astToText.Precedence.PRIMARY);
+    printer.write('.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+    printer.writeArguments(arguments);
+  }
 }
 
 /// Expression of form `super.foo(x)`.
@@ -3426,6 +4037,18 @@ class SuperMethodInvocation extends InvocationExpression {
       arguments?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "SuperMethodInvocation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('super.');
+    printer.writeInterfaceMemberName(interfaceTargetReference, name);
+    printer.writeArguments(arguments);
+  }
 }
 
 /// Expression of form `foo(x)`, or `const foo(x)` if the target is an
@@ -3476,6 +4099,17 @@ class StaticInvocation extends InvocationExpression {
       arguments = arguments.accept<TreeNode>(v);
       arguments?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "StaticInvocation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeMemberName(targetReference);
+    printer.writeArguments(arguments);
   }
 }
 
@@ -3544,6 +4178,27 @@ class ConstructorInvocation extends InvocationExpression {
         : new InterfaceType(
             enclosingClass, Nullability.legacy, arguments.types);
   }
+
+  @override
+  String toString() {
+    return "ConstructorInvocation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (isConst) {
+      printer.write('const ');
+    } else {
+      printer.write('new ');
+    }
+    printer.writeClassName(target.enclosingClass.reference);
+    printer.writeTypeArguments(arguments.types);
+    if (target.name.name.isNotEmpty) {
+      printer.write('.');
+      printer.write(target.name.name);
+    }
+    printer.writeArguments(arguments, includeTypeArguments: false);
+  }
 }
 
 /// An explicit type instantiation of a generic function.
@@ -3577,6 +4232,17 @@ class Instantiation extends Expression {
     }
     transformTypeList(typeArguments, v);
   }
+
+  @override
+  String toString() {
+    return "Instantiation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(expression);
+    printer.writeTypeArguments(typeArguments);
+  }
 }
 
 /// Expression of form `!x`.
@@ -3605,6 +4271,18 @@ class Not extends Expression {
       operand = operand.accept<TreeNode>(v);
       operand?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "Not(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('!');
+    printer.writeExpression(operand,
+        minimumPrecedence: astToText.Precedence.PREFIX);
   }
 }
 
@@ -3640,6 +4318,19 @@ class LogicalExpression extends Expression {
       right = right.accept<TreeNode>(v);
       right?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "LogicalExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    int minimumPrecedence = precedence;
+    printer.writeExpression(left, minimumPrecedence: minimumPrecedence);
+    printer.write(' $operator ');
+    printer.writeExpression(right, minimumPrecedence: minimumPrecedence + 1);
   }
 }
 
@@ -3689,6 +4380,27 @@ class ConditionalExpression extends Expression {
       staticType = v.visitDartType(staticType);
     }
   }
+
+  @override
+  String toString() {
+    return "ConditionalExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(condition,
+        minimumPrecedence: astToText.Precedence.LOGICAL_OR);
+    printer.write(' ?');
+    if (staticType != null) {
+      printer.write('{');
+      printer.writeType(staticType);
+      printer.write('}');
+    }
+    printer.write(' ');
+    printer.writeExpression(then);
+    printer.write(' : ');
+    printer.writeExpression(otherwise);
+  }
 }
 
 /// Convert expressions to strings and concatenate them.  Semantically, calls
@@ -3718,6 +4430,26 @@ class StringConcatenation extends Expression {
 
   transformChildren(Transformer v) {
     transformList(expressions, v, this);
+  }
+
+  @override
+  String toString() {
+    return "StringConcatenation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('"');
+    for (Expression part in expressions) {
+      if (part is StringLiteral) {
+        printer.write(escapeString(part.value));
+      } else {
+        printer.write(r'${');
+        printer.writeExpression(part);
+        printer.write('}');
+      }
+    }
+    printer.write('"');
   }
 }
 
@@ -3752,6 +4484,23 @@ class ListConcatenation extends Expression {
   transformChildren(Transformer v) {
     typeArgument = v.visitDartType(typeArgument);
     transformList(lists, v, this);
+  }
+
+  @override
+  String toString() {
+    return "ListConcatenation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    bool first = true;
+    for (Expression part in lists) {
+      if (!first) {
+        printer.write(' + ');
+      }
+      printer.writeExpression(part);
+      first = false;
+    }
   }
 }
 
@@ -3789,6 +4538,23 @@ class SetConcatenation extends Expression {
   transformChildren(Transformer v) {
     typeArgument = v.visitDartType(typeArgument);
     transformList(sets, v, this);
+  }
+
+  @override
+  String toString() {
+    return "SetConcatenation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    bool first = true;
+    for (Expression part in sets) {
+      if (!first) {
+        printer.write(' + ');
+      }
+      printer.writeExpression(part);
+      first = false;
+    }
   }
 }
 
@@ -3832,6 +4598,23 @@ class MapConcatenation extends Expression {
     keyType = v.visitDartType(keyType);
     valueType = v.visitDartType(valueType);
     transformList(maps, v, this);
+  }
+
+  @override
+  String toString() {
+    return "MapConcatenation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    bool first = true;
+    for (Expression part in maps) {
+      if (!first) {
+        printer.write(' + ');
+      }
+      printer.writeExpression(part);
+      first = false;
+    }
   }
 }
 
@@ -3892,6 +4675,49 @@ class InstanceCreation extends Expression {
     transformList(asserts, v, this);
     transformList(unusedArguments, v, this);
   }
+
+  @override
+  String toString() {
+    return "InstanceCreation(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeClassName(classReference);
+    printer.writeTypeArguments(typeArguments);
+    printer.write('{');
+    bool first = true;
+    fieldValues.forEach((Reference fieldRef, Expression value) {
+      if (!first) {
+        printer.write(', ');
+      }
+      printer.writeName(fieldRef.asField.name);
+      printer.write(': ');
+      printer.writeExpression(value);
+      first = false;
+    });
+    for (AssertStatement assert_ in asserts) {
+      if (!first) {
+        printer.write(', ');
+      }
+      printer.write('assert(');
+      printer.writeExpression(assert_.condition);
+      if (assert_.message != null) {
+        printer.write(', ');
+        printer.writeExpression(assert_.message);
+      }
+      printer.write(')');
+      first = false;
+    }
+    for (Expression unusedArgument in unusedArguments) {
+      if (!first) {
+        printer.write(', ');
+      }
+      printer.writeExpression(unusedArgument);
+      first = false;
+    }
+    printer.write('}');
+  }
 }
 
 /// A marker indicating that a subexpression originates in a different source
@@ -3929,15 +4755,47 @@ class FileUriExpression extends Expression implements FileUriNode {
   Location _getLocationInEnclosingFile(int offset) {
     return _getLocationInComponent(enclosingComponent, fileUri, offset);
   }
+
+  @override
+  String toString() {
+    return "FileUriExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (printer.includeAuxiliaryProperties) {
+      printer.write('{');
+      printer.write(fileUri.toString());
+      printer.write('}');
+    }
+    printer.writeExpression(expression);
+  }
 }
 
 /// Expression of form `x is T`.
 class IsExpression extends Expression {
+  int flags = 0;
   Expression operand;
   DartType type;
 
   IsExpression(this.operand, this.type) {
     operand?.parent = this;
+  }
+
+  // Must match serialized bit positions.
+  static const int FlagForNonNullableByDefault = 1 << 0;
+
+  /// If `true`, this test take the nullability of [type] into account.
+  ///
+  /// This is the case for is-tests written in libraries that are opted in to
+  /// the non nullable by default feature.
+  bool get isForNonNullableByDefault =>
+      flags & FlagForNonNullableByDefault != 0;
+
+  void set isForNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagForNonNullableByDefault)
+        : (flags & ~FlagForNonNullableByDefault);
   }
 
   DartType getStaticType(StaticTypeContext context) =>
@@ -3959,6 +4817,23 @@ class IsExpression extends Expression {
     }
     type = v.visitDartType(type);
   }
+
+  @override
+  String toString() {
+    return "IsExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(operand,
+        minimumPrecedence: astToText.Precedence.BITWISE_OR);
+    printer.write(' is');
+    if (printer.includeAuxiliaryProperties && isForNonNullableByDefault) {
+      printer.write('{ForNonNullableByDefault}');
+    }
+    printer.write(' ');
+    printer.writeType(type);
+  }
 }
 
 /// Expression of form `x as T`.
@@ -3973,15 +4848,64 @@ class AsExpression extends Expression {
 
   // Must match serialized bit positions.
   static const int FlagTypeError = 1 << 0;
+  static const int FlagCovarianceCheck = 1 << 1;
+  static const int FlagForDynamic = 1 << 2;
+  static const int FlagForNonNullableByDefault = 1 << 3;
 
-  /// Indicates the type of error that should be thrown if the check fails.
+  /// If `true`, this test is an implicit down cast.
   ///
-  /// `true` means that a TypeError should be thrown.  `false` means that a
-  /// CastError should be thrown.
+  /// If `true` a TypeError should be thrown. If `false` a CastError should be
+  /// thrown.
   bool get isTypeError => flags & FlagTypeError != 0;
 
   void set isTypeError(bool value) {
     flags = value ? (flags | FlagTypeError) : (flags & ~FlagTypeError);
+  }
+
+  /// If `true`, this test is needed to ensure soundness of covariant type
+  /// variables using in contravariant positions.
+  ///
+  /// For instance
+  ///
+  ///    class Class<T> {
+  ///      void Function(T) field;
+  ///      Class(this.field);
+  ///    }
+  ///    main() {
+  ///      Class<num> c = new Class<int>((int i) {});
+  ///      void Function<num> field = c.field; // Check needed on `c.field`
+  ///      field(0.5);
+  ///    }
+  ///
+  /// Here a covariant check `c.field as void Function(num)` is needed because
+  /// the field could be (and indeed is) not a subtype of the static type of
+  /// the expression.
+  bool get isCovarianceCheck => flags & FlagCovarianceCheck != 0;
+
+  void set isCovarianceCheck(bool value) {
+    flags =
+        value ? (flags | FlagCovarianceCheck) : (flags & ~FlagCovarianceCheck);
+  }
+
+  /// If `true`, this is an implicit down cast from an expression of type
+  /// `dynamic`.
+  bool get isForDynamic => flags & FlagForDynamic != 0;
+
+  void set isForDynamic(bool value) {
+    flags = value ? (flags | FlagForDynamic) : (flags & ~FlagForDynamic);
+  }
+
+  /// If `true`, this test take the nullability of [type] into account.
+  ///
+  /// This is the case for is-tests written in libraries that are opted in to
+  /// the non nullable by default feature.
+  bool get isForNonNullableByDefault =>
+      flags & FlagForNonNullableByDefault != 0;
+
+  void set isForNonNullableByDefault(bool value) {
+    flags = value
+        ? (flags | FlagForNonNullableByDefault)
+        : (flags & ~FlagForNonNullableByDefault);
   }
 
   DartType getStaticType(StaticTypeContext context) => type;
@@ -4002,6 +4926,38 @@ class AsExpression extends Expression {
     }
     type = v.visitDartType(type);
   }
+
+  @override
+  String toString() {
+    return "AsExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(operand,
+        minimumPrecedence: astToText.Precedence.BITWISE_OR);
+    printer.write(' as');
+    if (printer.includeAuxiliaryProperties) {
+      List<String> flags = <String>[];
+      if (isTypeError) {
+        flags.add('TypeError');
+      }
+      if (isCovarianceCheck) {
+        flags.add('CovarianceCheck');
+      }
+      if (isForDynamic) {
+        flags.add('ForDynamic');
+      }
+      if (isForNonNullableByDefault) {
+        flags.add('ForNonNullableByDefault');
+      }
+      if (flags.isNotEmpty) {
+        printer.write('{${flags.join(',')}}');
+      }
+    }
+    printer.write(' ');
+    printer.writeType(type);
+  }
 }
 
 /// Null check expression of form `x!`.
@@ -4019,7 +4975,7 @@ class NullCheck extends Expression {
     DartType operandType = operand.getStaticType(context);
     return operandType == context.typeEnvironment.nullType
         ? const NeverType(Nullability.nonNullable)
-        : operandType.withNullability(Nullability.nonNullable);
+        : operandType.withDeclaredNullability(Nullability.nonNullable);
   }
 
   R accept<R>(ExpressionVisitor<R> v) => v.visitNullCheck(this);
@@ -4035,6 +4991,18 @@ class NullCheck extends Expression {
       operand = operand.accept<TreeNode>(v);
       operand?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "NullCheck(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(operand,
+        minimumPrecedence: astToText.Precedence.POSTFIX);
+    printer.write('!');
   }
 }
 
@@ -4057,6 +5025,18 @@ class StringLiteral extends BasicLiteral {
   R accept<R>(ExpressionVisitor<R> v) => v.visitStringLiteral(this);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg) =>
       v.visitStringLiteral(this, arg);
+
+  @override
+  String toString() {
+    return "StringLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('"');
+    printer.write(escapeString(value));
+    printer.write('"');
+  }
 }
 
 class IntLiteral extends BasicLiteral {
@@ -4074,6 +5054,16 @@ class IntLiteral extends BasicLiteral {
   R accept<R>(ExpressionVisitor<R> v) => v.visitIntLiteral(this);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg) =>
       v.visitIntLiteral(this, arg);
+
+  @override
+  String toString() {
+    return "IntLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('$value');
+  }
 }
 
 class DoubleLiteral extends BasicLiteral {
@@ -4087,6 +5077,16 @@ class DoubleLiteral extends BasicLiteral {
   R accept<R>(ExpressionVisitor<R> v) => v.visitDoubleLiteral(this);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg) =>
       v.visitDoubleLiteral(this, arg);
+
+  @override
+  String toString() {
+    return "DoubleLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('$value');
+  }
 }
 
 class BoolLiteral extends BasicLiteral {
@@ -4100,6 +5100,16 @@ class BoolLiteral extends BasicLiteral {
   R accept<R>(ExpressionVisitor<R> v) => v.visitBoolLiteral(this);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg) =>
       v.visitBoolLiteral(this, arg);
+
+  @override
+  String toString() {
+    return "BoolLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('$value');
+  }
 }
 
 class NullLiteral extends BasicLiteral {
@@ -4111,6 +5121,16 @@ class NullLiteral extends BasicLiteral {
   R accept<R>(ExpressionVisitor<R> v) => v.visitNullLiteral(this);
   R accept1<R, A>(ExpressionVisitor1<R, A> v, A arg) =>
       v.visitNullLiteral(this, arg);
+
+  @override
+  String toString() {
+    return "NullLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('null');
+  }
 }
 
 class SymbolLiteral extends Expression {
@@ -4127,6 +5147,17 @@ class SymbolLiteral extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "SymbolLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('#');
+    printer.write(value);
+  }
 }
 
 class TypeLiteral extends Expression {
@@ -4148,6 +5179,16 @@ class TypeLiteral extends Expression {
   transformChildren(Transformer v) {
     type = v.visitDartType(type);
   }
+
+  @override
+  String toString() {
+    return "TypeLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeType(type);
+  }
 }
 
 class ThisExpression extends Expression {
@@ -4159,6 +5200,16 @@ class ThisExpression extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "ThisExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('this');
+  }
 }
 
 class Rethrow extends Expression {
@@ -4173,6 +5224,16 @@ class Rethrow extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "Rethrow(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('rethrow');
+  }
 }
 
 class Throw extends Expression {
@@ -4199,6 +5260,17 @@ class Throw extends Expression {
       expression = expression.accept<TreeNode>(v);
       expression?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "Throw(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('throw ');
+    printer.writeExpression(expression);
   }
 }
 
@@ -4230,6 +5302,23 @@ class ListLiteral extends Expression {
     typeArgument = v.visitDartType(typeArgument);
     transformList(expressions, v, this);
   }
+
+  @override
+  String toString() {
+    return "ListLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (isConst) {
+      printer.write('const ');
+    }
+    printer.write('<');
+    printer.writeType(typeArgument);
+    printer.write('>[');
+    printer.writeExpressions(expressions);
+    printer.write(']');
+  }
 }
 
 class SetLiteral extends Expression {
@@ -4259,6 +5348,23 @@ class SetLiteral extends Expression {
   transformChildren(Transformer v) {
     typeArgument = v.visitDartType(typeArgument);
     transformList(expressions, v, this);
+  }
+
+  @override
+  String toString() {
+    return "SetLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (isConst) {
+      printer.write('const ');
+    }
+    printer.write('<');
+    printer.writeType(typeArgument);
+    printer.write('>{');
+    printer.writeExpressions(expressions);
+    printer.write('}');
   }
 }
 
@@ -4297,6 +5403,30 @@ class MapLiteral extends Expression {
     valueType = v.visitDartType(valueType);
     transformList(entries, v, this);
   }
+
+  @override
+  String toString() {
+    return "MapLiteral(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (isConst) {
+      printer.write('const ');
+    }
+    printer.write('<');
+    printer.writeType(keyType);
+    printer.write(', ');
+    printer.writeType(valueType);
+    printer.write('>{');
+    for (int index = 0; index < entries.length; index++) {
+      if (index > 0) {
+        printer.write(', ');
+      }
+      printer.writeMapEntry(entries[index]);
+    }
+    printer.write('}');
+  }
 }
 
 class MapEntry extends TreeNode {
@@ -4325,6 +5455,23 @@ class MapEntry extends TreeNode {
       value?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "MapEntry(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    toTextInternal(printer);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(key);
+    printer.write(': ');
+    printer.writeExpression(value);
+  }
 }
 
 /// Expression of form `await x`.
@@ -4336,7 +5483,7 @@ class AwaitExpression extends Expression {
   }
 
   DartType getStaticType(StaticTypeContext context) {
-    return context.typeEnvironment.unfutureType(operand.getStaticType(context));
+    return context.typeEnvironment.flatten(operand.getStaticType(context));
   }
 
   R accept<R>(ExpressionVisitor<R> v) => v.visitAwaitExpression(this);
@@ -4352,6 +5499,17 @@ class AwaitExpression extends Expression {
       operand = operand.accept<TreeNode>(v);
       operand?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "AwaitExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('await ');
+    printer.writeExpression(operand);
   }
 }
 
@@ -4388,6 +5546,16 @@ class FunctionExpression extends Expression implements LocalFunction {
       function?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "FunctionExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeFunctionNode(function, '');
+  }
 }
 
 class ConstantExpression extends Expression {
@@ -4412,6 +5580,16 @@ class ConstantExpression extends Expression {
   transformChildren(Transformer v) {
     constant = v.visitConstant(constant);
     type = v.visitDartType(type);
+  }
+
+  @override
+  String toString() {
+    return "ConstantExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeConstant(constant);
   }
 }
 
@@ -4446,6 +5624,19 @@ class Let extends Expression {
       body?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "Let(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('let ');
+    printer.writeVariableDeclaration(variable);
+    printer.write(' in ');
+    printer.writeExpression(body);
+  }
 }
 
 class BlockExpression extends Expression {
@@ -4479,6 +5670,19 @@ class BlockExpression extends Expression {
       value?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "BlockExpression(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('block ');
+    printer.writeBlock(body.statements);
+    printer.write(' => ');
+    printer.writeExpression(value);
+  }
 }
 
 /// Attempt to load the library referred to by a deferred import.
@@ -4510,6 +5714,17 @@ class LoadLibrary extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "LoadLibrary(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(import.name);
+    printer.write('.loadLibrary()');
+  }
 }
 
 /// Checks that the given deferred import has been marked as 'loaded'.
@@ -4529,6 +5744,17 @@ class CheckLibraryIsLoaded extends Expression {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "CheckLibraryIsLoaded(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(import.name);
+    printer.write('.checkLibraryIsLoaded()');
+  }
 }
 
 // ------------------------------------------------------------------------
@@ -4538,6 +5764,14 @@ class CheckLibraryIsLoaded extends Expression {
 abstract class Statement extends TreeNode {
   R accept<R>(StatementVisitor<R> v);
   R accept1<R, A>(StatementVisitor1<R, A> v, A arg);
+
+  void toTextInternal(AstPrinter printer);
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeStatement(this);
+    return printer.getText();
+  }
 }
 
 class ExpressionStatement extends Statement {
@@ -4560,6 +5794,17 @@ class ExpressionStatement extends Statement {
       expression = expression.accept<TreeNode>(v);
       expression?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "ExpressionStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeExpression(expression);
+    printer.write(';');
   }
 }
 
@@ -4589,6 +5834,16 @@ class Block extends Statement {
   void addStatement(Statement node) {
     statements.add(node);
     node.parent = this;
+  }
+
+  @override
+  String toString() {
+    return "Block(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeBlock(statements);
   }
 }
 
@@ -4625,6 +5880,17 @@ class AssertBlock extends Statement {
     statements.add(node);
     node.parent = this;
   }
+
+  @override
+  String toString() {
+    return "AssertBlock(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('assert ');
+    printer.writeBlock(statements);
+  }
 }
 
 class EmptyStatement extends Statement {
@@ -4634,6 +5900,16 @@ class EmptyStatement extends Statement {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "EmptyStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(';');
+  }
 }
 
 class AssertStatement extends Statement {
@@ -4675,6 +5951,22 @@ class AssertStatement extends Statement {
       message?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "AssertStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('assert(');
+    printer.writeExpression(condition);
+    if (message != null) {
+      printer.write(', ');
+      printer.writeExpression(message);
+    }
+    printer.write(');');
+  }
 }
 
 /// A target of a [Break] statement.
@@ -4702,6 +5994,19 @@ class LabeledStatement extends Statement {
       body = body.accept<TreeNode>(v);
       body?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "LabeledStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write(printer.getLabelName(this));
+    printer.write(':');
+    printer.newLine();
+    printer.writeStatement(body);
   }
 }
 
@@ -4736,6 +6041,18 @@ class BreakStatement extends Statement {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "BreakStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('break ');
+    printer.write(printer.getLabelName(target));
+    printer.write(';');
+  }
 }
 
 class WhileStatement extends Statement {
@@ -4766,6 +6083,19 @@ class WhileStatement extends Statement {
       body?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "WhileStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('while (');
+    printer.writeExpression(condition);
+    printer.write(') ');
+    printer.writeStatement(body);
+  }
 }
 
 class DoStatement extends Statement {
@@ -4795,6 +6125,20 @@ class DoStatement extends Statement {
       condition = condition.accept<TreeNode>(v);
       condition?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "DoStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('do ');
+    printer.writeStatement(body);
+    printer.write(' while (');
+    printer.writeExpression(condition);
+    printer.write(');');
   }
 }
 
@@ -4833,6 +6177,31 @@ class ForStatement extends Statement {
       body = body.accept<TreeNode>(v);
       body?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "ForStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('for (');
+    for (int index = 0; index < variables.length; index++) {
+      if (index > 0) {
+        printer.write(', ');
+      }
+      printer.writeVariableDeclaration(variables[index],
+          includeModifiersAndType: index == 0);
+    }
+    printer.write('; ');
+    if (condition != null) {
+      printer.writeExpression(condition);
+    }
+    printer.write('; ');
+    printer.writeExpressions(updates);
+    printer.write(') ');
+    printer.writeStatement(body);
   }
 }
 
@@ -4879,6 +6248,22 @@ class ForInStatement extends Statement {
       body?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "ForInStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('for (');
+    printer.writeVariableDeclaration(variable);
+
+    printer.write(' in ');
+    printer.writeExpression(iterable);
+    printer.write(') ');
+    printer.writeStatement(body);
+  }
 }
 
 /// Statement of form `switch (e) { case x: ... }`.
@@ -4909,6 +6294,26 @@ class SwitchStatement extends Statement {
       expression?.parent = this;
     }
     transformList(cases, v, this);
+  }
+
+  @override
+  String toString() {
+    return "SwitchStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('switch (');
+    printer.writeExpression(expression);
+    printer.write(') {');
+    printer.incIndentation();
+    for (SwitchCase switchCase in cases) {
+      printer.newLine();
+      printer.writeSwitchCase(switchCase);
+    }
+    printer.decIndentation();
+    printer.newLine();
+    printer.write('}');
   }
 }
 
@@ -4954,6 +6359,46 @@ class SwitchCase extends TreeNode {
       body?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "SwitchCase(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    toTextInternal(printer);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    for (int index = 0; index < expressions.length; index++) {
+      if (index > 0) {
+        printer.newLine();
+      }
+      printer.write('case ');
+      printer.writeExpression(expressions[index]);
+      printer.write(':');
+    }
+    if (isDefault) {
+      if (expressions.isNotEmpty) {
+        printer.newLine();
+      }
+      printer.write('default:');
+    }
+    printer.incIndentation();
+    Statement block = body;
+    if (block is Block) {
+      for (Statement statement in block.statements) {
+        printer.newLine();
+        printer.writeStatement(statement);
+      }
+    } else {
+      printer.write(' ');
+      printer.writeStatement(body);
+    }
+    printer.decIndentation();
+  }
 }
 
 /// Jump to a case in an enclosing switch.
@@ -4968,6 +6413,18 @@ class ContinueSwitchStatement extends Statement {
 
   visitChildren(Visitor v) {}
   transformChildren(Transformer v) {}
+
+  @override
+  String toString() {
+    return "ContinueSwitchStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('continue ');
+    printer.write(printer.getSwitchCaseName(target));
+    printer.write(';');
+  }
 }
 
 class IfStatement extends Statement {
@@ -5005,6 +6462,23 @@ class IfStatement extends Statement {
       otherwise?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "IfStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('if (');
+    printer.writeExpression(condition);
+    printer.write(') ');
+    printer.writeStatement(then);
+    if (otherwise != null) {
+      printer.write(' else ');
+      printer.writeStatement(otherwise);
+    }
+  }
 }
 
 class ReturnStatement extends Statement {
@@ -5027,6 +6501,21 @@ class ReturnStatement extends Statement {
       expression = expression.accept<TreeNode>(v);
       expression?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "ReturnStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('return');
+    if (expression != null) {
+      printer.write(' ');
+      printer.writeExpression(expression);
+    }
+    printer.write(';');
   }
 }
 
@@ -5055,6 +6544,21 @@ class TryCatch extends Statement {
       body?.parent = this;
     }
     transformList(catches, v, this);
+  }
+
+  @override
+  String toString() {
+    return "TryCatch(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('try ');
+    printer.writeStatement(body);
+    for (Catch catchClause in catches) {
+      printer.write(' ');
+      printer.writeCatch(catchClause);
+    }
   }
 }
 
@@ -5096,6 +6600,56 @@ class Catch extends TreeNode {
       body?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "Catch(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    toTextInternal(printer);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    bool isImplicitType(DartType type) {
+      if (type is DynamicType) {
+        return true;
+      }
+      if (type is InterfaceType &&
+          type.className.node != null &&
+          type.classNode.name == 'Object') {
+        Uri uri = type.classNode.enclosingLibrary?.importUri;
+        return uri?.scheme == 'dart' &&
+            uri?.path == 'core' &&
+            type.nullability == Nullability.nonNullable;
+      }
+      return false;
+    }
+
+    if (exception != null) {
+      if (!isImplicitType(guard)) {
+        printer.write('on ');
+        printer.writeType(guard);
+        printer.write(' ');
+      }
+      printer.write('catch (');
+      printer.writeVariableDeclaration(exception,
+          includeModifiersAndType: false);
+      if (stackTrace != null) {
+        printer.write(', ');
+        printer.writeVariableDeclaration(stackTrace,
+            includeModifiersAndType: false);
+      }
+      printer.write(') ');
+    } else {
+      printer.write('on ');
+      printer.writeType(guard);
+      printer.write(' ');
+    }
+    printer.writeStatement(body);
+  }
 }
 
 class TryFinally extends Statement {
@@ -5125,6 +6679,22 @@ class TryFinally extends Statement {
       finalizer = finalizer.accept<TreeNode>(v);
       finalizer?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "TryFinally(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (body is! TryCatch) {
+      // This is a `try {} catch (e) {} finally {}`. Avoid repeating `try`.
+      printer.write('try ');
+    }
+    printer.writeStatement(body);
+    printer.write(' finally ');
+    printer.writeStatement(finalizer);
   }
 }
 
@@ -5169,6 +6739,22 @@ class YieldStatement extends Statement {
       expression = expression.accept<TreeNode>(v);
       expression?.parent = this;
     }
+  }
+
+  @override
+  String toString() {
+    return "YieldStatement(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('yield');
+    if (isYieldStar) {
+      printer.write('*');
+    }
+    printer.write(' ');
+    printer.writeExpression(expression);
+    printer.write(';');
   }
 }
 
@@ -5369,7 +6955,22 @@ class VariableDeclaration extends Statement {
 
   /// Returns a possibly synthesized name for this variable, consistent with
   /// the names used across all [toString] calls.
-  String toString() => debugVariableDeclarationName(this);
+  String toString() {
+    return "VariableDeclaration(${toStringInternal()})";
+  }
+
+  @override
+  String toStringInternal() {
+    AstPrinter printer = new AstPrinter(defaultAstTextStrategy);
+    printer.writeVariableDeclaration(this, includeInitializer: false);
+    return printer.getText();
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeVariableDeclaration(this);
+    printer.write(';');
+  }
 }
 
 /// Declaration a local function.
@@ -5403,6 +7004,19 @@ class FunctionDeclaration extends Statement implements LocalFunction {
       function?.parent = this;
     }
   }
+
+  @override
+  String toString() {
+    return "FunctionDeclaration(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeFunctionNode(function, printer.getVariableName(variable));
+    if (function.body is ReturnStatement) {
+      printer.write(';');
+    }
+  }
 }
 
 // ------------------------------------------------------------------------
@@ -5419,7 +7033,7 @@ class FunctionDeclaration extends Statement implements LocalFunction {
 ///
 /// The [toString] method returns a human-readable string that includes the
 /// library name for private names; uniqueness is not guaranteed.
-abstract class Name implements Node {
+abstract class Name extends Node {
   final int hashCode;
   final String name;
   Reference get libraryName;
@@ -5456,7 +7070,12 @@ abstract class Name implements Node {
   ///
   /// Note that this adds some nodes to a static map to ensure consistent
   /// naming, but that it thus also leaks memory.
-  String leakingDebugToString() => debugNodeToString(this);
+  String leakingDebugToString() => astToText.debugNodeToString(this);
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeName(this);
+  }
 }
 
 class _PrivateName extends Name {
@@ -5467,7 +7086,9 @@ class _PrivateName extends Name {
       : this.libraryName = libraryName,
         super._internal(_computeHashCode(name, libraryName), name);
 
-  String toString() => library != null ? '$library::$name' : name;
+  String toString() => toStringInternal();
+
+  String toStringInternal() => library != null ? '$library::$name' : name;
 
   Library get library => libraryName.asLibrary;
 
@@ -5486,7 +7107,7 @@ class _PublicName extends Name {
 
   _PublicName(String name) : super._internal(name.hashCode, name);
 
-  String toString() => name;
+  String toString() => toStringInternal();
 }
 
 // ------------------------------------------------------------------------
@@ -5549,6 +7170,24 @@ abstract class DartType extends Node {
   @override
   bool operator ==(Object other);
 
+  /// The nullability declared on the type.
+  ///
+  /// For example, the declared nullability of `FutureOr<int?>` is
+  /// [Nullability.nonNullable], the declared nullability of `dynamic` is
+  /// [Nullability.nullable], the declared nullability of `int*` is
+  /// [Nullability.legacy], the declared nullability of the promoted type `X &
+  /// int` where `X extends Object?`
+  /// is [Nullability.undetermined].
+  Nullability get declaredNullability;
+
+  /// The nullability of the type as the property to contain null.
+  ///
+  /// For example, nullability-as-property of FutureOr<int?> is
+  /// [Nullability.nullable], nullability-as-property of dynamic is
+  /// [Nullability.nullable], nullability-as-property of int* is
+  /// [Nullability.legacy], nullability-as-property of the promoted type `X &
+  /// int` where `X extends Object?`
+  /// is [Nullability.nonNullable].
   Nullability get nullability;
 
   /// If this is a typedef type, repeatedly unfolds its type definition until
@@ -5561,11 +7200,11 @@ abstract class DartType extends Node {
   /// returns the type itself.
   DartType get unaliasOnce => this;
 
-  /// Creates a copy of the type with the given [nullability] if possible.
+  /// Creates a copy of the type with the given [declaredNullability].
   ///
   /// Some types have fixed nullabilities, such as `dynamic`, `invalid-type`,
   /// `void`, or `bottom`.
-  DartType withNullability(Nullability nullability);
+  DartType withDeclaredNullability(Nullability declaredNullability);
 
   /// Checks if the type is potentially nullable.
   ///
@@ -5586,6 +7225,17 @@ abstract class DartType extends Node {
   }
 
   bool equals(Object other, Assumptions assumptions);
+
+  /// Returns a textual representation of the this type.
+  ///
+  /// If [verbose] is `true`, qualified names will include the library name/uri.
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeType(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer);
 }
 
 /// The type arising from invalid type annotations.
@@ -5615,10 +7265,29 @@ class InvalidType extends DartType {
   bool equals(Object other, Assumptions assumptions) => other is InvalidType;
 
   @override
-  Nullability get nullability => throw "InvalidType doesn't have nullability";
+  Nullability get declaredNullability {
+    // TODO(johnniwinther,dmitryas): Consider implementing invalidNullability.
+    return Nullability.legacy;
+  }
 
   @override
-  InvalidType withNullability(Nullability nullability) => this;
+  Nullability get nullability {
+    // TODO(johnniwinther,dmitryas): Consider implementing invalidNullability.
+    return Nullability.legacy;
+  }
+
+  @override
+  InvalidType withDeclaredNullability(Nullability declaredNullability) => this;
+
+  @override
+  String toString() {
+    return "InvalidType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("<invalid>");
+  }
 }
 
 class DynamicType extends DartType {
@@ -5644,10 +7313,23 @@ class DynamicType extends DartType {
   bool equals(Object other, Assumptions assumptions) => other is DynamicType;
 
   @override
+  Nullability get declaredNullability => Nullability.nullable;
+
+  @override
   Nullability get nullability => Nullability.nullable;
 
   @override
-  DynamicType withNullability(Nullability nullability) => this;
+  DynamicType withDeclaredNullability(Nullability declaredNullability) => this;
+
+  @override
+  String toString() {
+    return "DynamicType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("dynamic");
+  }
 }
 
 class VoidType extends DartType {
@@ -5673,17 +7355,33 @@ class VoidType extends DartType {
   bool equals(Object other, Assumptions assumptions) => other is VoidType;
 
   @override
+  Nullability get declaredNullability => Nullability.nullable;
+
+  @override
   Nullability get nullability => Nullability.nullable;
 
   @override
-  VoidType withNullability(Nullability nullability) => this;
+  VoidType withDeclaredNullability(Nullability declaredNullability) => this;
+
+  @override
+  String toString() {
+    return "VoidType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("void");
+  }
 }
 
 class NeverType extends DartType {
   @override
-  final Nullability nullability;
+  final Nullability declaredNullability;
 
-  const NeverType(this.nullability);
+  const NeverType(this.declaredNullability);
+
+  @override
+  Nullability get nullability => declaredNullability;
 
   @override
   int get hashCode {
@@ -5708,8 +7406,21 @@ class NeverType extends DartType {
       other is NeverType && nullability == other.nullability;
 
   @override
-  NeverType withNullability(Nullability nullability) {
-    return this.nullability == nullability ? this : new NeverType(nullability);
+  NeverType withDeclaredNullability(Nullability declaredNullability) {
+    return this.declaredNullability == declaredNullability
+        ? this
+        : new NeverType(declaredNullability);
+  }
+
+  @override
+  String toString() {
+    return "NeverType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("Never");
+    printer.write(nullabilityToString(declaredNullability));
   }
 }
 
@@ -5736,32 +7447,48 @@ class BottomType extends DartType {
   bool equals(Object other, Assumptions assumptions) => other is BottomType;
 
   @override
+  Nullability get declaredNullability => Nullability.nonNullable;
+
+  @override
   Nullability get nullability => Nullability.nonNullable;
 
   @override
-  BottomType withNullability(Nullability nullability) => this;
+  BottomType withDeclaredNullability(Nullability declaredNullability) => this;
+
+  @override
+  String toString() {
+    return "BottomType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("<bottom>");
+  }
 }
 
 class InterfaceType extends DartType {
   Reference className;
 
   @override
-  final Nullability nullability;
+  final Nullability declaredNullability;
 
   final List<DartType> typeArguments;
 
   /// The [typeArguments] list must not be modified after this call. If the
   /// list is omitted, 'dynamic' type arguments are filled in.
-  InterfaceType(Class classNode, Nullability nullability,
+  InterfaceType(Class classNode, Nullability declaredNullability,
       [List<DartType> typeArguments])
-      : this.byReference(getClassReference(classNode), nullability,
+      : this.byReference(getClassReference(classNode), declaredNullability,
             typeArguments ?? _defaultTypeArguments(classNode));
 
   InterfaceType.byReference(
-      this.className, this.nullability, this.typeArguments)
-      : assert(nullability != null);
+      this.className, this.declaredNullability, this.typeArguments)
+      : assert(declaredNullability != null);
 
   Class get classNode => className.asClass;
+
+  @override
+  Nullability get nullability => declaredNullability;
 
   static List<DartType> _defaultTypeArguments(Class classNode) {
     if (classNode.typeParameters.length == 0) {
@@ -5819,10 +7546,23 @@ class InterfaceType extends DartType {
   }
 
   @override
-  InterfaceType withNullability(Nullability nullability) {
-    return nullability == this.nullability
+  InterfaceType withDeclaredNullability(Nullability declaredNullability) {
+    return declaredNullability == this.declaredNullability
         ? this
-        : new InterfaceType.byReference(className, nullability, typeArguments);
+        : new InterfaceType.byReference(
+            className, declaredNullability, typeArguments);
+  }
+
+  @override
+  String toString() {
+    return "InterfaceType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeClassName(className, forType: true);
+    printer.writeTypeArguments(typeArguments);
+    printer.write(nullabilityToString(declaredNullability));
   }
 }
 
@@ -5832,7 +7572,9 @@ class FunctionType extends DartType {
   final int requiredParameterCount;
   final List<DartType> positionalParameters;
   final List<NamedType> namedParameters; // Must be sorted.
-  final Nullability nullability;
+
+  @override
+  final Nullability declaredNullability;
 
   /// The [Typedef] this function type is created for.
   final TypedefType typedefType;
@@ -5840,8 +7582,8 @@ class FunctionType extends DartType {
   final DartType returnType;
   int _hashCode;
 
-  FunctionType(
-      List<DartType> positionalParameters, this.returnType, this.nullability,
+  FunctionType(List<DartType> positionalParameters, this.returnType,
+      this.declaredNullability,
       {this.namedParameters: const <NamedType>[],
       this.typeParameters: const <TypeParameter>[],
       int requiredParameterCount,
@@ -5853,6 +7595,9 @@ class FunctionType extends DartType {
   Reference get typedefReference => typedefType?.typedefReference;
 
   Typedef get typedef => typedefReference?.asTypedef;
+
+  @override
+  Nullability get nullability => declaredNullability;
 
   @override
   R accept<R>(DartTypeVisitor<R> v) => v.visitFunctionType(this);
@@ -5983,16 +7728,57 @@ class FunctionType extends DartType {
   }
 
   @override
-  FunctionType withNullability(Nullability nullability) {
-    if (nullability == this.nullability) return this;
+  FunctionType withDeclaredNullability(Nullability declaredNullability) {
+    if (declaredNullability == this.declaredNullability) return this;
     FunctionType result = FunctionType(
-        positionalParameters, returnType, nullability,
+        positionalParameters, returnType, declaredNullability,
         namedParameters: namedParameters,
         typeParameters: typeParameters,
         requiredParameterCount: requiredParameterCount,
-        typedefType: typedefType?.withNullability(nullability));
+        typedefType: typedefType?.withDeclaredNullability(declaredNullability));
     if (typeParameters.isEmpty) return result;
     return getFreshTypeParameters(typeParameters).applyToFunctionType(result);
+  }
+
+  @override
+  String toString() {
+    return "FunctionType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeType(returnType);
+    printer.write(" Function");
+    printer.writeTypeParameters(typeParameters);
+    printer.write("(");
+    for (int i = 0; i < positionalParameters.length; i++) {
+      if (i > 0) {
+        printer.write(", ");
+      }
+      if (i == requiredParameterCount) {
+        printer.write("[");
+      }
+      printer.writeType(positionalParameters[i]);
+    }
+    if (requiredParameterCount < positionalParameters.length) {
+      printer.write("]");
+    }
+
+    if (namedParameters.isNotEmpty) {
+      if (positionalParameters.isNotEmpty) {
+        printer.write(", ");
+      }
+      printer.write("{");
+      for (int i = 0; i < namedParameters.length; i++) {
+        if (i > 0) {
+          printer.write(", ");
+        }
+        printer.writeNamedType(namedParameters[i]);
+      }
+      printer.write("}");
+    }
+    printer.write(")");
+    printer.write(nullabilityToString(declaredNullability));
   }
 }
 
@@ -6000,7 +7786,7 @@ class FunctionType extends DartType {
 ///
 /// The underlying type can be extracted using [unalias].
 class TypedefType extends DartType {
-  final Nullability nullability;
+  final Nullability declaredNullability;
   final Reference typedefReference;
   final List<DartType> typeArguments;
 
@@ -6010,9 +7796,14 @@ class TypedefType extends DartType {
             typeArguments ?? const <DartType>[]);
 
   TypedefType.byReference(
-      this.typedefReference, this.nullability, this.typeArguments);
+      this.typedefReference, this.declaredNullability, this.typeArguments);
 
   Typedef get typedefNode => typedefReference.asTypedef;
+
+  // TODO(dmitryas): Replace with uniteNullabilities(declaredNullability,
+  // typedefNode.type.nullability).
+  @override
+  Nullability get nullability => declaredNullability;
 
   @override
   R accept<R>(DartTypeVisitor<R> v) => v.visitTypedefType(this);
@@ -6031,7 +7822,7 @@ class TypedefType extends DartType {
   DartType get unaliasOnce {
     DartType result =
         Substitution.fromTypedefType(this).substituteType(typedefNode.type);
-    return result.withNullability(
+    return result.withDeclaredNullability(
         combineNullabilitiesForSubstitution(result.nullability, nullability));
   }
 
@@ -6076,11 +7867,96 @@ class TypedefType extends DartType {
   }
 
   @override
-  TypedefType withNullability(Nullability nullability) {
-    return nullability == this.nullability
+  TypedefType withDeclaredNullability(Nullability declaredNullability) {
+    return declaredNullability == this.declaredNullability
         ? this
         : new TypedefType.byReference(
-            typedefReference, nullability, typeArguments);
+            typedefReference, declaredNullability, typeArguments);
+  }
+
+  @override
+  String toString() {
+    return "TypedefType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeTypedefName(typedefReference);
+    printer.writeTypeArguments(typeArguments);
+    printer.write(nullabilityToString(declaredNullability));
+  }
+}
+
+class FutureOrType extends DartType {
+  final DartType typeArgument;
+
+  final Nullability declaredNullability;
+
+  FutureOrType(this.typeArgument, this.declaredNullability);
+
+  @override
+  Nullability get nullability {
+    return uniteNullabilities(typeArgument.nullability, declaredNullability);
+  }
+
+  @override
+  R accept<R>(DartTypeVisitor<R> v) => v.visitFutureOrType(this);
+
+  @override
+  R accept1<R, A>(DartTypeVisitor1<R, A> v, A arg) {
+    return v.visitFutureOrType(this, arg);
+  }
+
+  @override
+  void visitChildren(Visitor v) {
+    typeArgument.accept(v);
+  }
+
+  @override
+  bool operator ==(Object other) => equals(other, null);
+
+  @override
+  bool equals(Object other, Assumptions assumptions) {
+    if (identical(this, other)) return true;
+    if (other is FutureOrType) {
+      if (declaredNullability != other.declaredNullability) return false;
+      if (!typeArgument.equals(other.typeArgument, assumptions)) {
+        return false;
+      }
+      return true;
+    } else {
+      return false;
+    }
+  }
+
+  @override
+  int get hashCode {
+    int hash = 0x12345678;
+    hash = 0x3fffffff & (hash * 31 + (hash ^ typeArgument.hashCode));
+    int nullabilityHash =
+        (0x33333333 >> declaredNullability.index) ^ 0x33333333;
+    hash = 0x3fffffff & (hash * 31 + (hash ^ nullabilityHash));
+    return hash;
+  }
+
+  @override
+  FutureOrType withDeclaredNullability(Nullability declaredNullability) {
+    return declaredNullability == this.declaredNullability
+        ? this
+        : new FutureOrType(typeArgument, declaredNullability);
+  }
+
+  @override
+  String toString() {
+    return "FutureOrType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write("FutureOr<");
+    printer.writeType(typeArgument);
+    printer.write(">");
+    printer.write(nullabilityToString(declaredNullability));
   }
 }
 
@@ -6120,6 +7996,26 @@ class NamedType extends Node implements Comparable<NamedType> {
   void visitChildren(Visitor v) {
     type.accept(v);
   }
+
+  @override
+  String toString() {
+    return "NamedType(${toStringInternal()})";
+  }
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeNamedType(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    if (isRequired) {
+      printer.write("required ");
+    }
+    printer.write(name);
+    printer.write(': ');
+    printer.writeType(type);
+  }
 }
 
 /// Reference to a type variable.
@@ -6131,17 +8027,12 @@ class NamedType extends Node implements Comparable<NamedType> {
 /// viewed as representing an intersection type between the type-parameter type
 /// and the promoted bound.
 class TypeParameterType extends DartType {
-  /// Nullability of the type-parameter type or of its part of the intersection.
+  /// The declared nullability of a type-parameter type.
   ///
-  /// Declarations of type-parameter types can set the nullability of a
-  /// type-parameter type to [Nullability.nullable] (if the `?` marker is used)
-  /// or [Nullability.legacy] (if the type comes from a library opted out from
-  /// NNBD).  Otherwise, it's defined indirectly via the nullability of the
-  /// bound of [parameter].  In cases when the [TypeParameterType] represents an
-  /// intersection between a type-parameter type and [promotedBound],
-  /// [typeParameterTypeNullability] represents the nullability of the left-hand
-  /// side of the intersection.
-  Nullability typeParameterTypeNullability;
+  /// When a [TypeParameterType] represents an intersection,
+  /// [declaredNullability] is the nullability of the left-hand side.
+  @override
+  Nullability declaredNullability;
 
   TypeParameter parameter;
 
@@ -6151,12 +8042,88 @@ class TypeParameterType extends DartType {
   /// is therefore the same as the bound of [parameter].
   DartType promotedBound;
 
-  TypeParameterType(this.parameter, this.typeParameterTypeNullability,
-      [this.promotedBound]);
+  TypeParameterType.internal(
+      this.parameter, this.declaredNullability, this.promotedBound) {
+    assert(
+        promotedBound == null ||
+            (declaredNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            (declaredNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.undetermined) ||
+            (declaredNullability == Nullability.legacy &&
+                promotedBound.nullability == Nullability.legacy) ||
+            (declaredNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            (declaredNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.nullable) ||
+            (declaredNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.undetermined)
+            // These are observed in real situations:
+            ||
+            // pkg/front_end/test/id_tests/type_promotion_test
+            // replicated in nnbd_mixed/type_parameter_nullability
+            (declaredNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/incremental_hello_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/tool/fasta_perf_test
+            // nnbd/issue42089
+            // replicated in nnbd_mixed/type_parameter_nullability
+            (declaredNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.nullable) ||
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/test/dill_round_trip_test
+            // pkg/front_end/test/compile_dart2js_with_no_sdk_test
+            // pkg/front_end/test/fasta/types/large_app_benchmark_test
+            // pkg/front_end/test/incremental_dart2js_test
+            // pkg/front_end/test/read_dill_from_binary_md_test
+            // pkg/front_end/test/static_types/static_type_test
+            // pkg/front_end/test/split_dill_test
+            // pkg/front_end/tool/incremental_perf_test
+            // pkg/vm/test/kernel_front_end_test
+            // general/promoted_null_aware_access
+            // inference/constructors_infer_from_arguments_factory
+            // inference/infer_types_on_loop_indices_for_each_loop
+            // inference/infer_types_on_loop_indices_for_each_loop_async
+            // replicated in nnbd_mixed/type_parameter_nullability
+            (declaredNullability == Nullability.legacy &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            // pkg/front_end/test/fasta/incremental_hello_test
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/tool/fasta_perf_test
+            // replicated in nnbd_mixed/type_parameter_nullability
+            (declaredNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.undetermined) ||
+            // These are only observed in tests and might be artifacts of the
+            // tests rather than real situations:
+            //
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            (declaredNullability == Nullability.legacy &&
+                promotedBound.nullability == Nullability.nullable) ||
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            (declaredNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.nullable) ||
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            (declaredNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.legacy),
+        "Unexpected nullabilities for $parameter & $promotedBound: "
+        "declaredNullability = $declaredNullability, "
+        "promoted bound nullability = ${promotedBound.nullability}.");
+  }
+
+  TypeParameterType(TypeParameter parameter, Nullability declaredNullability,
+      [DartType promotedBound])
+      : this.internal(parameter, declaredNullability, promotedBound);
 
   /// Creates an intersection type between a type parameter and [promotedBound].
-  TypeParameterType.intersection(
-      this.parameter, this.typeParameterTypeNullability, this.promotedBound);
+  TypeParameterType.intersection(TypeParameter parameter,
+      Nullability declaredNullability, DartType promotedBound)
+      : this.internal(parameter, declaredNullability, promotedBound);
 
   /// Creates a type-parameter type to be used in alpha-renaming.
   ///
@@ -6178,7 +8145,7 @@ class TypeParameterType extends DartType {
   /// the bound of [parameter].
   TypeParameterType.withDefaultNullabilityForLibrary(
       this.parameter, Library library) {
-    typeParameterTypeNullability = library.isNonNullableByDefault
+    declaredNullability = library.isNonNullableByDefault
         ? computeNullabilityFromBound(parameter)
         : Nullability.legacy;
   }
@@ -6266,24 +8233,24 @@ class TypeParameterType extends DartType {
   @override
   Nullability get nullability {
     return getNullability(
-        typeParameterTypeNullability ?? computeNullabilityFromBound(parameter),
+        declaredNullability ?? computeNullabilityFromBound(parameter),
         promotedBound);
   }
 
   /// Gets a new [TypeParameterType] with given [typeParameterTypeNullability].
   ///
-  /// In contrast with other types, [TypeParameterType.withNullability] doesn't
-  /// set the overall nullability of the returned type but sets that of the
-  /// left-hand side of the intersection type.  In case [promotedBound] is null,
-  /// it is an equivalent of setting the overall nullability.
+  /// In contrast with other types, [TypeParameterType.withDeclaredNullability]
+  /// doesn't set the overall nullability of the returned type but sets that of
+  /// the left-hand side of the intersection type.  In case [promotedBound] is
+  /// null, it is an equivalent of setting the overall nullability.
   @override
-  TypeParameterType withNullability(Nullability typeParameterTypeNullability) {
+  TypeParameterType withDeclaredNullability(Nullability declaredNullability) {
+    // TODO(dmitryas): Consider removing the assert.
     assert(promotedBound == null,
         "Can't change the nullability attribute of an intersection type.");
-    return typeParameterTypeNullability == this.typeParameterTypeNullability
+    return declaredNullability == this.declaredNullability
         ? this
-        : new TypeParameterType(
-            parameter, typeParameterTypeNullability, promotedBound);
+        : new TypeParameterType(parameter, declaredNullability, promotedBound);
   }
 
   /// Gets the nullability of a type-parameter type based on the bound.
@@ -6300,6 +8267,27 @@ class TypeParameterType extends DartType {
     if (bound == null) {
       throw new StateError("Can't compute nullability from an absent bound.");
     }
+
+    // If a type parameter's nullability depends on itself, it is deemed 'undetermined'.
+    // Currently, it's possible if the type parameter has a possibly nested FutureOr containing that type parameter.
+    // If there are other ways for such a dependency to exist, they should be checked here.
+    bool nullabilityDependsOnItself = false;
+    {
+      DartType type = typeParameter.bound;
+      while (type is FutureOrType) {
+        type = (type as FutureOrType).typeArgument;
+      }
+      if (type is TypeParameterType && type.parameter == typeParameter) {
+        // Intersection types can't appear in the bound.
+        assert(type.promotedBound == null);
+
+        nullabilityDependsOnItself = true;
+      }
+    }
+    if (nullabilityDependsOnItself) {
+      return Nullability.undetermined;
+    }
+
     Nullability boundNullability =
         bound is InvalidType ? Nullability.undetermined : bound.nullability;
     return boundNullability == Nullability.nullable ||
@@ -6334,16 +8322,80 @@ class TypeParameterType extends DartType {
     //
     // | LHS \ RHS |  !  |  ?  |  *  |  %  |
     // |-----------|-----|-----|-----|-----|
-    // |     !     |  !  | N/A | N/A |  !  |
-    // |     ?     | N/A | N/A | N/A | N/A |
-    // |     *     | N/A | N/A |  *  | N/A |
-    // |     %     |  !  |  %  | N/A |  %  |
+    // |     !     |  !  |  +  | N/A |  !  |
+    // |     ?     | (!) | (?) | N/A | (%) |
+    // |     *     | (*) |  +  |  *  | N/A |
+    // |     %     |  !  |  %  |  +  |  %  |
     //
     // In the table, LHS corresponds to lhsNullability in the code below; RHS
     // corresponds to promotedBound.nullability; !, ?, *, and % correspond to
     // nonNullable, nullable, legacy, and undetermined values of the Nullability
     // enum.
-    //
+
+    assert(
+        (lhsNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            (lhsNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.undetermined) ||
+            (lhsNullability == Nullability.legacy &&
+                promotedBound.nullability == Nullability.legacy) ||
+            (lhsNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            (lhsNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.nullable) ||
+            (lhsNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.undetermined)
+            // Apparently these happens as well:
+            ||
+            // pkg/front_end/test/id_tests/type_promotion_test
+            (lhsNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/incremental_hello_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/tool/fasta_perf_test
+            // nnbd/issue42089
+            (lhsNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.nullable) ||
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/test/dill_round_trip_test
+            // pkg/front_end/test/compile_dart2js_with_no_sdk_test
+            // pkg/front_end/test/fasta/types/large_app_benchmark_test
+            // pkg/front_end/test/incremental_dart2js_test
+            // pkg/front_end/test/read_dill_from_binary_md_test
+            // pkg/front_end/test/static_types/static_type_test
+            // pkg/front_end/test/split_dill_test
+            // pkg/front_end/tool/incremental_perf_test
+            // pkg/vm/test/kernel_front_end_test
+            // general/promoted_null_aware_access
+            // inference/constructors_infer_from_arguments_factory
+            // inference/infer_types_on_loop_indices_for_each_loop
+            // inference/infer_types_on_loop_indices_for_each_loop_async
+            (lhsNullability == Nullability.legacy &&
+                promotedBound.nullability == Nullability.nonNullable) ||
+            // pkg/front_end/test/fasta/incremental_hello_test
+            // pkg/front_end/test/explicit_creation_test
+            // pkg/front_end/tool/fasta_perf_test
+            // pkg/front_end/test/fasta/incremental_hello_test
+            (lhsNullability == Nullability.nullable &&
+                promotedBound.nullability == Nullability.undetermined) ||
+
+            // This is created but never observed.
+            // (lhsNullability == Nullability.legacy &&
+            //     promotedBound.nullability == Nullability.nullable) ||
+
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            (lhsNullability == Nullability.undetermined &&
+                promotedBound.nullability == Nullability.legacy) ||
+            // pkg/front_end/test/fasta/types/kernel_type_parser_test
+            // pkg/front_end/test/fasta/types/fasta_types_test
+            (lhsNullability == Nullability.nonNullable &&
+                promotedBound.nullability == Nullability.nullable),
+        "Unexpected nullabilities for: LHS nullability = $lhsNullability, "
+        "RHS nullability = ${promotedBound.nullability}.");
+
     // Whenever there's N/A in the table, it means that the corresponding
     // combination of the LHS and RHS nullability is not possible when compiling
     // from Dart source files, so we can define it to be whatever is faster and
@@ -6355,9 +8407,29 @@ class TypeParameterType extends DartType {
     // | LHS \ RHS |  !  |  ?  |  *  |  %  |
     // |-----------|-----|-----|-----|-----|
     // |     !     |  !  |  !  |  !  |  !  |
-    // |     ?     |  !  |  *  |  *  |  %  |
-    // |     *     |  !  |  *  |  *  |  %  |
+    // |     ?     | (!) | (?) |  *  | (%) |
+    // |     *     | (*) |  *  |  *  |  %  |
     // |     %     |  !  |  %  |  %  |  %  |
+
+    if (lhsNullability == Nullability.nullable &&
+        promotedBound.nullability == Nullability.nonNullable) {
+      return Nullability.nonNullable;
+    }
+
+    if (lhsNullability == Nullability.nullable &&
+        promotedBound.nullability == Nullability.nullable) {
+      return Nullability.nullable;
+    }
+
+    if (lhsNullability == Nullability.legacy &&
+        promotedBound.nullability == Nullability.nonNullable) {
+      return Nullability.legacy;
+    }
+
+    if (lhsNullability == Nullability.nullable &&
+        promotedBound.nullability == Nullability.undetermined) {
+      return Nullability.undetermined;
+    }
 
     // Intersection with a non-nullable type always yields a non-nullable type,
     // as it's the most restrictive kind of types.
@@ -6389,6 +8461,27 @@ class TypeParameterType extends DartType {
     }
 
     return Nullability.legacy;
+  }
+
+  @override
+  String toString() {
+    return "TypeParameterType(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    if (promotedBound != null) {
+      printer.write('(');
+      printer.writeTypeParameterName(parameter);
+      printer.write(nullabilityToString(declaredNullability));
+      printer.write(" & ");
+      printer.writeType(promotedBound);
+      printer.write(')');
+      printer.write(nullabilityToString(nullability));
+    } else {
+      printer.writeTypeParameterName(parameter);
+      printer.write(nullabilityToString(declaredNullability));
+    }
   }
 }
 
@@ -6591,7 +8684,14 @@ class TypeParameter extends TreeNode {
 
   /// Returns a possibly synthesized name for this type parameter, consistent
   /// with the names used across all [toString] calls.
-  String toString() => debugQualifiedTypeParameterName(this);
+  String toString() {
+    return "TypeParameter(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeTypeParameterName(this);
+  }
 
   bool get isFunctionTypeTypeParameter => parent == null;
 }
@@ -6639,6 +8739,17 @@ class Supertype extends Node {
     }
     return hash;
   }
+
+  @override
+  String toString() {
+    return "Supertype(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeClassName(className, forType: true);
+    printer.writeTypeArguments(typeArguments);
+  }
 }
 
 // ------------------------------------------------------------------------
@@ -6665,6 +8776,19 @@ abstract class Constant extends Node {
   int get hashCode;
   bool operator ==(Object other);
 
+  String toString() => throw '$runtimeType';
+
+  /// Returns a textual representation of the this constant.
+  ///
+  /// If [verbose] is `true`, qualified names will include the library name/uri.
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeConstant(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer);
+
   /// Gets the type of this constant.
   DartType getType(StaticTypeContext context);
 
@@ -6678,12 +8802,15 @@ abstract class PrimitiveConstant<T> extends Constant {
 
   PrimitiveConstant(this.value);
 
-  String toString() => '$value';
-
   int get hashCode => value.hashCode;
 
   bool operator ==(Object other) =>
       other is PrimitiveConstant<T> && other.value == value;
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('$value');
+  }
 }
 
 class NullConstant extends PrimitiveConstant<Null> {
@@ -6695,6 +8822,9 @@ class NullConstant extends PrimitiveConstant<Null> {
 
   DartType getType(StaticTypeContext context) =>
       context.typeEnvironment.nullType;
+
+  @override
+  String toString() => 'NullConstant(${toStringInternal()})';
 }
 
 class BoolConstant extends PrimitiveConstant<bool> {
@@ -6706,6 +8836,9 @@ class BoolConstant extends PrimitiveConstant<bool> {
 
   DartType getType(StaticTypeContext context) =>
       context.typeEnvironment.coreTypes.boolRawType(context.nonNullable);
+
+  @override
+  String toString() => 'BoolConstant(${toStringInternal()})';
 }
 
 /// An integer constant on a non-JS target.
@@ -6718,6 +8851,9 @@ class IntConstant extends PrimitiveConstant<int> {
 
   DartType getType(StaticTypeContext context) =>
       context.typeEnvironment.coreTypes.intRawType(context.nonNullable);
+
+  @override
+  String toString() => 'IntConstant(${toStringInternal()})';
 }
 
 /// A double constant on a non-JS target or any numeric constant on a JS target.
@@ -6734,6 +8870,9 @@ class DoubleConstant extends PrimitiveConstant<double> {
 
   DartType getType(StaticTypeContext context) =>
       context.typeEnvironment.coreTypes.doubleRawType(context.nonNullable);
+
+  @override
+  String toString() => 'DoubleConstant(${toStringInternal()})';
 }
 
 class StringConstant extends PrimitiveConstant<String> {
@@ -6760,11 +8899,8 @@ class SymbolConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitSymbolConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitSymbolConstantReference(this);
 
-  String toString() {
-    return libraryReference != null
-        ? '#${libraryReference.asLibrary.importUri}::$name'
-        : '#$name';
-  }
+  @override
+  String toString() => 'StringConstant(${toStringInternal()})';
 
   int get hashCode => _Hash.hash2(name, libraryReference);
 
@@ -6776,6 +8912,16 @@ class SymbolConstant extends Constant {
 
   DartType getType(StaticTypeContext context) =>
       context.typeEnvironment.coreTypes.symbolRawType(context.nonNullable);
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('#');
+    if (printer.includeAuxiliaryProperties && libraryReference != null) {
+      printer.write(libraryNameToString(libraryReference.asLibrary));
+      printer.write('::');
+    }
+    printer.write(name);
+  }
 }
 
 class MapConstant extends Constant {
@@ -6797,7 +8943,24 @@ class MapConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitMapConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitMapConstantReference(this);
 
-  String toString() => '${this.runtimeType}<$keyType, $valueType>($entries)';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('const <');
+    printer.writeType(keyType);
+    printer.write(', ');
+    printer.writeType(valueType);
+    printer.write('>{');
+    for (int i = 0; i < entries.length; i++) {
+      if (i > 0) {
+        printer.write(', ');
+      }
+      printer.writeConstantMapEntry(entries[i]);
+    }
+    printer.write('}');
+  }
+
+  @override
+  String toString() => 'MapConstant(${toStringInternal()})';
 
   int _cachedHashCode;
   int get hashCode {
@@ -6821,12 +8984,29 @@ class ConstantMapEntry {
   final Constant value;
   ConstantMapEntry(this.key, this.value);
 
-  String toString() => '$key: $value';
+  @override
+  String toString() => 'ConstantMapEntry(${toStringInternal()})';
 
+  @override
   int get hashCode => _Hash.hash2(key, value);
 
+  @override
   bool operator ==(Object other) =>
       other is ConstantMapEntry && other.key == key && other.value == value;
+
+  String toStringInternal() => toText(defaultAstTextStrategy);
+
+  String toText(AstTextStrategy strategy) {
+    AstPrinter printer = new AstPrinter(strategy);
+    printer.writeConstantMapEntry(this);
+    return printer.getText();
+  }
+
+  void toTextInternal(AstPrinter printer) {
+    printer.writeConstant(key);
+    printer.write(': ');
+    printer.writeConstant(value);
+  }
 }
 
 class ListConstant extends Constant {
@@ -6845,7 +9025,22 @@ class ListConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitListConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitListConstantReference(this);
 
-  String toString() => '${this.runtimeType}<$typeArgument>($entries)';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('const <');
+    printer.writeType(typeArgument);
+    printer.write('>[');
+    for (int i = 0; i < entries.length; i++) {
+      if (i > 0) {
+        printer.write(', ');
+      }
+      printer.writeConstant(entries[i]);
+    }
+    printer.write(']');
+  }
+
+  @override
+  String toString() => 'ListConstant(${toStringInternal()})';
 
   int _cachedHashCode;
   int get hashCode {
@@ -6879,7 +9074,22 @@ class SetConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitSetConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitSetConstantReference(this);
 
-  String toString() => '${this.runtimeType}<$typeArgument>($entries)';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('const <');
+    printer.writeType(typeArgument);
+    printer.write('>{');
+    for (int i = 0; i < entries.length; i++) {
+      if (i > 0) {
+        printer.write(', ');
+      }
+      printer.writeConstant(entries[i]);
+    }
+    printer.write('}');
+  }
+
+  @override
+  String toString() => 'SetConstant(${toStringInternal()})';
 
   int _cachedHashCode;
   int get hashCode {
@@ -6920,21 +9130,25 @@ class InstanceConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitInstanceConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitInstanceConstantReference(this);
 
-  String toString() {
-    final sb = new StringBuffer();
-    sb.write('${classReference.asClass}');
-    if (!classReference.asClass.typeParameters.isEmpty) {
-      sb.write('<');
-      sb.write(typeArguments.map((type) => type.toString()).join(', '));
-      sb.write('>');
-    }
-    sb.write(' {');
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('const ');
+    printer.writeClassName(classReference);
+    printer.writeTypeArguments(typeArguments);
+    printer.write('{');
+    String comma = '';
     fieldValues.forEach((Reference fieldRef, Constant constant) {
-      sb.write('${fieldRef.asField.name}: $constant, ');
+      printer.write(comma);
+      printer.writeMemberName(fieldRef);
+      printer.write(': ');
+      printer.writeConstant(constant);
+      comma = ', ';
     });
-    sb.write('}');
-    return sb.toString();
+    printer.write('}');
   }
+
+  @override
+  String toString() => 'InstanceConstant(${toStringInternal()})';
 
   int _cachedHashCode;
   int get hashCode {
@@ -6972,9 +9186,14 @@ class PartialInstantiationConstant extends Constant {
   R acceptReference<R>(Visitor<R> v) =>
       v.visitPartialInstantiationConstantReference(this);
 
-  String toString() {
-    return '${runtimeType}(${tearOffConstant.procedure}<${types.join(', ')}>)';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeConstant(tearOffConstant);
+    printer.writeTypeArguments(types);
   }
+
+  @override
+  String toString() => 'PartialInstantiationConstant(${toStringInternal()})';
 
   int get hashCode => _Hash.combineFinish(
       tearOffConstant.hashCode, _Hash.combineListHash(types));
@@ -7014,9 +9233,13 @@ class TearOffConstant extends Constant {
   R accept<R>(ConstantVisitor<R> v) => v.visitTearOffConstant(this);
   R acceptReference<R>(Visitor<R> v) => v.visitTearOffConstantReference(this);
 
-  String toString() {
-    return '${runtimeType}(${procedure})';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeMemberName(procedureReference);
   }
+
+  @override
+  String toString() => 'TearOffConstant(${toStringInternal()})';
 
   int get hashCode => procedureReference.hashCode;
 
@@ -7043,7 +9266,13 @@ class TypeLiteralConstant extends Constant {
   R acceptReference<R>(Visitor<R> v) =>
       v.visitTypeLiteralConstantReference(this);
 
-  String toString() => '${runtimeType}(${type})';
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.writeType(type);
+  }
+
+  @override
+  String toString() => 'TypeLiteralConstant(${toStringInternal()})';
 
   int get hashCode => type.hashCode;
 
@@ -7075,6 +9304,18 @@ class UnevaluatedConstant extends Constant {
 
   @override
   Expression asExpression() => expression;
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    printer.write('unevaluated{');
+    printer.writeExpression(expression);
+    printer.write('}');
+  }
+
+  @override
+  String toString() {
+    return "UnevaluatedConstant(${toStringInternal()})";
+  }
 }
 
 // ------------------------------------------------------------------------
@@ -7104,7 +9345,14 @@ class Component extends TreeNode {
       <String, MetadataRepository<dynamic>>{};
 
   /// Reference to the main method in one of the libraries.
-  Reference mainMethodName;
+  Reference _mainMethodName;
+  Reference get mainMethodName => _mainMethodName;
+  NonNullableByDefaultCompiledMode _mode;
+  NonNullableByDefaultCompiledMode get mode {
+    return _mode ?? NonNullableByDefaultCompiledMode.Disabled;
+  }
+
+  NonNullableByDefaultCompiledMode get modeRaw => _mode;
 
   Component(
       {CanonicalName nameRoot,
@@ -7188,8 +9436,12 @@ class Component extends TreeNode {
 
   Procedure get mainMethod => mainMethodName?.asProcedure;
 
-  void set mainMethod(Procedure main) {
-    mainMethodName = getMemberReference(main);
+  void setMainMethodAndMode(Reference main, bool overwriteMainIfSet,
+      NonNullableByDefaultCompiledMode mode) {
+    if (_mainMethodName == null || overwriteMainIfSet) {
+      _mainMethodName = main;
+    }
+    _mode = mode;
   }
 
   R accept<R>(TreeVisitor<R> v) => v.visitComponent(this);
@@ -7210,8 +9462,27 @@ class Component extends TreeNode {
     return uriToSource[file]?.getLocation(file, offset);
   }
 
+  /// Translates line and column numbers to an offset in the given file.
+  ///
+  /// Returns offset of the line and column in the file, or -1 if the
+  /// source is not available or has no lines.
+  /// Throws [RangeError] if line or calculated offset are out of range.
+  int getOffset(Uri file, int line, int column) {
+    return uriToSource[file]?.getOffset(line, column) ?? -1;
+  }
+
   void addMetadataRepository(MetadataRepository repository) {
     metadata[repository.tag] = repository;
+  }
+
+  @override
+  String toString() {
+    return "Component(${toStringInternal()})";
+  }
+
+  @override
+  void toTextInternal(AstPrinter printer) {
+    // TODO(johnniwinther): Implement this.
   }
 }
 
@@ -7445,7 +9716,7 @@ class Source {
     throw "Internal error";
   }
 
-  /// Translates an offset to line and column numbers in the given file.
+  /// Translates an offset to 1-based line and column numbers in the given file.
   Location getLocation(Uri file, int offset) {
     if (lineStarts == null || lineStarts.isEmpty) {
       return new Location(file, TreeNode.noOffset, TreeNode.noOffset);
@@ -7466,6 +9737,21 @@ class Source {
     int lineNumber = 1 + lineIndex;
     int columnNumber = 1 + offset - lineStart;
     return new Location(file, lineNumber, columnNumber);
+  }
+
+  /// Translates 1-based line and column numbers to an offset in the given file
+  ///
+  /// Returns offset of the line and column in the file, or -1 if the source
+  /// has no lines.
+  /// Throws [RangeError] if line or calculated offset are out of range.
+  int getOffset(int line, int column) {
+    if (lineStarts == null || lineStarts.isEmpty) {
+      return -1;
+    }
+    RangeError.checkValueInInterval(line, 1, lineStarts.length, 'line');
+    var offset = lineStarts[line - 1] + column - 1;
+    RangeError.checkValueInInterval(offset, 0, lineStarts.last, 'offset');
+    return offset;
   }
 }
 
@@ -7720,4 +10006,66 @@ List<DartType> getAsTypeArguments(
         typeParameters[i], library);
   }
   return result;
+}
+
+class Version extends Object {
+  final int major;
+  final int minor;
+
+  const Version(this.major, this.minor)
+      : assert(major != null),
+        assert(minor != null);
+
+  bool operator <(Version other) {
+    if (major < other.major) return true;
+    if (major > other.major) return false;
+
+    // Major is the same.
+    if (minor < other.minor) return true;
+    return false;
+  }
+
+  bool operator <=(Version other) {
+    if (major < other.major) return true;
+    if (major > other.major) return false;
+
+    // Major is the same.
+    if (minor <= other.minor) return true;
+    return false;
+  }
+
+  bool operator >(Version other) {
+    if (major > other.major) return true;
+    if (major < other.major) return false;
+
+    // Major is the same.
+    if (minor > other.minor) return true;
+    return false;
+  }
+
+  bool operator >=(Version other) {
+    if (major > other.major) return true;
+    if (major < other.major) return false;
+
+    // Major is the same.
+    if (minor >= other.minor) return true;
+    return false;
+  }
+
+  @override
+  int get hashCode {
+    return major.hashCode * 13 + minor.hashCode * 17;
+  }
+
+  @override
+  bool operator ==(other) {
+    if (identical(this, other)) return true;
+    if (other is! Version) return false;
+    return major == other.major && minor == other.minor;
+  }
+
+  @override
+  String toString() {
+    return "Version(major=$major, minor=$minor)";
+  }
 }

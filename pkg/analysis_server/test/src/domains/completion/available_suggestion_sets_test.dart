@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'available_suggestions_base.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AvailableSuggestionSetsTest);
   });
@@ -16,7 +16,7 @@ main() {
 
 @reflectiveTest
 class AvailableSuggestionSetsTest extends AvailableSuggestionsBase {
-  test_notifications_whenFileChanges() async {
+  Future<void> test_notifications_whenFileChanges() async {
     var path = convertPath('/home/test/lib/a.dart');
     var uriStr = 'package:test/a.dart';
 
@@ -47,7 +47,7 @@ class B {}
     waitForSetWithUriRemoved(uriStr);
   }
 
-  test_suggestion_class() async {
+  Future<void> test_suggestion_class() async {
     var path = convertPath('/home/test/lib/a.dart');
     var uriStr = 'package:test/a.dart';
 
@@ -75,6 +75,7 @@ class A {
     "flags": 0
   },
   "relevanceTags": [
+    "ElementKind.CLASS",
     "package:test/a.dart::A",
     "A"
   ]
@@ -101,6 +102,7 @@ class A {
   "parameterNames": [],
   "parameterTypes": [],
   "relevanceTags": [
+    "ElementKind.CONSTRUCTOR",
     "package:test/a.dart::A",
     "a"
   ],
@@ -109,7 +111,7 @@ class A {
 ''');
   }
 
-  test_suggestion_enum() async {
+  Future<void> test_suggestion_enum() async {
     var path = convertPath('/home/test/lib/a.dart');
     var uriStr = 'package:test/a.dart';
 
@@ -138,6 +140,7 @@ enum MyEnum {
     "flags": 0
   },
   "relevanceTags": [
+    "ElementKind.ENUM",
     "package:test/a.dart::MyEnum",
     "MyEnum"
   ]
@@ -160,6 +163,8 @@ enum MyEnum {
     "flags": 0
   },
   "relevanceTags": [
+    "ElementKind.ENUM_CONSTANT",
+    "ElementKind.ENUM_CONSTANT+const",
     "package:test/a.dart::MyEnum",
     "aaa"
   ]
@@ -182,6 +187,8 @@ enum MyEnum {
     "flags": 0
   },
   "relevanceTags": [
+    "ElementKind.ENUM_CONSTANT",
+    "ElementKind.ENUM_CONSTANT+const",
     "package:test/a.dart::MyEnum",
     "bbb"
   ]
@@ -189,7 +196,7 @@ enum MyEnum {
 ''');
   }
 
-  test_suggestion_topLevelVariable() async {
+  Future<void> test_suggestion_topLevelVariable() async {
     var path = convertPath('/home/test/lib/a.dart');
     var uriStr = 'package:test/a.dart';
 
@@ -219,6 +226,7 @@ var stringV = 'hi';
     "returnType": ""
   },
   "relevanceTags": [
+    "ElementKind.TOP_LEVEL_VARIABLE",
     "dart:core::bool",
     "boolV"
   ]
@@ -242,6 +250,7 @@ var stringV = 'hi';
     "returnType": ""
   },
   "relevanceTags": [
+    "ElementKind.TOP_LEVEL_VARIABLE",
     "dart:core::int",
     "intV"
   ]
@@ -265,6 +274,7 @@ var stringV = 'hi';
     "returnType": ""
   },
   "relevanceTags": [
+    "ElementKind.TOP_LEVEL_VARIABLE",
     "dart:core::double",
     "doubleV"
   ]
@@ -288,6 +298,7 @@ var stringV = 'hi';
     "returnType": ""
   },
   "relevanceTags": [
+    "ElementKind.TOP_LEVEL_VARIABLE",
     "dart:core::String",
     "stringV"
   ]

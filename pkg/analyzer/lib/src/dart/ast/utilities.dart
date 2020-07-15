@@ -22,49 +22,33 @@ export 'package:analyzer/src/dart/ast/constant_evaluator.dart';
 typedef ExceptionInDelegateHandler = void Function(
     AstNode node, AstVisitor visitor, dynamic exception, StackTrace stackTrace);
 
-/**
- * An AST visitor that will clone any AST structure that it visits. The cloner
- * will only clone the structure, it will not preserve any resolution results or
- * properties associated with the nodes.
- */
+/// An AST visitor that will clone any AST structure that it visits. The cloner
+/// will only clone the structure, it will not preserve any resolution results
+/// or properties associated with the nodes.
 class AstCloner implements AstVisitor<AstNode> {
-  /**
-   * A flag indicating whether tokens should be cloned while cloning an AST
-   * structure.
-   */
+  /// A flag indicating whether tokens should be cloned while cloning an AST
+  /// structure.
   final bool cloneTokens;
 
-  /**
-   * Mapping from original tokes to cloned.
-   */
+  /// Mapping from original tokes to cloned.
   final Map<Token, Token> _clonedTokens = Map<Token, Token>.identity();
 
-  /**
-   * The next original token to clone.
-   */
+  /// The next original token to clone.
   Token _nextToClone;
 
-  /**
-   * The last cloned token.
-   */
+  /// The last cloned token.
   Token _lastCloned;
 
-  /**
-   * The offset of the last cloned token.
-   */
+  /// The offset of the last cloned token.
   int _lastClonedOffset = -1;
 
-  /**
-   * Initialize a newly created AST cloner to optionally clone tokens while
-   * cloning AST nodes if [cloneTokens] is `true`.
-   *
-   * TODO(brianwilkerson) Change this to be a named parameter.
-   */
+  /// Initialize a newly created AST cloner to optionally clone tokens while
+  /// cloning AST nodes if [cloneTokens] is `true`.
+  ///
+  /// TODO(brianwilkerson) Change this to be a named parameter.
   AstCloner([this.cloneTokens = false]);
 
-  /**
-   * Return a clone of the given [node].
-   */
+  /// Return a clone of the given [node].
   E cloneNode<E extends AstNode>(E node) {
     if (node == null) {
       return null;
@@ -72,10 +56,8 @@ class AstCloner implements AstVisitor<AstNode> {
     return node.accept(this) as E;
   }
 
-  /**
-   * Return a list containing cloned versions of the nodes in the given list of
-   * [nodes].
-   */
+  /// Return a list containing cloned versions of the nodes in the given list of
+  /// [nodes].
   List<E> cloneNodeList<E extends AstNode>(List<E> nodes) {
     int count = nodes.length;
     List<E> clonedNodes = <E>[];
@@ -85,9 +67,7 @@ class AstCloner implements AstVisitor<AstNode> {
     return clonedNodes;
   }
 
-  /**
-   * Clone the given [token] if tokens are supposed to be cloned.
-   */
+  /// Clone the given [token] if tokens are supposed to be cloned.
   Token cloneToken(Token token) {
     if (cloneTokens) {
       if (token == null) {
@@ -104,9 +84,7 @@ class AstCloner implements AstVisitor<AstNode> {
     }
   }
 
-  /**
-   * Clone the given [tokens] if tokens are supposed to be cloned.
-   */
+  /// Clone the given [tokens] if tokens are supposed to be cloned.
   List<Token> cloneTokenList(List<Token> tokens) {
     if (cloneTokens) {
       return tokens.map(cloneToken).toList();
@@ -361,8 +339,7 @@ class AstCloner implements AstVisitor<AstNode> {
 
   @override
   DefaultFormalParameter visitDefaultFormalParameter(
-          DefaultFormalParameter node) =>
-      // ignore: deprecated_member_use_from_same_package
+          covariant DefaultFormalParameterImpl node) =>
       astFactory.defaultFormalParameter(cloneNode(node.parameter), node.kind,
           cloneToken(node.separator), cloneNode(node.defaultValue));
 
@@ -681,17 +658,17 @@ class AstCloner implements AstVisitor<AstNode> {
   IndexExpression visitIndexExpression(IndexExpression node) {
     Token period = node.period;
     if (period == null) {
-      return astFactory.indexExpressionForTarget(
-          cloneNode(node.target),
-          cloneToken(node.leftBracket),
-          cloneNode(node.index),
-          cloneToken(node.rightBracket));
+      return astFactory.indexExpressionForTarget2(
+          target: cloneNode(node.target),
+          leftBracket: cloneToken(node.leftBracket),
+          index: cloneNode(node.index),
+          rightBracket: cloneToken(node.rightBracket));
     } else {
-      return astFactory.indexExpressionForCascade(
-          cloneToken(period),
-          cloneToken(node.leftBracket),
-          cloneNode(node.index),
-          cloneToken(node.rightBracket));
+      return astFactory.indexExpressionForCascade2(
+          period: cloneToken(period),
+          leftBracket: cloneToken(node.leftBracket),
+          index: cloneNode(node.index),
+          rightBracket: cloneToken(node.rightBracket));
     }
   }
 
@@ -1076,15 +1053,13 @@ class AstCloner implements AstVisitor<AstNode> {
           cloneNode(node.expression),
           cloneToken(node.semicolon));
 
-  /**
-   * Clone all token starting from the given [token] up to a token that has
-   * offset greater then [stopAfter], and put mapping from originals to clones
-   * into [_clonedTokens].
-   *
-   * We cannot clone tokens as we visit nodes because not every token is a part
-   * of a node, E.g. commas in argument lists are not represented in AST. But
-   * we need to the sequence of tokens that is identical to the original one.
-   */
+  /// Clone all token starting from the given [token] up to a token that has
+  /// offset greater then [stopAfter], and put mapping from originals to clones
+  /// into [_clonedTokens].
+  ///
+  /// We cannot clone tokens as we visit nodes because not every token is a part
+  /// of a node, E.g. commas in argument lists are not represented in AST. But
+  /// we need to the sequence of tokens that is identical to the original one.
   void _cloneTokens(Token token, int stopAfter) {
     if (token == null) {
       return;
@@ -1094,9 +1069,7 @@ class AstCloner implements AstVisitor<AstNode> {
     }
 
     token = nonComment(token);
-    if (_lastCloned == null) {
-      _lastCloned = Token.eof(-1);
-    }
+    _lastCloned ??= Token.eof(-1);
     while (token != null) {
       Token clone = token.copy();
       {
@@ -1123,73 +1096,55 @@ class AstCloner implements AstVisitor<AstNode> {
     }
   }
 
-  /**
-   * Return a clone of the given [node].
-   */
+  /// Return a clone of the given [node].
   static AstNode clone(AstNode node) {
     return node.accept(AstCloner());
   }
 }
 
-/**
- * An AstVisitor that compares the structure of two AstNodes to see whether they
- * are equal.
- */
+/// An AstVisitor that compares the structure of two AstNodes to see whether
+/// they are equal.
 class AstComparator implements AstVisitor<bool> {
-  /**
-   * The AST node with which the node being visited is to be compared. This is
-   * only valid at the beginning of each visit method (until [isEqualNodes] is
-   * invoked).
-   */
+  /// The AST node with which the node being visited is to be compared. This is
+  /// only valid at the beginning of each visit method (until [isEqualNodes] is
+  /// invoked).
   AstNode _other;
 
-  /**
-   * Notify that [first] and second have different length.
-   * This implementation returns `false`. Subclasses can override and throw.
-   */
+  /// Notify that [first] and second have different length.
+  /// This implementation returns `false`. Subclasses can override and throw.
   bool failDifferentLength(List first, List second) {
     return false;
   }
 
-  /**
-   * Check whether the values of the [first] and [second] nodes are [equal].
-   * Subclasses can override to throw.
-   */
+  /// Check whether the values of the [first] and [second] nodes are [equal].
+  /// Subclasses can override to throw.
   bool failIfNotEqual(
       AstNode first, Object firstValue, AstNode second, Object secondValue) {
     return firstValue == secondValue;
   }
 
-  /**
-   * Check whether [second] is null. Subclasses can override to throw.
-   */
+  /// Check whether [second] is null. Subclasses can override to throw.
   bool failIfNotNull(Object first, Object second) {
     return second == null;
   }
 
-  /**
-   * Notify that [first] is not `null` while [second] one is `null`.
-   * This implementation returns `false`. Subclasses can override and throw.
-   */
+  /// Notify that [first] is not `null` while [second] one is `null`.
+  /// This implementation returns `false`. Subclasses can override and throw.
   bool failIsNull(Object first, Object second) {
     return false;
   }
 
-  /**
-   * Notify that [first] and [second] have different types.
-   * This implementation returns `false`. Subclasses can override and throw.
-   */
+  /// Notify that [first] and [second] have different types.
+  /// This implementation returns `false`. Subclasses can override and throw.
   bool failRuntimeType(Object first, Object second) {
     return false;
   }
 
-  /**
-   * Return `true` if the [first] node and the [second] node have the same
-   * structure.
-   *
-   * *Note:* This method is only visible for testing purposes and should not be
-   * used by clients.
-   */
+  /// Return `true` if the [first] node and the [second] node have the same
+  /// structure.
+  ///
+  /// *Note:* This method is only visible for testing purposes and should not be
+  /// used by clients.
   bool isEqualNodes(AstNode first, AstNode second) {
     if (first == null) {
       return failIfNotNull(first, second);
@@ -1202,13 +1157,11 @@ class AstComparator implements AstVisitor<bool> {
     return first.accept(this);
   }
 
-  /**
-   * Return `true` if the [first] token and the [second] token have the same
-   * structure.
-   *
-   * *Note:* This method is only visible for testing purposes and should not be
-   * used by clients.
-   */
+  /// Return `true` if the [first] token and the [second] token have the same
+  /// structure.
+  ///
+  /// *Note:* This method is only visible for testing purposes and should not be
+  /// used by clients.
   bool isEqualTokens(Token first, Token second) {
     if (first == null) {
       return failIfNotNull(first, second);
@@ -1220,10 +1173,8 @@ class AstComparator implements AstVisitor<bool> {
     return isEqualTokensNotNull(first, second);
   }
 
-  /**
-   * Return `true` if the [first] token and the [second] token have the same
-   * structure.  Both [first] and [second] are not `null`.
-   */
+  /// Return `true` if the [first] token and the [second] token have the same
+  /// structure.  Both [first] and [second] are not `null`.
   bool isEqualTokensNotNull(Token first, Token second) =>
       first.offset == second.offset &&
       first.length == second.length &&
@@ -1494,10 +1445,9 @@ class AstComparator implements AstVisitor<bool> {
   }
 
   @override
-  bool visitDefaultFormalParameter(DefaultFormalParameter node) {
-    DefaultFormalParameter other = _other as DefaultFormalParameter;
+  bool visitDefaultFormalParameter(covariant DefaultFormalParameterImpl node) {
+    var other = _other as DefaultFormalParameterImpl;
     return isEqualNodes(node.parameter, other.parameter) &&
-        // ignore: deprecated_member_use_from_same_package
         node.kind == other.kind &&
         isEqualTokens(node.separator, other.separator) &&
         isEqualNodes(node.defaultValue, other.defaultValue);
@@ -2346,10 +2296,8 @@ class AstComparator implements AstVisitor<bool> {
         isEqualTokens(node.semicolon, other.semicolon);
   }
 
-  /**
-   * Return `true` if the [first] and [second] lists of AST nodes have the same
-   * size and corresponding elements are equal.
-   */
+  /// Return `true` if the [first] and [second] lists of AST nodes have the same
+  /// size and corresponding elements are equal.
   bool _isEqualNodeLists(NodeList first, NodeList second) {
     if (first == null) {
       return failIfNotNull(first, second);
@@ -2368,10 +2316,8 @@ class AstComparator implements AstVisitor<bool> {
     return true;
   }
 
-  /**
-   * Return `true` if the [first] and [second] lists of tokens have the same
-   * length and corresponding elements are equal.
-   */
+  /// Return `true` if the [first] and [second] lists of tokens have the same
+  /// length and corresponding elements are equal.
   bool _isEqualTokenLists(List<Token> first, List<Token> second) {
     int length = first.length;
     if (second.length != length) {
@@ -2385,33 +2331,25 @@ class AstComparator implements AstVisitor<bool> {
     return true;
   }
 
-  /**
-   * Return `true` if the [first] and [second] nodes are equal.
-   */
+  /// Return `true` if the [first] and [second] nodes are equal.
   static bool equalNodes(AstNode first, AstNode second) {
     AstComparator comparator = AstComparator();
     return comparator.isEqualNodes(first, second);
   }
 }
 
-/**
- * A recursive AST visitor that is used to run over [Expression]s to determine
- * whether the expression is composed by at least one deferred
- * [PrefixedIdentifier].
- *
- * See [PrefixedIdentifier.isDeferred].
- */
+/// A recursive AST visitor that is used to run over [Expression]s to determine
+/// whether the expression is composed by at least one deferred
+/// [PrefixedIdentifier].
+///
+/// See [PrefixedIdentifier.isDeferred].
 class DeferredLibraryReferenceDetector extends RecursiveAstVisitor<void> {
-  /**
-   * A flag indicating whether an identifier from a deferred library has been
-   * found.
-   */
+  /// A flag indicating whether an identifier from a deferred library has been
+  /// found.
   bool _result = false;
 
-  /**
-   * Return `true` if the visitor found a [PrefixedIdentifier] that returned
-   * `true` to the [PrefixedIdentifier.isDeferred] query.
-   */
+  /// Return `true` if the visitor found a [PrefixedIdentifier] that returned
+  /// `true` to the [PrefixedIdentifier.isDeferred] query.
   bool get result => _result;
 
   @override
@@ -2424,24 +2362,18 @@ class DeferredLibraryReferenceDetector extends RecursiveAstVisitor<void> {
   }
 }
 
-/**
- * A [DelegatingAstVisitor] that will additionally catch all exceptions from the
- * delegates without stopping the visiting. A function must be provided that
- * will be invoked for each such exception.
- *
- * Clients may not extend, implement or mix-in this class.
- */
+/// A [DelegatingAstVisitor] that will additionally catch all exceptions from
+/// the delegates without stopping the visiting. A function must be provided
+/// that will be invoked for each such exception.
+///
+/// Clients may not extend, implement or mix-in this class.
 class ExceptionHandlingDelegatingAstVisitor<T> extends DelegatingAstVisitor<T> {
-  /**
-   * The function that will be executed for each exception that is thrown by one
-   * of the visit methods on the delegate.
-   */
+  /// The function that will be executed for each exception that is thrown by
+  /// one of the visit methods on the delegate.
   final ExceptionInDelegateHandler handler;
 
-  /**
-   * Initialize a newly created visitor to use each of the given delegate
-   * visitors to visit the nodes of an AST structure.
-   */
+  /// Initialize a newly created visitor to use each of the given delegate
+  /// visitors to visit the nodes of an AST structure.
   ExceptionHandlingDelegatingAstVisitor(
       Iterable<AstVisitor<T>> delegates, this.handler)
       : super(delegates) {
@@ -2463,10 +2395,8 @@ class ExceptionHandlingDelegatingAstVisitor<T> extends DelegatingAstVisitor<T> {
     return null;
   }
 
-  /**
-   * A function that can be used with instances of this class to log and then
-   * ignore any exceptions that are thrown by any of the delegates.
-   */
+  /// A function that can be used with instances of this class to log and then
+  /// ignore any exceptions that are thrown by any of the delegates.
   static void logException(
       AstNode node, Object visitor, dynamic exception, StackTrace stackTrace) {
     StringBuffer buffer = StringBuffer();
@@ -2488,49 +2418,35 @@ class ExceptionHandlingDelegatingAstVisitor<T> extends DelegatingAstVisitor<T> {
   }
 }
 
-/**
- * An object used to locate the [AstNode] associated with a source range, given
- * the AST structure built from the source. More specifically, they will return
- * the [AstNode] with the shortest length whose source range completely
- * encompasses the specified range.
- */
+/// An object used to locate the [AstNode] associated with a source range, given
+/// the AST structure built from the source. More specifically, they will return
+/// the [AstNode] with the shortest length whose source range completely
+/// encompasses the specified range.
 class NodeLocator extends UnifyingAstVisitor<void> {
-  /**
-   * The start offset of the range used to identify the node.
-   */
+  /// The start offset of the range used to identify the node.
   final int _startOffset;
 
-  /**
-   * The end offset of the range used to identify the node.
-   */
+  /// The end offset of the range used to identify the node.
   final int _endOffset;
 
-  /**
-   * The element that was found that corresponds to the given source range, or
-   * `null` if there is no such element.
-   */
+  /// The element that was found that corresponds to the given source range, or
+  /// `null` if there is no such element.
   AstNode _foundNode;
 
-  /**
-   * Initialize a newly created locator to locate an [AstNode] by locating the
-   * node within an AST structure that corresponds to the given range of
-   * characters (between the [startOffset] and [endOffset] in the source.
-   */
+  /// Initialize a newly created locator to locate an [AstNode] by locating the
+  /// node within an AST structure that corresponds to the given range of
+  /// characters (between the [startOffset] and [endOffset] in the source.
   NodeLocator(int startOffset, [int endOffset])
       : this._startOffset = startOffset,
         this._endOffset = endOffset ?? startOffset;
 
-  /**
-   * Return the node that was found that corresponds to the given source range
-   * or `null` if there is no such node.
-   */
+  /// Return the node that was found that corresponds to the given source range
+  /// or `null` if there is no such node.
   AstNode get foundNode => _foundNode;
 
-  /**
-   * Search within the given AST [node] for an identifier representing an
-   * element in the specified source range. Return the element that was found,
-   * or `null` if no element was found.
-   */
+  /// Search within the given AST [node] for an identifier representing an
+  /// element in the specified source range. Return the element that was found,
+  /// or `null` if no element was found.
   AstNode searchWithin(AstNode node) {
     if (node == null) {
       return null;
@@ -2595,11 +2511,9 @@ class NodeLocator extends UnifyingAstVisitor<void> {
   }
 }
 
-/**
- * An object used to locate the [AstNode] associated with a source range.
- * More specifically, they will return the deepest [AstNode] which completely
- * encompasses the specified range.
- */
+/// An object used to locate the [AstNode] associated with a source range.
+/// More specifically, they will return the deepest [AstNode] which completely
+/// encompasses the specified range.
 class NodeLocator2 extends UnifyingAstVisitor<void> {
   /// The inclusive start offset of the range used to identify the node.
   final int _startOffset;
@@ -2607,26 +2521,20 @@ class NodeLocator2 extends UnifyingAstVisitor<void> {
   /// The inclusive end offset of the range used to identify the node.
   final int _endOffset;
 
-  /**
-   * The found node or `null` if there is no such node.
-   */
+  /// The found node or `null` if there is no such node.
   AstNode _foundNode;
 
-  /**
-   * Initialize a newly created locator to locate the deepest [AstNode] for
-   * which `node.offset <= [startOffset]` and `[endOffset] < node.end`.
-   *
-   * If [endOffset] is not provided, then it is considered the same as the
-   * given [startOffset].
-   */
+  /// Initialize a newly created locator to locate the deepest [AstNode] for
+  /// which `node.offset <= [startOffset]` and `[endOffset] < node.end`.
+  ///
+  /// If [endOffset] is not provided, then it is considered the same as the
+  /// given [startOffset].
   NodeLocator2(int startOffset, [int endOffset])
       : this._startOffset = startOffset,
         this._endOffset = endOffset ?? startOffset;
 
-  /**
-   * Search within the given AST [node] and return the node that was found,
-   * or `null` if no node was found.
-   */
+  /// Search within the given AST [node] and return the node that was found,
+  /// or `null` if no node was found.
   AstNode searchWithin(AstNode node) {
     if (node == null) {
       return null;
@@ -2635,9 +2543,10 @@ class NodeLocator2 extends UnifyingAstVisitor<void> {
       node.accept(this);
     } catch (exception, stackTrace) {
       // TODO(39284): should this exception be silent?
-      AnalysisEngine.instance.instrumentationService.logException(
-          SilentException(
-              "Unable to locate element at offset ($_startOffset - $_endOffset)",
+      AnalysisEngine.instance.instrumentationService
+          .logException(SilentException(
+              'Unable to locate element at offset '
+              '($_startOffset - $_endOffset)',
               exception,
               stackTrace));
       return null;
@@ -2691,24 +2600,16 @@ class NodeLocator2 extends UnifyingAstVisitor<void> {
   }
 }
 
-/**
- * An object that will replace one child node in an AST node with another node.
- */
+/// An object that will replace one child node in an AST node with another node.
 class NodeReplacer implements AstVisitor<bool> {
-  /**
-   * The node being replaced.
-   */
+  /// The node being replaced.
   final AstNode _oldNode;
 
-  /**
-   * The node that is replacing the old node.
-   */
+  /// The node that is replacing the old node.
   final AstNode _newNode;
 
-  /**
-   * Initialize a newly created node locator to replace the [_oldNode] with the
-   * [_newNode].
-   */
+  /// Initialize a newly created node locator to replace the [_oldNode] with the
+  /// [_newNode].
   NodeReplacer(this._oldNode, this._newNode);
 
   @override
@@ -4046,13 +3947,11 @@ class NodeReplacer implements AstVisitor<bool> {
     return false;
   }
 
-  /**
-   * Replace the [oldNode] with the [newNode] in the AST structure containing
-   * the old node. Return `true` if the replacement was successful.
-   *
-   * Throws an [ArgumentError] if either node is `null`, if the old node does
-   * not have a parent node, or if the AST structure has been corrupted.
-   */
+  /// Replace the [oldNode] with the [newNode] in the AST structure containing
+  /// the old node. Return `true` if the replacement was successful.
+  ///
+  /// Throws an [ArgumentError] if either node is `null`, if the old node does
+  /// not have a parent node, or if the AST structure has been corrupted.
   static bool replace(AstNode oldNode, AstNode newNode) {
     if (oldNode == null || newNode == null) {
       throw ArgumentError("The old and new nodes must be non-null");
@@ -4068,17 +3967,13 @@ class NodeReplacer implements AstVisitor<bool> {
   }
 }
 
-/**
- * An object that copies resolution information from one AST structure to
- * another as long as the structures of the corresponding children of a pair of
- * nodes are the same.
- */
+/// An object that copies resolution information from one AST structure to
+/// another as long as the structures of the corresponding children of a pair of
+/// nodes are the same.
 class ResolutionCopier implements AstVisitor<bool> {
-  /**
-   * The AST node with which the node being visited is to be compared. This is
-   * only valid at the beginning of each visit method (until [isEqualNodes] is
-   * invoked).
-   */
+  /// The AST node with which the node being visited is to be compared. This is
+  /// only valid at the beginning of each visit method (until [isEqualNodes] is
+  /// invoked).
   AstNode _toNode;
 
   @override
@@ -4424,11 +4319,10 @@ class ResolutionCopier implements AstVisitor<bool> {
   }
 
   @override
-  bool visitDefaultFormalParameter(DefaultFormalParameter node) {
-    DefaultFormalParameter toNode = this._toNode as DefaultFormalParameter;
+  bool visitDefaultFormalParameter(covariant DefaultFormalParameterImpl node) {
+    var toNode = this._toNode as DefaultFormalParameterImpl;
     return _and(
         _isEqualNodes(node.parameter, toNode.parameter),
-        // ignore: deprecated_member_use_from_same_package
         node.kind == toNode.kind,
         _isEqualTokens(node.separator, toNode.separator),
         _isEqualNodes(node.defaultValue, toNode.defaultValue));
@@ -4855,7 +4749,6 @@ class ResolutionCopier implements AstVisitor<bool> {
         _isEqualTokens(node.keyword, toNode.keyword),
         _isEqualNodes(node.constructorName, toNode.constructorName),
         _isEqualNodes(node.argumentList, toNode.argumentList))) {
-      toNode.staticElement = node.staticElement;
       toNode.staticType = node.staticType;
       return true;
     }
@@ -5491,9 +5384,7 @@ class ResolutionCopier implements AstVisitor<bool> {
         _isEqualTokens(node.semicolon, toNode.semicolon));
   }
 
-  /**
-   * Return `true` if all of the parameters are `true`.
-   */
+  /// Return `true` if all of the parameters are `true`.
   bool _and(bool b1, bool b2,
       [bool b3 = true,
       bool b4 = true,
@@ -5522,10 +5413,8 @@ class ResolutionCopier implements AstVisitor<bool> {
         b13;
   }
 
-  /**
-   * Return `true` if the [first] and [second] lists of AST nodes have the same
-   * size and corresponding elements are equal.
-   */
+  /// Return `true` if the [first] and [second] lists of AST nodes have the same
+  /// size and corresponding elements are equal.
   bool _isEqualNodeLists(NodeList first, NodeList second) {
     if (first == null) {
       return second == null;
@@ -5545,11 +5434,9 @@ class ResolutionCopier implements AstVisitor<bool> {
     return equal;
   }
 
-  /**
-   * Return `true` if the [fromNode] and [toNode] have the same structure. As a
-   * side-effect, if the nodes do have the same structure, any resolution data
-   * from the first node will be copied to the second node.
-   */
+  /// Return `true` if the [fromNode] and [toNode] have the same structure. As a
+  /// side-effect, if the nodes do have the same structure, any resolution data
+  /// from the first node will be copied to the second node.
   bool _isEqualNodes(AstNode fromNode, AstNode toNode) {
     if (fromNode == null) {
       return toNode == null;
@@ -5578,10 +5465,8 @@ class ResolutionCopier implements AstVisitor<bool> {
     return false;
   }
 
-  /**
-   * Return `true` if the [first] and [second] arrays of tokens have the same
-   * length and corresponding elements are equal.
-   */
+  /// Return `true` if the [first] and [second] arrays of tokens have the same
+  /// length and corresponding elements are equal.
   bool _isEqualTokenLists(List<Token> first, List<Token> second) {
     int length = first.length;
     if (second.length != length) {
@@ -5595,9 +5480,7 @@ class ResolutionCopier implements AstVisitor<bool> {
     return true;
   }
 
-  /**
-   * Return `true` if the [first] and [second] tokens have the same structure.
-   */
+  /// Return `true` if the [first] and [second] tokens have the same structure.
   bool _isEqualTokens(Token first, Token second) {
     if (first == null) {
       return second == null;
@@ -5607,24 +5490,20 @@ class ResolutionCopier implements AstVisitor<bool> {
     return first.lexeme == second.lexeme;
   }
 
-  /**
-   * Copy resolution data from the [fromNode] to the [toNode].
-   */
+  /// Copy resolution data from the [fromNode] to the [toNode].
   static void copyResolutionData(AstNode fromNode, AstNode toNode) {
     ResolutionCopier copier = ResolutionCopier();
     copier._isEqualNodes(fromNode, toNode);
   }
 }
 
-/**
- * Traverse the AST from initial child node to successive parents, building a
- * collection of local variable and parameter names visible to the initial child
- * node. In case of name shadowing, the first name seen is the most specific one
- * so names are not redefined.
- *
- * Completion test code coverage is 95%. The two basic blocks that are not
- * executed cannot be executed. They are included for future reference.
- */
+/// Traverse the AST from initial child node to successive parents, building a
+/// collection of local variable and parameter names visible to the initial
+/// child node. In case of name shadowing, the first name seen is the most
+/// specific one so names are not redefined.
+///
+/// Completion test code coverage is 95%. The two basic blocks that are not
+/// executed cannot be executed. They are included for future reference.
 class ScopedNameFinder extends GeneralizingAstVisitor<void> {
   Declaration _declarationNode;
 
@@ -5760,10 +5639,9 @@ class ScopedNameFinder extends GeneralizingAstVisitor<void> {
     }
   }
 
-  /**
-   * Check the given list of [statements] for any that come before the immediate
-   * child and that define a name that would be visible to the immediate child.
-   */
+  /// Check the given list of [statements] for any that come before the
+  /// immediate child and that define a name that would be visible to the
+  /// immediate child.
   void _checkStatements(List<Statement> statements) {
     for (Statement statement in statements) {
       if (identical(statement, _immediateChild)) {
@@ -5788,10 +5666,8 @@ class ScopedNameFinder extends GeneralizingAstVisitor<void> {
   }
 }
 
-/**
- * A visitor used to write a source representation of a visited AST node (and
- * all of it's children) to a sink.
- */
+/// A visitor used to write a source representation of a visited AST node (and
+/// all of it's children) to a sink.
 @Deprecated('Use ToSourceVisitor')
 class ToSourceVisitor2 extends ToSourceVisitor {
   ToSourceVisitor2(StringSink sink) : super(sink);

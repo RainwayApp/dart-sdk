@@ -14,7 +14,6 @@ import 'package:analysis_server/src/lsp/mapping.dart';
 import 'package:analysis_server/src/protocol_server.dart' show Outline;
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/source/line_info.dart';
-import 'package:analyzer_plugin/protocol/protocol_common.dart' show ElementKind;
 
 // If the client does not provide capabilities.documentSymbol.symbolKind.valueSet
 // then we must never send a kind that's not in this list.
@@ -80,20 +79,16 @@ class DocumentSymbolHandler extends MessageHandler<DocumentSymbolParams,
     LineInfo lineInfo,
     Outline outline,
   ) {
-    final name = outline.element.name != null && outline.element.name != ""
-        ? outline.element.name
-        : (outline.element.kind == ElementKind.EXTENSION
-            ? "<unnamed extension>"
-            : "<unnamed>");
     return DocumentSymbol(
-      name,
-      outline.element.parameters,
-      elementKindToSymbolKind(clientSupportedSymbolKinds, outline.element.kind),
-      outline.element.isDeprecated,
-      toRange(lineInfo, outline.codeOffset, outline.codeLength),
-      toRange(lineInfo, outline.element.location.offset,
+      name: toElementName(outline.element),
+      detail: outline.element.parameters,
+      kind: elementKindToSymbolKind(
+          clientSupportedSymbolKinds, outline.element.kind),
+      deprecated: outline.element.isDeprecated,
+      range: toRange(lineInfo, outline.codeOffset, outline.codeLength),
+      selectionRange: toRange(lineInfo, outline.element.location.offset,
           outline.element.location.length),
-      outline.children
+      children: outline.children
           ?.map((child) =>
               _asDocumentSymbol(clientSupportedSymbolKinds, lineInfo, child))
           ?.toList(),
@@ -108,15 +103,16 @@ class DocumentSymbolHandler extends MessageHandler<DocumentSymbolParams,
     Outline outline,
   ) {
     return SymbolInformation(
-      outline.element.name,
-      elementKindToSymbolKind(clientSupportedSymbolKinds, outline.element.kind),
-      outline.element.isDeprecated,
-      Location(
-        documentUri,
-        toRange(lineInfo, outline.element.location.offset,
+      name: toElementName(outline.element),
+      kind: elementKindToSymbolKind(
+          clientSupportedSymbolKinds, outline.element.kind),
+      deprecated: outline.element.isDeprecated,
+      location: Location(
+        uri: documentUri,
+        range: toRange(lineInfo, outline.element.location.offset,
             outline.element.location.length),
       ),
-      containerName,
+      containerName: containerName,
     );
   }
 
@@ -147,7 +143,7 @@ class DocumentSymbolHandler extends MessageHandler<DocumentSymbolParams,
 
       // Adds a symbol and it's children recursively, supplying the parent
       // name as required by SymbolInformation.
-      addSymbol(Outline outline, {String parentName}) {
+      void addSymbol(Outline outline, {String parentName}) {
         allSymbols.add(_asSymbolInformation(
           parentName,
           clientSupportedSymbolKinds,

@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'assist_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(FlutterWrapColumnTest);
   });
@@ -19,7 +19,7 @@ class FlutterWrapColumnTest extends AssistProcessorTest {
   @override
   AssistKind get kind => DartAssistKind.FLUTTER_WRAP_COLUMN;
 
-  test_controlFlowCollections_if() async {
+  Future<void> test_controlFlowCollections_if() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/widgets.dart';
@@ -42,7 +42,7 @@ Widget build(bool b) {
     children: [
       Text('aaa'),
       if (b) Column(
-        children: <Widget>[
+        children: [
           Text('bbb'),
         ],
       ),
@@ -53,7 +53,7 @@ Widget build(bool b) {
 ''');
   }
 
-  test_coveredByWidget() async {
+  Future<void> test_coveredByWidget() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/widgets.dart';
@@ -73,7 +73,7 @@ class FakeFlutter {
   main() {
     return Container(
       child: Column(
-        children: <Widget>[
+        children: [
           Text('aaa'),
         ],
       ),
@@ -83,7 +83,7 @@ class FakeFlutter {
 ''');
   }
 
-  test_coversWidgets() async {
+  Future<void> test_coversWidgets() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/widgets.dart';
@@ -109,13 +109,43 @@ class FakeFlutter {
     return Row(children: [
       Text('aaa'),
       Column(
-        children: <Widget>[
+        children: [
           Text('bbb'),
           Text('ccc'),
         ],
       ),
       Text('ddd'),
     ]);
+  }
+}
+''');
+  }
+
+  Future<void> test_endOfWidgetName() async {
+    addFlutterPackage();
+    await resolveTestUnit('''
+import 'package:flutter/widgets.dart';
+
+class FakeFlutter {
+  main() {
+    return Container(
+      child: Text/*caret*/('aaa'),
+    );
+  }
+}
+''');
+    await assertHasAssist('''
+import 'package:flutter/widgets.dart';
+
+class FakeFlutter {
+  main() {
+    return Container(
+      child: Column(
+        children: [
+          Text('aaa'),
+        ],
+      ),
+    );
   }
 }
 ''');

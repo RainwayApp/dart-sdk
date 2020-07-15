@@ -14,15 +14,13 @@ import 'package:protobuf/protobuf.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
-main() {
+void main() {
   defineReflectiveTests(WorkerLoopTest);
 }
 
 typedef _TestWorkerLoopAnalyze = void Function(CommandLineOptions options);
 
-/**
- * [AnalyzerWorkerLoop] for testing.
- */
+/// [AnalyzerWorkerLoop] for testing.
 class TestAnalyzerWorkerLoop extends AnalyzerWorkerLoop {
   final _TestWorkerLoopAnalyze _analyze;
 
@@ -49,7 +47,7 @@ class WorkerLoopTest {
 
   void setUp() {}
 
-  test_run() async {
+  Future<void> test_run() async {
     var request = WorkRequest();
     request.arguments.addAll([
       '--build-summary-input=/tmp/1.sum',
@@ -88,7 +86,7 @@ class WorkerLoopTest {
     expect(stdoutStream.writes[0], _serializeProto(response));
   }
 
-  test_run_invalidOptions() async {
+  Future<void> test_run_invalidOptions() async {
     var request = WorkRequest();
     request.arguments.addAll(['--unknown-option', '/foo.dart', '/bar.dart']);
     stdinStream.addInputBytes(_serializeProto(request));
@@ -101,7 +99,7 @@ class WorkerLoopTest {
     expect(response.output, anything);
   }
 
-  test_run_invalidRequest_noArgumentsInputs() async {
+  Future<void> test_run_invalidRequest_noArgumentsInputs() async {
     stdinStream.addInputBytes(_serializeProto(WorkRequest()));
     stdinStream.close();
 
@@ -113,7 +111,7 @@ class WorkerLoopTest {
     expect(response.output, anything);
   }
 
-  test_run_invalidRequest_randomBytes() async {
+  Future<void> test_run_invalidRequest_randomBytes() async {
     stdinStream.addInputBytes([1, 2, 3]);
     stdinStream.close();
     await TestAnalyzerWorkerLoop(connection).run();
@@ -124,7 +122,7 @@ class WorkerLoopTest {
     expect(response.output, anything);
   }
 
-  test_run_stopAtEOF() async {
+  Future<void> test_run_stopAtEOF() async {
     stdinStream.close();
     await TestAnalyzerWorkerLoop(connection).run();
   }
@@ -134,7 +132,7 @@ class WorkerLoopTest {
     var writer = CodedBufferWriter();
     writer.writeInt32NoTag(buffer.length);
 
-    List<int> result = [];
+    var result = <int>[];
     result.addAll(writer.toBuffer());
     result.addAll(buffer);
     return result;

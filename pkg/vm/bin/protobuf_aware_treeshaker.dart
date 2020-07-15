@@ -30,7 +30,6 @@ import 'dart:typed_data';
 import 'package:args/args.dart';
 import 'package:kernel/kernel.dart';
 import 'package:kernel/binary/ast_to_binary.dart';
-import 'package:kernel/binary/limited_ast_to_binary.dart';
 import 'package:vm/kernel_front_end.dart'
     show runGlobalTransformations, ErrorDetector;
 import 'package:kernel/target/targets.dart' show TargetFlags, getTarget;
@@ -124,6 +123,7 @@ Future main(List<String> args) async {
     const bool useGlobalTypeFlowAnalysis = true;
     const bool enableAsserts = false;
     const bool useProtobufAwareTreeShaker = true;
+    const bool useProtobufAwareTreeShakerV2 = false;
     final nopErrorDetector = ErrorDetector();
     runGlobalTransformations(
       target,
@@ -131,6 +131,7 @@ Future main(List<String> args) async {
       useGlobalTypeFlowAnalysis,
       enableAsserts,
       useProtobufAwareTreeShaker,
+      useProtobufAwareTreeShakerV2,
       nopErrorDetector,
     );
   } else {
@@ -186,11 +187,11 @@ Future writeComponent(Component component, String filename,
   }
 
   final sink = File(filename).openWrite();
-  final printer = LimitedBinaryPrinter(sink, (lib) {
+  final printer = BinaryPrinter(sink, libraryFilter: (lib) {
     if (removeCoreLibs && isCoreLibrary(lib)) return false;
     if (isLibEmpty(lib)) return false;
     return true;
-  }, /*excludeUriToSource=*/ removeSource);
+  }, includeSources: !removeSource);
 
   printer.writeComponentFile(component);
   await sink.close();

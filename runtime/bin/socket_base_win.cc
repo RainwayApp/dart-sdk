@@ -20,7 +20,10 @@
 namespace dart {
 namespace bin {
 
-SocketAddress::SocketAddress(struct sockaddr* sockaddr) {
+SocketAddress::SocketAddress(struct sockaddr* sockaddr,
+                             bool unnamed_unix_socket) {
+  // Unix domain sockets not supported on Win. Remove this assert if enabled.
+  ASSERT(!unnamed_unix_socket);
   ASSERT(INET6_ADDRSTRLEN >= INET_ADDRSTRLEN);
   RawAddr* raw = reinterpret_cast<RawAddr*>(sockaddr);
 
@@ -62,7 +65,15 @@ bool SocketBase::FormatNumericAddress(const RawAddr& addr,
   socklen_t salen = SocketAddress::GetAddrLength(addr);
   DWORD l = len;
   RawAddr& raw = const_cast<RawAddr&>(addr);
-  return WSAAddressToStringA(&raw.addr, salen, NULL, address, &l) != 0;
+  wchar_t* waddress = reinterpret_cast<wchar_t*>(
+      Dart_ScopeAllocate((salen + 1) * sizeof(wchar_t)));
+  intptr_t result = WSAAddressToStringW(&raw.addr, salen, NULL, waddress, &l);
+  if (result != 0) {
+    return true;
+  }
+  WideToUtf8Scope wide_name(waddress);
+  strncpy(address, wide_name.utf8(), l);
+  return false;
 }
 
 intptr_t SocketBase::Available(intptr_t fd) {
@@ -86,6 +97,13 @@ intptr_t SocketBase::RecvFrom(intptr_t fd,
   Handle* handle = reinterpret_cast<Handle*>(fd);
   socklen_t addr_len = sizeof(addr->ss);
   return handle->RecvFrom(buffer, num_bytes, &addr->addr, addr_len);
+}
+
+bool SocketBase::AvailableDatagram(intptr_t fd,
+                                   void* buffer,
+                                   intptr_t num_bytes) {
+  ClientSocket* client_socket = reinterpret_cast<ClientSocket*>(fd);
+  return client_socket->DataReady();
 }
 
 intptr_t SocketBase::Write(intptr_t fd,
@@ -153,7 +171,7 @@ int SocketBase::GetType(intptr_t fd) {
     case FILE_TYPE_DISK:
       return File::kFile;
     default:
-      return GetLastError == NO_ERROR ? File::kOther : -1;
+      return GetLastError() == NO_ERROR ? File::kOther : -1;
   }
 }
 
@@ -244,6 +262,31 @@ bool SocketBase::ParseAddress(int type, const char* address, RawAddr* addr) {
     result = InetPton(AF_INET6, system_address.wide(), &addr->in6.sin6_addr);
   }
   return result == 1;
+}
+
+bool SocketBase::RawAddrToString(RawAddr* addr, char* str) {
+  // According to InetNtopW(), buffer should be large enough for at least 46
+  // characters for IPv6 and 16 for IPv4.
+  COMPILE_ASSERT(INET6_ADDRSTRLEN >= 46);
+  wchar_t tmp_buffer[INET6_ADDRSTRLEN];
+  if (addr->addr.sa_family == AF_INET) {
+    if (InetNtop(AF_INET, &addr->in.sin_addr, tmp_buffer, INET_ADDRSTRLEN) ==
+        NULL) {
+      return false;
+    }
+  } else {
+    ASSERT(addr->addr.sa_family == AF_INET6);
+    if (InetNtop(AF_INET6, &addr->in6.sin6_addr, tmp_buffer,
+                 INET6_ADDRSTRLEN) == NULL) {
+      return false;
+    }
+  }
+  WideToUtf8Scope wide_to_utf8_scope(tmp_buffer);
+  if (wide_to_utf8_scope.length() <= INET6_ADDRSTRLEN) {
+    strncpy(str, wide_to_utf8_scope.utf8(), INET6_ADDRSTRLEN);
+    return true;
+  }
+  return false;
 }
 
 bool SocketBase::ListInterfacesSupported() {

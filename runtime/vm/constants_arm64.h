@@ -10,8 +10,11 @@
 #endif
 
 #include "platform/assert.h"
+#include "platform/globals.h"
 
-namespace arch_arm64 {
+#include "vm/constants_base.h"
+
+namespace dart {
 
 enum Register {
   R0 = 0,
@@ -115,6 +118,7 @@ extern const char* fpu_reg_names[kNumberOfFpuRegisters];
 const Register TMP = R16;  // Used as scratch register by assembler.
 const Register TMP2 = R17;
 const Register PP = R27;  // Caches object pool pointer in generated code.
+const Register DISPATCH_TABLE_REG = R21;  // Dispatch table register.
 const Register CODE_REG = R24;
 const Register FPREG = FP;          // Frame pointer register.
 const Register SPREG = R15;         // Stack pointer register.
@@ -137,6 +141,86 @@ const Register kWriteBarrierSlotReg = R25;
 
 // ABI for allocation stubs.
 const Register kAllocationStubTypeArgumentsReg = R1;
+
+// ABI for instantiation stubs.
+struct InstantiationABI {
+  static const Register kUninstantiatedTypeArgumentsReg = R3;
+  static const Register kInstantiatorTypeArgumentsReg = R2;
+  static const Register kFunctionTypeArgumentsReg = R1;
+  static const Register kResultTypeArgumentsReg = R0;
+  static const Register kResultTypeReg = R0;
+};
+
+// Calling convention when calling TypeTestingStub and SubtypeTestCacheStub.
+struct TypeTestABI {
+  static const Register kInstanceReg = R0;
+  static const Register kDstTypeReg = R8;
+  static const Register kInstantiatorTypeArgumentsReg = R2;
+  static const Register kFunctionTypeArgumentsReg = R1;
+  static const Register kSubtypeTestCacheReg = R3;
+
+  static const intptr_t kAbiRegisters =
+      (1 << kInstanceReg) | (1 << kDstTypeReg) |
+      (1 << kInstantiatorTypeArgumentsReg) | (1 << kFunctionTypeArgumentsReg) |
+      (1 << kSubtypeTestCacheReg);
+
+  // For call to InstanceOfStub.
+  static const Register kResultReg = R0;
+};
+
+// Registers used inside the implementation of type testing stubs.
+struct TTSInternalRegs {
+  static const Register kInstanceTypeArgumentsReg = R7;
+  static const Register kScratchReg = R9;
+
+  static const intptr_t kInternalRegisters =
+      (1 << kInstanceTypeArgumentsReg) | (1 << kScratchReg);
+};
+
+// ABI for InitStaticFieldStub.
+struct InitStaticFieldABI {
+  static const Register kFieldReg = R0;
+  static const Register kResultReg = R0;
+};
+
+// ABI for InitInstanceFieldStub.
+struct InitInstanceFieldABI {
+  static const Register kInstanceReg = R1;
+  static const Register kFieldReg = R2;
+  static const Register kResultReg = R0;
+};
+
+// Registers used inside the implementation of InitLateInstanceFieldStub.
+struct InitLateInstanceFieldInternalRegs {
+  static const Register kFunctionReg = R0;
+  static const Register kAddressReg = R3;
+  static const Register kScratchReg = R4;
+};
+
+// ABI for ThrowStub.
+struct ThrowABI {
+  static const Register kExceptionReg = R0;
+};
+
+// ABI for ReThrowStub.
+struct ReThrowABI {
+  static const Register kExceptionReg = R0;
+  static const Register kStackTraceReg = R1;
+};
+
+// ABI for AssertBooleanStub.
+struct AssertBooleanABI {
+  static const Register kObjectReg = R0;
+};
+
+// ABI for RangeErrorStub.
+struct RangeErrorABI {
+  static const Register kLengthReg = R0;
+  static const Register kIndexReg = R1;
+};
+
+// TODO(regis): Add ABIs for type testing stubs and is-type test stubs instead
+// of reusing the constants of the instantiation stubs ABI.
 
 // Masks, sizes, etc.
 const int kXRegSizeInBits = 64;
@@ -178,8 +262,8 @@ const intptr_t kReservedCpuRegisters =
     (1 << SPREG) |  // Dart SP
     (1 << FPREG) | (1 << TMP) | (1 << TMP2) | (1 << PP) | (1 << THR) |
     (1 << LR) | (1 << BARRIER_MASK) | (1 << NULL_REG) | (1 << R31) |  // C++ SP
-    (1 << R18);
-constexpr intptr_t kNumberOfReservedCpuRegisters = 11;
+    (1 << R18) | (1 << DISPATCH_TABLE_REG);
+constexpr intptr_t kNumberOfReservedCpuRegisters = 12;
 // CPU registers available to Dart allocator.
 const RegList kDartAvailableCpuRegs =
     kAllCpuRegistersList & ~kReservedCpuRegisters;
@@ -212,13 +296,32 @@ class CallingConventions {
 
   static constexpr intptr_t kCalleeSaveCpuRegisters = kAbiPreservedCpuRegs;
 
-  // Whether floating-point values should be passed as integers ("softfp" vs
-  // "hardfp").
-  static constexpr bool kAbiSoftFP = false;
+  // Whether larger than wordsize arguments are aligned to even registers.
+  static constexpr AlignmentStrategy kArgumentRegisterAlignment =
+      kAlignedToWordSize;
 
-  // Whether 64-bit arguments must be aligned to an even register or 8-byte
-  // stack address. Not relevant on X64 since the word size is 64-bits already.
-  static constexpr bool kAlignArguments = false;
+  // How stack arguments are aligned.
+#if defined(TARGET_OS_MACOS_IOS)
+  static constexpr AlignmentStrategy kArgumentStackAlignment =
+      kAlignedToValueSize;
+#else
+  static constexpr AlignmentStrategy kArgumentStackAlignment =
+      kAlignedToWordSize;
+#endif
+
+  // How fields in composites are aligned.
+  static constexpr AlignmentStrategy kFieldAlignment = kAlignedToValueSize;
+
+  // Whether 1 or 2 byte-sized arguments or return values are passed extended
+  // to 4 bytes.
+#if defined(TARGET_OS_MACOS_IOS)
+  static constexpr ExtensionStrategy kReturnRegisterExtension = kExtendedTo4;
+  static constexpr ExtensionStrategy kArgumentRegisterExtension = kExtendedTo4;
+#else
+  static constexpr ExtensionStrategy kReturnRegisterExtension = kNotExtended;
+  static constexpr ExtensionStrategy kArgumentRegisterExtension = kNotExtended;
+#endif
+  static constexpr ExtensionStrategy kArgumentStackExtension = kNotExtended;
 
   static constexpr Register kReturnReg = R0;
   static constexpr Register kSecondReturnReg = kNoRegister;
@@ -270,13 +373,26 @@ enum Condition {
   UNSIGNED_LESS_EQUAL = LS,
   UNSIGNED_GREATER = HI,
   UNSIGNED_GREATER_EQUAL = CS,
+  OVERFLOW = VS,
+  NO_OVERFLOW = VC,
 
   kInvalidCondition = 16
 };
 
 static inline Condition InvertCondition(Condition c) {
-  const int32_t i = static_cast<int32_t>(c) ^ 0x1;
-  return static_cast<Condition>(i);
+  COMPILE_ASSERT((EQ ^ NE) == 1);
+  COMPILE_ASSERT((CS ^ CC) == 1);
+  COMPILE_ASSERT((MI ^ PL) == 1);
+  COMPILE_ASSERT((VS ^ VC) == 1);
+  COMPILE_ASSERT((HI ^ LS) == 1);
+  COMPILE_ASSERT((GE ^ LT) == 1);
+  COMPILE_ASSERT((GT ^ LE) == 1);
+  COMPILE_ASSERT((AL ^ NV) == 1);
+  // Although the NV condition is not valid for branches, it is used internally
+  // in the assembler in the implementation of far branches, so we have to
+  // allow AL and NV here. See EmitConditionalBranch.
+  ASSERT(c != kInvalidCondition);
+  return static_cast<Condition>(c ^ 1);
 }
 
 enum Bits {
@@ -468,6 +584,8 @@ enum LoadStoreExclusiveOp {
   LoadStoreExclusiveFixed = B27,
   LDXR = LoadStoreExclusiveFixed | B22,
   STXR = LoadStoreExclusiveFixed,
+  LDAR = LoadStoreExclusiveFixed | B23 | B22 | B15,
+  STLR = LoadStoreExclusiveFixed | B23 | B15,
 };
 
 // C3.3.7-10
@@ -902,9 +1020,9 @@ static inline uint64_t RotateRight(uint64_t value,
                                    uint8_t rotate,
                                    uint8_t width) {
   ASSERT(width <= 64);
-  rotate &= 63;
-  return ((value & ((1ULL << rotate) - 1ULL)) << (width - rotate)) |
-         (value >> rotate);
+  uint8_t right = rotate & 63;
+  uint8_t left = (width - rotate) & 63;
+  return ((value & ((1ULL << right) - 1ULL)) << left) | (value >> right);
 }
 
 static inline uint64_t RepeatBitsAcrossReg(uint8_t reg_size,
@@ -1214,13 +1332,15 @@ class Instr {
   // reference to an instruction is to convert a pointer. There is no way
   // to allocate or create instances of class Instr.
   // Use the At(pc) function to create references to Instr.
-  static Instr* At(::dart::uword pc) { return reinterpret_cast<Instr*>(pc); }
+  static Instr* At(uword pc) { return reinterpret_cast<Instr*>(pc); }
 
  private:
   DISALLOW_ALLOCATION();
   DISALLOW_IMPLICIT_CONSTRUCTORS(Instr);
 };
 
-}  // namespace arch_arm64
+const uword kBreakInstructionFiller = 0xD4200000D4200000L;  // brk #0; brk #0
+
+}  // namespace dart
 
 #endif  // RUNTIME_VM_CONSTANTS_ARM64_H_

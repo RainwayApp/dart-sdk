@@ -97,6 +97,7 @@ class DietListener extends StackListenerImpl {
 
   DeclarationBuilder _currentDeclaration;
   ClassBuilder _currentClass;
+  bool _inRedirectingFactory = false;
 
   bool currentClassIsParserRecovery = false;
 
@@ -116,7 +117,7 @@ class DietListener extends StackListenerImpl {
         uri = library.fileUri,
         memberScope = library.scope,
         enableNative =
-            library.loader.target.backendTarget.enableNative(library.uri),
+            library.loader.target.backendTarget.enableNative(library.importUri),
         stringExpectedAfterNative =
             library.loader.target.backendTarget.nativeExtensionExpectsString;
 
@@ -127,10 +128,7 @@ class DietListener extends StackListenerImpl {
       _currentClass = _currentDeclaration = null;
     } else {
       _currentDeclaration = builder;
-      TypeDeclarationBuilder unaliasedBuilder =
-          builder is TypeAliasBuilder ? builder.unaliasDeclaration : builder;
-      _currentClass =
-          unaliasedBuilder is ClassBuilder ? unaliasedBuilder : null;
+      _currentClass = builder is ClassBuilder ? builder : null;
     }
   }
 
@@ -327,8 +325,15 @@ class DietListener extends StackListenerImpl {
   }
 
   @override
-  void endClassFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
+  void endClassFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
     debugEvent("Fields");
     buildFields(count, beginToken, false);
   }
@@ -359,6 +364,7 @@ class DietListener extends StackListenerImpl {
 
   @override
   void endTopLevelFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -373,6 +379,11 @@ class DietListener extends StackListenerImpl {
   @override
   void handleVoidKeyword(Token token) {
     debugEvent("VoidKeyword");
+  }
+
+  @override
+  void handleVoidKeywordWithTypeArguments(Token token) {
+    debugEvent("VoidKeywordWithTypeArguments");
   }
 
   @override
@@ -442,7 +453,7 @@ class DietListener extends StackListenerImpl {
   }
 
   @override
-  void handleStringJuxtaposition(int literalCount) {
+  void handleStringJuxtaposition(Token startToken, int literalCount) {
     debugEvent("StringJuxtaposition");
   }
 
@@ -590,7 +601,7 @@ class DietListener extends StackListenerImpl {
     if (name is ParserRecovery || currentClassIsParserRecovery) return;
 
     FunctionBuilder builder = lookupConstructor(beginToken, name);
-    if (bodyToken == null || optional("=", bodyToken.endGroup.next)) {
+    if (_inRedirectingFactory) {
       buildRedirectingFactoryMethod(
           bodyToken, builder, MemberKind.Factory, metadata);
     } else {
@@ -625,6 +636,7 @@ class DietListener extends StackListenerImpl {
   void endRedirectingFactoryBody(Token beginToken, Token endToken) {
     debugEvent("RedirectingFactoryBody");
     discard(1); // ConstructorReference.
+    _inRedirectingFactory = true;
   }
 
   @override
@@ -649,6 +661,40 @@ class DietListener extends StackListenerImpl {
   @override
   void endClassMethod(Token getOrSet, Token beginToken, Token beginParam,
       Token beginInitializers, Token endToken) {
+    _endClassMethod(
+        getOrSet, beginToken, beginParam, beginInitializers, endToken, false);
+  }
+
+  @override
+  void endClassConstructor(Token getOrSet, Token beginToken, Token beginParam,
+      Token beginInitializers, Token endToken) {
+    _endClassMethod(
+        getOrSet, beginToken, beginParam, beginInitializers, endToken, true);
+  }
+
+  @override
+  void endMixinMethod(Token getOrSet, Token beginToken, Token beginParam,
+      Token beginInitializers, Token endToken) {
+    _endClassMethod(
+        getOrSet, beginToken, beginParam, beginInitializers, endToken, false);
+  }
+
+  @override
+  void endExtensionMethod(Token getOrSet, Token beginToken, Token beginParam,
+      Token beginInitializers, Token endToken) {
+    _endClassMethod(
+        getOrSet, beginToken, beginParam, beginInitializers, endToken, false);
+  }
+
+  @override
+  void endMixinConstructor(Token getOrSet, Token beginToken, Token beginParam,
+      Token beginInitializers, Token endToken) {
+    _endClassMethod(
+        getOrSet, beginToken, beginParam, beginInitializers, endToken, true);
+  }
+
+  void _endClassMethod(Token getOrSet, Token beginToken, Token beginParam,
+      Token beginInitializers, Token endToken, bool isConstructor) {
     debugEvent("Method");
     // TODO(danrubel): Consider removing the beginParam parameter
     // and using bodyToken, but pushing a NullValue on the stack
@@ -659,8 +705,7 @@ class DietListener extends StackListenerImpl {
     checkEmpty(beginToken.charOffset);
     if (name is ParserRecovery || currentClassIsParserRecovery) return;
     FunctionBuilder builder;
-    if (name is QualifiedName ||
-        (getOrSet == null && name == currentClass?.name)) {
+    if (isConstructor) {
       builder = lookupConstructor(beginToken, name);
     } else {
       builder = lookupBuilder(beginToken, getOrSet, name);
@@ -793,6 +838,7 @@ class DietListener extends StackListenerImpl {
   void endMember() {
     debugEvent("Member");
     checkEmpty(-1);
+    _inRedirectingFactory = false;
   }
 
   @override
@@ -933,6 +979,11 @@ class DietListener extends StackListenerImpl {
       token = parser.parseInitializersOpt(token);
       token = parser.parseAsyncModifierOpt(token);
       AsyncMarker asyncModifier = getAsyncMarker(listener) ?? AsyncMarker.Sync;
+      if (kind == MemberKind.Factory && asyncModifier != AsyncMarker.Sync) {
+        // Factories has to be sync. The parser issued an error.
+        // Recover to sync.
+        asyncModifier = AsyncMarker.Sync;
+      }
       bool isExpression = false;
       bool allowAbstract = asyncModifier == AsyncMarker.Sync;
       parser.parseFunctionBody(token, isExpression, allowAbstract);

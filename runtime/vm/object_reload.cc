@@ -4,6 +4,7 @@
 
 #include "vm/object.h"
 
+#include "platform/unaligned.h"
 #include "vm/code_patcher.h"
 #include "vm/hash_table.h"
 #include "vm/isolate_reload.h"
@@ -73,9 +74,8 @@ void CallSiteResetter::ResetCaches(const Code& code) {
   const int32_t* offsets = code.raw_ptr()->data();
   for (intptr_t i = 0; i < offsets_length; i++) {
     int32_t offset = offsets[i];
-    RawObject** object_ptr =
-        reinterpret_cast<RawObject**>(base_address + offset);
-    RawObject* raw_object = *object_ptr;
+    ObjectPtr* object_ptr = reinterpret_cast<ObjectPtr*>(base_address + offset);
+    ObjectPtr raw_object = LoadUnaligned(object_ptr);
     if (!raw_object->IsHeapObject()) {
       continue;
     }
@@ -127,7 +127,7 @@ void CallSiteResetter::ResetSwitchableCalls(const Code& code) {
   }
   const Function& function = Function::Cast(object_);
 
-  if (function.kind() == RawFunction::kIrregexpFunction) {
+  if (function.kind() == FunctionLayout::kIrregexpFunction) {
     // Regex matchers do not support breakpoints or stepping, and they only call
     // core library functions that cannot change due to reload. As a performance
     // optimization, avoid this matching of ICData to PCs for these functions'
@@ -143,7 +143,7 @@ void CallSiteResetter::ResetSwitchableCalls(const Code& code) {
     // calls.
 #if defined(DEBUG)
     descriptors_ = code.pc_descriptors();
-    PcDescriptors::Iterator iter(descriptors_, RawPcDescriptors::kIcCall);
+    PcDescriptors::Iterator iter(descriptors_, PcDescriptorsLayout::kIcCall);
     while (iter.MoveNext()) {
       FATAL1("%s has IC calls but no ic_data_array\n", object_.ToCString());
     }
@@ -152,7 +152,7 @@ void CallSiteResetter::ResetSwitchableCalls(const Code& code) {
   }
 
   descriptors_ = code.pc_descriptors();
-  PcDescriptors::Iterator iter(descriptors_, RawPcDescriptors::kIcCall);
+  PcDescriptors::Iterator iter(descriptors_, PcDescriptorsLayout::kIcCall);
   while (iter.MoveNext()) {
     uword pc = code.PayloadStart() + iter.PcOffset();
     CodePatcher::GetInstanceCallAt(pc, code, &object_);
@@ -567,7 +567,7 @@ class EnumClassConflict : public ClassReasonForCancelling {
   EnumClassConflict(Zone* zone, const Class& from, const Class& to)
       : ClassReasonForCancelling(zone, from, to) {}
 
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted(
         from_.is_enum_class()
             ? "Enum class cannot be redefined to be a non-enum class: %s"
@@ -581,7 +581,7 @@ class TypedefClassConflict : public ClassReasonForCancelling {
   TypedefClassConflict(Zone* zone, const Class& from, const Class& to)
       : ClassReasonForCancelling(zone, from, to) {}
 
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted(
         from_.IsTypedefClass()
             ? "Typedef class cannot be redefined to be a non-typedef class: %s"
@@ -601,9 +601,33 @@ class EnsureFinalizedError : public ClassReasonForCancelling {
  private:
   const Error& error_;
 
-  RawError* ToError() { return error_.raw(); }
+  ErrorPtr ToError() { return error_.raw(); }
 
-  RawString* ToString() { return String::New(error_.ToErrorCString()); }
+  StringPtr ToString() { return String::New(error_.ToErrorCString()); }
+};
+
+class ConstToNonConstClass : public ClassReasonForCancelling {
+ public:
+  ConstToNonConstClass(Zone* zone, const Class& from, const Class& to)
+      : ClassReasonForCancelling(zone, from, to) {}
+
+ private:
+  StringPtr ToString() {
+    return String::NewFormatted("Const class cannot become non-const: %s",
+                                from_.ToCString());
+  }
+};
+
+class ConstClassFieldRemoved : public ClassReasonForCancelling {
+ public:
+  ConstClassFieldRemoved(Zone* zone, const Class& from, const Class& to)
+      : ClassReasonForCancelling(zone, from, to) {}
+
+ private:
+  StringPtr ToString() {
+    return String::NewFormatted("Const class cannot remove fields: %s",
+                                from_.ToCString());
+  }
 };
 
 class NativeFieldsConflict : public ClassReasonForCancelling {
@@ -612,7 +636,7 @@ class NativeFieldsConflict : public ClassReasonForCancelling {
       : ClassReasonForCancelling(zone, from, to) {}
 
  private:
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted("Number of native fields changed in %s",
                                 from_.ToCString());
   }
@@ -623,7 +647,7 @@ class TypeParametersChanged : public ClassReasonForCancelling {
   TypeParametersChanged(Zone* zone, const Class& from, const Class& to)
       : ClassReasonForCancelling(zone, from, to) {}
 
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted(
         "Limitation: type parameters have changed for %s", from_.ToCString());
   }
@@ -645,7 +669,7 @@ class PreFinalizedConflict : public ClassReasonForCancelling {
       : ClassReasonForCancelling(zone, from, to) {}
 
  private:
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted(
         "Original class ('%s') is prefinalized and replacement class "
         "('%s') is not ",
@@ -659,12 +683,35 @@ class InstanceSizeConflict : public ClassReasonForCancelling {
       : ClassReasonForCancelling(zone, from, to) {}
 
  private:
-  RawString* ToString() {
+  StringPtr ToString() {
     return String::NewFormatted("Instance size mismatch between '%s' (%" Pd
                                 ") and replacement "
                                 "'%s' ( %" Pd ")",
-                                from_.ToCString(), from_.instance_size(),
-                                to_.ToCString(), to_.instance_size());
+                                from_.ToCString(), from_.host_instance_size(),
+                                to_.ToCString(), to_.host_instance_size());
+  }
+};
+
+class UnimplementedDeferredLibrary : public ReasonForCancelling {
+ public:
+  UnimplementedDeferredLibrary(Zone* zone,
+                               const Library& from,
+                               const Library& to,
+                               const String& name)
+      : ReasonForCancelling(zone), from_(from), to_(to), name_(name) {}
+
+ private:
+  const Library& from_;
+  const Library& to_;
+  const String& name_;
+
+  StringPtr ToString() {
+    const String& lib_url = String::Handle(to_.url());
+    from_.ToCString();
+    return String::NewFormatted(
+        "Reloading support for deferred loading has not yet been implemented:"
+        " library '%s' has deferred import '%s'",
+        lib_url.ToCString(), name_.ToCString());
   }
 };
 
@@ -712,6 +759,53 @@ void Class::CheckReload(const Class& replacement,
     TIR_Print("Finalized replacement class for %s\n", ToCString());
   }
 
+  if (is_finalized() && is_const() && (constants() != Array::null()) &&
+      (Array::LengthOf(constants()) > 0)) {
+    // Consts can't become non-consts.
+    if (!replacement.is_const()) {
+      context->group_reload_context()->AddReasonForCancelling(
+          new (context->zone())
+              ConstToNonConstClass(context->zone(), *this, replacement));
+      return;
+    }
+
+    // Consts can't lose fields.
+    bool field_removed = false;
+    const Array& old_fields =
+        Array::Handle(OffsetToFieldMap(true /* original classes */));
+    const Array& new_fields = Array::Handle(replacement.OffsetToFieldMap());
+    if (new_fields.Length() < old_fields.Length()) {
+      field_removed = true;
+    } else {
+      Field& old_field = Field::Handle();
+      Field& new_field = Field::Handle();
+      String& old_name = String::Handle();
+      String& new_name = String::Handle();
+      for (intptr_t i = 0, n = old_fields.Length(); i < n; i++) {
+        old_field ^= old_fields.At(i);
+        new_field ^= new_fields.At(i);
+        if (old_field.IsNull() != new_field.IsNull()) {
+          field_removed = true;
+          break;
+        }
+        if (!old_field.IsNull()) {
+          old_name = old_field.name();
+          new_name = new_field.name();
+          if (!old_name.Equals(new_name)) {
+            field_removed = true;
+            break;
+          }
+        }
+      }
+    }
+    if (field_removed) {
+      context->group_reload_context()->AddReasonForCancelling(
+          new (context->zone())
+              ConstClassFieldRemoved(context->zone(), *this, replacement));
+      return;
+    }
+  }
+
   // Native field count cannot change.
   if (num_native_fields() != replacement.num_native_fields()) {
     context->group_reload_context()->AddReasonForCancelling(
@@ -748,7 +842,9 @@ bool Class::RequiresInstanceMorphing(const Class& replacement) const {
   // Check that we have the same next field offset. This check is not
   // redundant with the one above because the instance OffsetToFieldMap
   // array length is based on the instance size (which may be aligned up).
-  if (next_field_offset() != replacement.next_field_offset()) return true;
+  if (host_next_field_offset() != replacement.host_next_field_offset()) {
+    return true;
+  }
 
   // Verify that field names / offsets match across the entire hierarchy.
   Field& field = Field::Handle();
@@ -775,6 +871,8 @@ bool Class::CanReloadFinalized(const Class& replacement,
   // Make sure the declaration types argument count matches for the two classes.
   // ex. class A<int,B> {} cannot be replace with class A<B> {}.
   auto group_context = context->group_reload_context();
+  auto shared_class_table =
+      group_context->isolate_group()->shared_class_table();
   if (NumTypeArguments() != replacement.NumTypeArguments()) {
     group_context->AddReasonForCancelling(
         new (context->zone())
@@ -784,12 +882,10 @@ bool Class::CanReloadFinalized(const Class& replacement,
   if (RequiresInstanceMorphing(replacement)) {
     ASSERT(id() == replacement.id());
     const classid_t cid = id();
-
     // We unconditionally create an instance morpher. As a side effect of
     // building the morpher, we will mark all new fields as late.
     auto instance_morpher = InstanceMorpher::CreateFromClassDescriptors(
-        context->zone(), context->isolate()->shared_class_table(), *this,
-        replacement);
+        context->zone(), shared_class_table, *this, replacement);
     group_context->EnsureHasInstanceMorpherFor(cid, instance_morpher);
   }
   return true;
@@ -805,7 +901,7 @@ bool Class::CanReloadPreFinalized(const Class& replacement,
     return false;
   }
   // Check the instance sizes are equal.
-  if (instance_size() != replacement.instance_size()) {
+  if (host_instance_size() != replacement.host_instance_size()) {
     context->group_reload_context()->AddReasonForCancelling(
         new (context->zone())
             InstanceSizeConflict(context->zone(), *this, replacement));
@@ -816,7 +912,23 @@ bool Class::CanReloadPreFinalized(const Class& replacement,
 
 void Library::CheckReload(const Library& replacement,
                           IsolateReloadContext* context) const {
-  // Currently no library properties will prevent a reload.
+  // TODO(26878): If the replacement library uses deferred loading,
+  // reject it.  We do not yet support reloading deferred libraries.
+  Object& object = Object::Handle();
+  LibraryPrefix& prefix = LibraryPrefix::Handle();
+  DictionaryIterator it(replacement);
+  while (it.HasNext()) {
+    object = it.GetNext();
+    if (!object.IsLibraryPrefix()) continue;
+    prefix ^= object.raw();
+    if (prefix.is_deferred_load()) {
+      const String& prefix_name = String::Handle(prefix.name());
+      context->group_reload_context()->AddReasonForCancelling(
+          new (context->zone()) UnimplementedDeferredLibrary(
+              context->zone(), *this, replacement, prefix_name));
+      return;
+    }
+  }
 }
 
 void CallSiteResetter::Reset(const ICData& ic) {
@@ -867,7 +979,7 @@ void CallSiteResetter::Reset(const ICData& ic) {
 
     if (rule == ICData::kStatic) {
       ASSERT(old_target_.is_static() ||
-             old_target_.kind() == RawFunction::kConstructor);
+             old_target_.kind() == FunctionLayout::kConstructor);
       // This can be incorrect if the call site was an unqualified invocation.
       new_cls_ = old_target_.Owner();
       new_target_ = new_cls_.LookupFunction(name_);
@@ -895,7 +1007,7 @@ void CallSiteResetter::Reset(const ICData& ic) {
     args_desc_array_ = ic.arguments_descriptor();
     ArgumentsDescriptor args_desc(args_desc_array_);
     if (new_target_.IsNull() ||
-        !new_target_.AreValidArguments(NNBDMode::kLegacyLib, args_desc, NULL)) {
+        !new_target_.AreValidArguments(args_desc, NULL)) {
       // TODO(rmacnak): Patch to a NSME stub.
       VTIR_Print("Cannot rebind static call to %s from %s\n",
                  old_target_.ToCString(),

@@ -12,23 +12,19 @@ import 'package:analyzer/src/dart/resolver/extension_member_resolver.dart';
 import 'package:analyzer/src/dart/resolver/invocation_inference_helper.dart';
 import 'package:analyzer/src/dart/resolver/type_property_resolver.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/element_type_provider.dart';
+import 'package:analyzer/src/error/nullable_dereference_verifier.dart';
 import 'package:analyzer/src/generated/resolver.dart';
-import 'package:analyzer/src/generated/type_system.dart';
 import 'package:meta/meta.dart';
 
 /// Helper for resolving [FunctionExpressionInvocation]s.
 class FunctionExpressionInvocationResolver {
   final ResolverVisitor _resolver;
-  final ElementTypeProvider _elementTypeProvider;
   final TypePropertyResolver _typePropertyResolver;
   final InvocationInferenceHelper _inferenceHelper;
 
   FunctionExpressionInvocationResolver({
     @required ResolverVisitor resolver,
-    @required ElementTypeProvider elementTypeProvider,
   })  : _resolver = resolver,
-        _elementTypeProvider = elementTypeProvider,
         _typePropertyResolver = resolver.typePropertyResolver,
         _inferenceHelper = resolver.inferenceHelper;
 
@@ -36,130 +32,114 @@ class FunctionExpressionInvocationResolver {
 
   ExtensionMemberResolver get _extensionResolver => _resolver.extensionResolver;
 
-  TypeSystemImpl get _typeSystem => _resolver.typeSystem;
+  NullableDereferenceVerifier get _nullableDereferenceVerifier =>
+      _resolver.nullableDereferenceVerifier;
 
   void resolve(FunctionExpressionInvocationImpl node) {
-    var rawType = _resolveCallElement(node);
+    var function = node.function;
 
-    if (rawType == null) {
-      _setExplicitTypeArgumentTypes(node);
-      _resolveArguments(node);
-      node.staticInvokeType = DynamicTypeImpl.instance;
-      node.staticType = DynamicTypeImpl.instance;
+    if (function is ExtensionOverride) {
+      _resolveReceiverExtensionOverride(node, function);
       return;
     }
 
-    var invokeType = _instantiateInvokeType(node, rawType);
+    _nullableDereferenceVerifier.expression(function);
 
-    node.staticInvokeType = invokeType;
+    var receiverType = function.staticType;
+    if (receiverType is FunctionType) {
+      _resolve(node, receiverType);
+      return;
+    }
 
-    var argumentList = node.argumentList;
-    var parameters = ResolverVisitor.resolveArgumentsToParameters(
-      argumentList,
-      invokeType.parameters,
-      _errorReporter.reportErrorForNode,
+    if (receiverType is InterfaceType) {
+      _resolveReceiverInterfaceType(node, function, receiverType);
+      return;
+    }
+
+    if (identical(receiverType, NeverTypeImpl.instance)) {
+      _unresolved(node, NeverTypeImpl.instance);
+      return;
+    }
+
+    _unresolved(node, DynamicTypeImpl.instance);
+  }
+
+  void _resolve(FunctionExpressionInvocationImpl node, FunctionType rawType) {
+    _inferenceHelper.resolveFunctionExpressionInvocation(
+      node: node,
+      rawType: rawType,
     );
-    argumentList.correspondingStaticParameters = parameters;
-
-    _inferenceHelper.inferArgumentTypesForInvocation(node, rawType);
-    _resolveArguments(node);
-
-    _inferenceHelper.inferGenericInvocationExpression(node, rawType);
 
     var returnType = _inferenceHelper.computeInvokeReturnType(
       node.staticInvokeType,
-      isNullAware: false,
     );
     _inferenceHelper.recordStaticType(node, returnType);
-  }
-
-  FunctionType _instantiateInvokeType(
-    FunctionExpressionInvocation node,
-    FunctionType rawType,
-  ) {
-    var typeParameters = rawType.typeFormals;
-
-    var arguments = node.typeArguments?.arguments;
-    if (arguments != null && arguments.length != typeParameters.length) {
-      // TODO(scheglov) The error is suboptimal for this node type.
-      _errorReporter.reportErrorForNode(
-        StaticTypeWarningCode.WRONG_NUMBER_OF_TYPE_ARGUMENTS_METHOD,
-        node,
-        [rawType, typeParameters.length, arguments.length],
-      );
-      // Wrong number of type arguments. Ignore them.
-      arguments = null;
-    }
-
-    if (typeParameters.isEmpty) {
-      return rawType;
-    }
-
-    if (arguments == null) {
-      return _typeSystem.instantiateToBounds(rawType);
-    } else {
-      return rawType.instantiate(arguments.map((n) => n.type).toList());
-    }
   }
 
   void _resolveArguments(FunctionExpressionInvocationImpl node) {
     node.argumentList.accept(_resolver);
   }
 
-  FunctionType _resolveCallElement(FunctionExpressionInvocation node) {
-    Expression function = node.function;
+  void _resolveReceiverExtensionOverride(
+    FunctionExpressionInvocation node,
+    ExtensionOverride function,
+  ) {
+    var result = _extensionResolver.getOverrideMember(
+      function,
+      FunctionElement.CALL_METHOD_NAME,
+    );
+    var callElement = result.getter;
+    node.staticElement = callElement;
 
-    if (function is ExtensionOverride) {
-      var result = _extensionResolver.getOverrideMember(
+    if (callElement == null) {
+      _errorReporter.reportErrorForNode(
+        CompileTimeErrorCode.INVOCATION_OF_EXTENSION_WITHOUT_CALL,
         function,
-        FunctionElement.CALL_METHOD_NAME,
+        [function.extensionName.name],
       );
-      var callElement = result.getter;
-      node.staticElement = callElement;
-
-      if (callElement == null) {
-        _errorReporter.reportErrorForNode(
-          CompileTimeErrorCode.INVOCATION_OF_EXTENSION_WITHOUT_CALL,
-          function,
-          [function.extensionName.name],
-        );
-        return null;
-      }
-
-      if (callElement.isStatic) {
-        _errorReporter.reportErrorForNode(
-          CompileTimeErrorCode.EXTENSION_OVERRIDE_ACCESS_TO_STATIC_MEMBER,
-          node.argumentList,
-        );
-      }
-
-      return _elementTypeProvider.getExecutableType(callElement);
+      return _unresolved(node, DynamicTypeImpl.instance);
     }
 
-    var receiverType = function.staticType;
-    if (receiverType is FunctionType) {
-      return receiverType;
-    }
-
-    if (receiverType is InterfaceType) {
-      var result = _typePropertyResolver.resolve(
-        receiver: function,
-        receiverType: receiverType,
-        name: FunctionElement.CALL_METHOD_NAME,
-        receiverErrorNode: function,
-        nameErrorNode: function,
+    if (callElement.isStatic) {
+      _errorReporter.reportErrorForNode(
+        CompileTimeErrorCode.EXTENSION_OVERRIDE_ACCESS_TO_STATIC_MEMBER,
+        node.argumentList,
       );
-      var callElement = result.getter;
-
-      if (callElement?.kind != ElementKind.METHOD) {
-        return null;
-      }
-
-      node.staticElement = callElement;
-      return _elementTypeProvider.getExecutableType(callElement);
     }
 
-    return null;
+    var rawType = callElement.type;
+    _resolve(node, rawType);
+  }
+
+  void _resolveReceiverInterfaceType(
+    FunctionExpressionInvocationImpl node,
+    Expression function,
+    InterfaceType receiverType,
+  ) {
+    var result = _typePropertyResolver.resolve(
+      receiver: function,
+      receiverType: receiverType,
+      name: FunctionElement.CALL_METHOD_NAME,
+      receiverErrorNode: function,
+      nameErrorNode: function,
+    );
+    var callElement = result.getter;
+
+    if (callElement?.kind != ElementKind.METHOD) {
+      _unresolved(node, DynamicTypeImpl.instance);
+      return;
+    }
+
+    node.staticElement = callElement;
+    var rawType = callElement.type;
+    _resolve(node, rawType);
+  }
+
+  void _unresolved(FunctionExpressionInvocationImpl node, DartType type) {
+    _setExplicitTypeArgumentTypes(node);
+    _resolveArguments(node);
+    node.staticInvokeType = DynamicTypeImpl.instance;
+    node.staticType = type;
   }
 
   /// Inference cannot be done, we still want to fill type argument types.

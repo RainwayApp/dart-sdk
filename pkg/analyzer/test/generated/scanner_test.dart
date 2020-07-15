@@ -5,11 +5,14 @@
 import 'package:_fe_analyzer_shared/src/scanner/error_token.dart';
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/token.dart';
+import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/source/line_info.dart';
 import 'package:analyzer/src/dart/ast/token.dart';
 import 'package:analyzer/src/dart/scanner/reader.dart';
 import 'package:analyzer/src/dart/scanner/scanner.dart';
 import 'package:analyzer/src/generated/source.dart';
+import 'package:analyzer/src/string_source.dart';
+import 'package:analyzer/src/test_utilities/resource_provider_mixin.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -18,6 +21,7 @@ import 'test_support.dart';
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(LineInfoTest);
+    defineReflectiveTests(ScannerTest);
   });
 }
 
@@ -130,7 +134,10 @@ class LineInfoTest {
     String source = "var\r\ni\n=\n1;\n";
     GatheringErrorListener listener = GatheringErrorListener();
     Scanner scanner = Scanner(null, CharSequenceReader(source), listener)
-      ..configureFeatures(featureSet);
+      ..configureFeatures(
+        featureSetForOverriding: featureSet,
+        featureSet: featureSet,
+      );
     var token = scanner.tokenize();
     expect(token.lexeme, 'var');
     var lineStarts = scanner.lineStarts;
@@ -144,7 +151,10 @@ class LineInfoTest {
     String source = '<!-- @Component(';
     GatheringErrorListener listener = GatheringErrorListener();
     Scanner scanner = Scanner(null, CharSequenceReader(source), listener)
-      ..configureFeatures(featureSet);
+      ..configureFeatures(
+        featureSetForOverriding: featureSet,
+        featureSet: featureSet,
+      );
     Token token = scanner.tokenize(reportScannerErrors: false);
     expect(token, TypeMatcher<UnmatchedToken>());
     token = token.next;
@@ -176,17 +186,72 @@ class LineInfoTest {
     GatheringErrorListener listener,
   ) {
     Scanner scanner = Scanner(null, CharSequenceReader(source), listener)
-      ..configureFeatures(featureSet);
+      ..configureFeatures(
+        featureSetForOverriding: featureSet,
+        featureSet: featureSet,
+      );
     Token result = scanner.tokenize();
     listener.setLineInfo(TestSource(), scanner.lineStarts);
     return result;
   }
 }
 
-/**
- * An `ExpectedLocation` encodes information about the expected location of a
- * given offset in source code.
- */
+@reflectiveTest
+class ScannerTest with ResourceProviderMixin {
+  test_featureSet() {
+    var scanner = _createScanner(r'''
+// @dart = 2.0
+''');
+    var defaultFeatureSet = FeatureSet.fromEnableFlags([]);
+    expect(defaultFeatureSet.isEnabled(Feature.extension_methods), isTrue);
+
+    scanner.configureFeatures(
+      featureSetForOverriding: FeatureSet.forTesting(),
+      featureSet: FeatureSet.forTesting(),
+    );
+    scanner.tokenize();
+
+    var featureSet = scanner.featureSet;
+    expect(featureSet.isEnabled(Feature.extension_methods), isFalse);
+  }
+
+  test_featureSet_majorOverflow() {
+    var scanner = _createScanner(r'''
+// @dart = 99999999999999999999999999999999.0
+''');
+    var featureSet = FeatureSet.forTesting();
+    scanner.configureFeatures(
+      featureSetForOverriding: featureSet,
+      featureSet: featureSet,
+    );
+    scanner.tokenize();
+    // Don't check features, but should not crash.
+  }
+
+  test_featureSet_minorOverflow() {
+    var scanner = _createScanner(r'''
+// @dart = 2.99999999999999999999999999999999
+''');
+    var featureSet = FeatureSet.forTesting();
+    scanner.configureFeatures(
+      featureSetForOverriding: featureSet,
+      featureSet: featureSet,
+    );
+    scanner.tokenize();
+    // Don't check features, but should not crash.
+  }
+
+  Scanner _createScanner(String content) {
+    var path = convertPath('/test/lib/a.dart');
+    var source = StringSource(content, path);
+    var reader = CharSequenceReader(content);
+    var errorCollector = RecordingErrorListener();
+    return Scanner(source, reader, errorCollector);
+  }
+}
+
+/// An `ExpectedLocation` encodes information about the expected location of a
+/// given offset in source code.
 class ScannerTest_ExpectedLocation {
   final int _offset;
 
@@ -198,15 +263,11 @@ class ScannerTest_ExpectedLocation {
       this._offset, this._lineNumber, this._columnNumber);
 }
 
-/**
- * A `TokenStreamValidator` is used to validate the correct construction of a
- * stream of tokens.
- */
+/// A `TokenStreamValidator` is used to validate the correct construction of a
+/// stream of tokens.
 class TokenStreamValidator {
-  /**
-   * Validate that the stream of tokens that starts with the given [token] is
-   * correct.
-   */
+  /// Validate that the stream of tokens that starts with the given [token] is
+  /// correct.
   void validate(Token token) {
     StringBuffer buffer = StringBuffer();
     _validateStream(buffer, token);

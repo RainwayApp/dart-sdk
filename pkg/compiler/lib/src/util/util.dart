@@ -36,6 +36,15 @@ class Hashing {
     return ((high * 13) ^ (low * 997) ^ h) & SMI_MASK;
   }
 
+  /// Returns a hash value computed from all the characters in the string.
+  static int stringHash(String s) {
+    int hash = mixHashCodeBits(0, s.length);
+    for (int i = 0; i < s.length; i++) {
+      hash = mixHashCodeBits(hash, s.codeUnitAt(i));
+    }
+    return hash;
+  }
+
   /// Mix the bits of `object.hashCode` with [existing].
   static int objectHash(Object object, [int existing = 0]) {
     return mixHashCodeBits(existing, object.hashCode);
@@ -101,6 +110,18 @@ class Hashing {
     }
     return h;
   }
+}
+
+bool identicalElements<E>(List<E> a, List<E> b) {
+  if (identical(a, b)) return true;
+  if (a == null || b == null) return false;
+  if (a.length != b.length) return false;
+  for (int index = 0; index < a.length; index++) {
+    if (!identical(a[index], b[index])) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool equalElements<E>(List<E> a, List<E> b) {

@@ -16,15 +16,14 @@ import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/test_utilities/mock_sdk.dart';
 import 'package:analyzer/src/test_utilities/resource_provider_mixin.dart';
 import 'package:test/test.dart';
+import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'element_text.dart';
 import 'test_strategies.dart';
 
-/**
- * Abstract base class for resynthesizing and comparing elements.
- *
- * The return type separator: →
- */
+/// Abstract base class for resynthesizing and comparing elements.
+///
+/// The return type separator: →
 abstract class AbstractResynthesizeTest with ResourceProviderMixin {
   DeclaredVariables declaredVariables = DeclaredVariables();
   SourceFactory sourceFactory;
@@ -34,10 +33,8 @@ abstract class AbstractResynthesizeTest with ResourceProviderMixin {
   Source testSource;
   Set<Source> otherLibrarySources = <Source>{};
 
-  /**
-   * Tests may set this to `true` to indicate that a missing file at the time of
-   * summary resynthesis shouldn't trigger an error.
-   */
+  /// Tests may set this to `true` to indicate that a missing file at the time
+  /// of summary resynthesis shouldn't trigger an error.
   bool allowMissingFiles = false;
 
   AbstractResynthesizeTest() {
@@ -81,9 +78,6 @@ abstract class AbstractResynthesizeTest with ResourceProviderMixin {
 /// mixin [ResynthesizeTestHelpers].
 mixin ResynthesizeTestCases implements ResynthesizeTestHelpers {
   FeatureSet get disableNnbd => FeatureSet.forTesting(sdkVersion: '2.2.2');
-
-  FeatureSet get enableExtensionMethods =>
-      FeatureSet.forTesting(additionalFeatures: [Feature.extension_methods]);
 
   FeatureSet get enableNnbd =>
       FeatureSet.forTesting(additionalFeatures: [Feature.non_nullable]);
@@ -283,6 +277,30 @@ class E {
 ''');
   }
 
+  test_class_alias_with_const_constructors() async {
+    addLibrarySource('/a.dart', '''
+class Base {
+  const Base._priv();
+  const Base();
+  const Base.named();
+}
+''');
+    var library = await checkLibrary('''
+import "a.dart";
+class M {}
+class MixinApp = Base with M;
+''');
+    checkElementText(library, r'''
+import 'a.dart';
+class M {
+}
+class alias MixinApp extends Base with M {
+  synthetic const MixinApp() = Base;
+  synthetic const MixinApp.named() = Base.named;
+}
+''');
+  }
+
   test_class_alias_with_forwarding_constructors() async {
     addLibrarySource('/a.dart', '''
 class Base {
@@ -292,7 +310,7 @@ class Base {
   Base.requiredArg(x);
   Base.positionalArg([bool x = true]);
   Base.namedArg({int x = 42});
-  factory Base.fact() => null;
+  factory Base.fact() => Base();
   factory Base.fact2() = Base.noArgs;
 }
 ''');
@@ -311,8 +329,6 @@ class alias MixinApp extends Base with M {
   synthetic MixinApp.requiredArg(dynamic x) = Base.requiredArg;
   synthetic MixinApp.positionalArg([bool x = true]) = Base.positionalArg;
   synthetic MixinApp.namedArg({int x: 42}) = Base.namedArg;
-  synthetic MixinApp.fact() = Base.fact;
-  synthetic MixinApp.fact2() = Base.fact2;
 }
 ''');
   }
@@ -437,7 +453,7 @@ class C {
   }
 
   test_class_constructor_factory() async {
-    var library = await checkLibrary('class C { factory C() => null; }');
+    var library = await checkLibrary('class C { factory C() => throw 0; }');
     checkElementText(library, r'''
 class C {
   factory C();
@@ -960,13 +976,58 @@ class C {
 
   test_class_fields_late() async {
     featureSet = enableNnbd;
-    var library = await checkLibrary('class C { int i; late int j; }');
-    checkElementText(library, r'''
+    var library = await checkLibrary('''
 class C {
-  int i;
-  late int j;
+  late int foo;
 }
 ''');
+    checkElementText(
+        library,
+        r'''
+class C {
+  late int foo;
+  synthetic int get foo {}
+  synthetic void set foo(int _foo) {}
+}
+''',
+        withSyntheticAccessors: true);
+  }
+
+  test_class_fields_late_final() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('''
+class C {
+  late final int foo;
+}
+''');
+    checkElementText(
+        library,
+        r'''
+class C {
+  late final int foo;
+  synthetic int get foo {}
+  synthetic void set foo(int _foo) {}
+}
+''',
+        withSyntheticAccessors: true);
+  }
+
+  test_class_fields_late_final_initialized() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('''
+class C {
+  late final int foo = 0;
+}
+''');
+    checkElementText(
+        library,
+        r'''
+class C {
+  late final int foo;
+  synthetic int get foo {}
+}
+''',
+        withSyntheticAccessors: true);
   }
 
   test_class_getter_abstract() async {
@@ -1814,33 +1875,33 @@ class A/*codeOffset=0, codeLength=10*/ {
 class B/*codeOffset=12, codeLength=10*/ {
 }
 class alias Raw/*codeOffset=28, codeLength=29*/ extends Object with A, B {
-  synthetic Raw() = Object;
+  synthetic const Raw() = Object;
 }
 /// Comment 1.
 /// Comment 2.
 class alias HasDocComment/*codeOffset=59, codeLength=69*/ extends Object with A, B {
-  synthetic HasDocComment() = Object;
+  synthetic const HasDocComment() = Object;
 }
 @Object()
 class alias HasAnnotation/*codeOffset=130, codeLength=49*/ extends Object with A, B {
-  synthetic HasAnnotation() = Object;
+  synthetic const HasAnnotation() = Object;
 }
 /// Comment 1.
 /// Comment 2.
 @Object()
 class alias AnnotationThenComment/*codeOffset=181, codeLength=87*/ extends Object with A, B {
-  synthetic AnnotationThenComment() = Object;
+  synthetic const AnnotationThenComment() = Object;
 }
 /// Comment 1.
 /// Comment 2.
 @Object()
 class alias CommentThenAnnotation/*codeOffset=270, codeLength=87*/ extends Object with A, B {
-  synthetic CommentThenAnnotation() = Object;
+  synthetic const CommentThenAnnotation() = Object;
 }
 /// Comment 2.
 @Object()
 class alias CommentAroundAnnotation/*codeOffset=374, codeLength=74*/ extends Object with A, B {
-  synthetic CommentAroundAnnotation() = Object;
+  synthetic const CommentAroundAnnotation() = Object;
 }
 ''',
         withCodeRanges: true,
@@ -1908,55 +1969,55 @@ class C/*codeOffset=0, codeLength=362*/ {
   test_codeRange_constructor_factory() async {
     var library = await checkLibrary('''
 class C {
-  factory C() => null;
+  factory C() => throw 0;
 
-  factory C.raw() => null;
-
-  /// Comment 1.
-  /// Comment 2.
-  factory C.hasDocComment() => null;
-
-  @Object()
-  factory C.hasAnnotation() => null;
-
-  @Object()
-  /// Comment 1.
-  /// Comment 2.
-  factory C.annotationThenComment() => null;
+  factory C.raw() => throw 0;
 
   /// Comment 1.
   /// Comment 2.
+  factory C.hasDocComment() => throw 0;
+
   @Object()
-  factory C.commentThenAnnotation() => null;
+  factory C.hasAnnotation() => throw 0;
+
+  @Object()
+  /// Comment 1.
+  /// Comment 2.
+  factory C.annotationThenComment() => throw 0;
+
+  /// Comment 1.
+  /// Comment 2.
+  @Object()
+  factory C.commentThenAnnotation() => throw 0;
 
   /// Comment 1.
   @Object()
   /// Comment 2.
-  factory C.commentAroundAnnotation() => null;
+  factory C.commentAroundAnnotation() => throw 0;
 }
 ''');
     checkElementText(
         library,
         r'''
-class C/*codeOffset=0, codeLength=462*/ {
-  factory C/*codeOffset=12, codeLength=20*/();
-  factory C.raw/*codeOffset=36, codeLength=24*/();
+class C/*codeOffset=0, codeLength=483*/ {
+  factory C/*codeOffset=12, codeLength=23*/();
+  factory C.raw/*codeOffset=39, codeLength=27*/();
   /// Comment 1.
   /// Comment 2.
-  factory C.hasDocComment/*codeOffset=64, codeLength=68*/();
+  factory C.hasDocComment/*codeOffset=70, codeLength=71*/();
   @Object()
-  factory C.hasAnnotation/*codeOffset=136, codeLength=46*/();
-  /// Comment 1.
-  /// Comment 2.
-  @Object()
-  factory C.annotationThenComment/*codeOffset=186, codeLength=88*/();
+  factory C.hasAnnotation/*codeOffset=145, codeLength=49*/();
   /// Comment 1.
   /// Comment 2.
   @Object()
-  factory C.commentThenAnnotation/*codeOffset=278, codeLength=88*/();
+  factory C.annotationThenComment/*codeOffset=198, codeLength=91*/();
+  /// Comment 1.
   /// Comment 2.
   @Object()
-  factory C.commentAroundAnnotation/*codeOffset=387, codeLength=73*/();
+  factory C.commentThenAnnotation/*codeOffset=293, codeLength=91*/();
+  /// Comment 2.
+  @Object()
+  factory C.commentAroundAnnotation/*codeOffset=405, codeLength=76*/();
 }
 ''',
         withCodeRanges: true,
@@ -1986,7 +2047,6 @@ enum E/*codeOffset=0, codeLength=26*/ {
   }
 
   test_codeRange_extensions() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 class A {}
 
@@ -3485,7 +3545,6 @@ const int Function(int, String) V =
   }
 
   test_const_reference_staticMethod_ofExtension() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 class A {}
 extension E on A {
@@ -3931,6 +3990,24 @@ const String vString = 'abc';
 const String vStringConcat = 'aaabbb';
 const String vStringInterpolation = 'aaa ${true} ${42} bbb';
 const Symbol vSymbol = #aaa.bbb.ccc;
+''');
+  }
+
+  test_const_topLevel_nullSafe_nullAware_propertyAccess() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary(r'''
+const String? a = '';
+
+const List<int?> b = [
+  a?.length,
+];
+''');
+    // TODO(scheglov) include fully resolved AST, when types with suffixes
+    checkElementText(library, r'''
+const String a = '';
+const List<int> b = [
+        a/*location: test.dart;a?*/.
+        length/*location: dart:core;String;length?*/];
 ''');
   }
 
@@ -4954,6 +5031,39 @@ class D {
 ''');
   }
 
+  test_defaultValue_eliminateTypeParameters() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('''
+class A<T> {
+  const X({List<T> a = const []});
+}
+''');
+    checkElementText(
+        library,
+        r'''
+class A<T> {
+  dynamic X({List<T> a: const /*typeArgs=Never*/[]});
+}
+''',
+        withTypes: true);
+  }
+
+  test_defaultValue_eliminateTypeParameters_legacy() async {
+    var library = await checkLibrary('''
+class A<T> {
+  const X({List<T> a = const []});
+}
+''');
+    checkElementText(
+        library,
+        r'''
+class A<T> {
+  dynamic X({List<T> a: const /*typeArgs=Null*/[]});
+}
+''',
+        withTypes: true);
+  }
+
   test_defaultValue_genericFunction() async {
     var library = await checkLibrary('''
 typedef void F<T>(T v);
@@ -4997,7 +5107,6 @@ class B {
   }
 
   test_defaultValue_refersToExtension_method_inside() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 class A {}
 extension E on A {
@@ -5247,7 +5356,6 @@ enum E {
   }
 
   test_duplicateDeclaration_extension() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary(r'''
 class A {}
 extension E on A {}
@@ -5380,6 +5488,42 @@ enum E {
 ''');
   }
 
+  test_enum_value_documented_withMetadata() async {
+    var library = await checkLibrary('''
+enum E {
+  /**
+   * aaa
+   */
+  @annotation
+  a,
+  /// bbb
+  @annotation
+  b,
+}
+
+const int annotation = 0;
+''');
+    checkElementText(
+        library,
+        r'''
+enum E {
+  synthetic final int index;
+  synthetic static const List<E> values;
+  /**
+   * aaa
+   */
+  @annotation
+  static const E a;
+  /// bbb
+  @annotation
+  static const E b;
+  String toString() {}
+}
+const int annotation = 0;
+''',
+        withConstElements: false);
+  }
+
   test_enum_values() async {
     var library = await checkLibrary('enum E { v1, v2 }');
     checkElementText(library, r'''
@@ -5453,7 +5597,7 @@ class C extends Object with M {
   dynamic foo() {}
 }
 class alias D extends Object with M {
-  synthetic D() = Object;
+  synthetic const D() = Object;
 }
 ''');
   }
@@ -5868,7 +6012,6 @@ class C<T> {
   }
 
   test_extension_documented_tripleSlash() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 /// aaa
 /// bbbb
@@ -5884,7 +6027,6 @@ extension E on int {
   }
 
   test_extension_field_inferredType_const() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 extension E on int {
   static const x = 0;
@@ -6111,6 +6253,50 @@ class C {
   static final int x;
 }
 ''');
+  }
+
+  test_field_type_inferred_Never() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary(r'''
+class C {
+  var a = throw 42;
+}
+''');
+
+    checkElementText(
+        library,
+        r'''
+class C {
+  Never a;
+}
+''',
+        annotateNullability: true);
+  }
+
+  test_field_type_inferred_nonNullify() async {
+    featureSet = enableNnbd;
+
+    addSource('/a.dart', '''
+// @dart = 2.7
+var a = 0;
+''');
+
+    var library = await checkLibrary(r'''
+import 'a.dart';
+class C {
+  var b = a;
+}
+''');
+
+    checkElementText(
+        library,
+        r'''
+import 'a.dart';
+class C {
+  int b;
+}
+''',
+        annotateNullability: true);
   }
 
   test_field_typed() async {
@@ -6752,6 +6938,15 @@ class B extends A {
     expect(typeA.element.source.shortName, 'foo_html.dart');
   }
 
+  test_import_dartCore_implicit() async {
+    var library = await checkLibrary('''
+import 'dart:math';
+''');
+    expect(library.imports, hasLength(2));
+    expect(library.imports[0].uri, 'dart:math');
+    expect(library.imports[1].uri, 'dart:core');
+  }
+
   test_import_deferred() async {
     addLibrarySource('/a.dart', 'f() {}');
     var library = await checkLibrary('''
@@ -7138,6 +7333,25 @@ f<T>() {
 ''');
     checkElementText(library, r'''
 dynamic f<T>() {}
+''');
+  }
+
+  test_inferred_type_functionExpressionInvocation_oppositeOrder() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('''
+class A {
+  static final foo = bar(1.2);
+  static final bar = baz();
+
+  static int Function(double) baz() => (throw 0);
+}
+''');
+    checkElementText(library, r'''
+class A {
+  static final int foo;
+  static final int Function(double) bar;
+  static int Function(double) baz() {}
+}
 ''');
   }
 
@@ -8446,7 +8660,6 @@ const dynamic a = null;
   }
 
   test_metadata_extension_scope() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary(r'''
 const foo = 0;
 
@@ -8503,7 +8716,6 @@ const int foo;
   }
 
   test_metadata_extensionDeclaration() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary(r'''
 const a = null;
 class A {}
@@ -9135,6 +9347,93 @@ mixin M {}
 mixin M on Object {
 }
 ''');
+  }
+
+  test_mixin_inference_legacy() async {
+    var library = await checkLibrary(r'''
+class A<T> {}
+mixin M<U> on A<U> {}
+class B extends A<int> with M {}
+''');
+    checkElementText(
+        library,
+        r'''
+class A<T> {
+}
+class B extends A<int*>* with M<int*>* {
+  synthetic B();
+}
+mixin M<U> on A<U*>* {
+}
+''',
+        annotateNullability: true);
+  }
+
+  test_mixin_inference_nullSafety() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary(r'''
+class A<T> {}
+mixin M<U> on A<U> {}
+class B extends A<int> with M {}
+''');
+    checkElementText(
+        library,
+        r'''
+class A<T> {
+}
+class B extends A<int> with M<int> {
+  synthetic B();
+}
+mixin M<U> on A<U> {
+}
+''',
+        annotateNullability: true);
+  }
+
+  test_mixin_inference_nullSafety_mixed_inOrder() async {
+    featureSet = enableNnbd;
+    addLibrarySource('/a.dart', r'''
+class A<T> {}
+mixin M<U> on A<U> {}
+''');
+    var library = await checkLibrary(r'''
+// @dart = 2.8
+import 'a.dart';
+class B extends A<int> with M {}
+''');
+    checkElementText(
+        library,
+        r'''
+import 'a.dart';
+class B extends A<int*>* with M<int*>* {
+  synthetic B();
+}
+''',
+        annotateNullability: true);
+  }
+
+  @FailingTest(reason: 'Out-of-order inference is not specified yet')
+  test_mixin_inference_nullSafety_mixed_outOfOrder() async {
+    featureSet = enableNnbd;
+    addLibrarySource('/a.dart', r'''
+// @dart = 2.8
+class A<T> {}
+mixin M<U> on A<U> {}
+''');
+    var library = await checkLibrary(r'''
+import 'a.dart';
+
+class B extends A<int> with M {}
+''');
+    checkElementText(
+        library,
+        r'''
+import 'a.dart';
+class B extends A<int> with M<int> {
+  synthetic B();
+}
+''',
+        annotateNullability: true);
   }
 
   test_mixin_method_namedAsConstraint() async {
@@ -10179,7 +10478,7 @@ dynamic v;
     checkElementText(
         library,
         r'''
-Never* d;
+Null* d;
 ''',
         annotateNullability: true);
   }
@@ -11171,14 +11470,6 @@ final int x;
 ''');
   }
 
-  test_variable_final_late() async {
-    featureSet = enableNnbd;
-    var library = await checkLibrary('late final int x = 0;');
-    checkElementText(library, r'''
-late final int x;
-''');
-  }
-
   test_variable_getterInLib_setterInPart() async {
     addSource('/a.dart', '''
 part of my.lib;
@@ -11276,7 +11567,6 @@ final int v;
   }
 
   test_variable_initializer_staticMethod_ofExtension() async {
-    featureSet = enableExtensionMethods;
     var library = await checkLibrary('''
 class A {}
 extension E on A {
@@ -11304,9 +11594,39 @@ int v;
   test_variable_late() async {
     featureSet = enableNnbd;
     var library = await checkLibrary('late int x = 0;');
-    checkElementText(library, r'''
+    checkElementText(
+        library,
+        r'''
 late int x;
-''');
+synthetic int get x {}
+synthetic void set x(int _x) {}
+''',
+        withSyntheticAccessors: true);
+  }
+
+  test_variable_late_final() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('late final int x;');
+    checkElementText(
+        library,
+        r'''
+late final int x;
+synthetic int get x {}
+synthetic void set x(int _x) {}
+''',
+        withSyntheticAccessors: true);
+  }
+
+  test_variable_late_final_initialized() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary('late final int x = 0;');
+    checkElementText(
+        library,
+        r'''
+late final int x;
+synthetic int get x {}
+''',
+        withSyntheticAccessors: true);
   }
 
   test_variable_propagatedType_const_noDep() async {
@@ -11376,6 +11696,52 @@ unit: b.dart
 
 int get x {}
 ''');
+  }
+
+  test_variable_type_inferred_Never() async {
+    featureSet = enableNnbd;
+    var library = await checkLibrary(r'''
+var a = throw 42;
+''');
+
+    checkElementText(
+        library,
+        r'''
+Never a;
+''',
+        annotateNullability: true);
+  }
+
+  test_variable_type_inferred_noInitializer() async {
+    var library = await checkLibrary(r'''
+var a;
+''');
+
+    checkElementText(library, r'''
+dynamic a;
+''');
+  }
+
+  test_variable_type_inferred_nonNullify() async {
+    featureSet = enableNnbd;
+
+    addSource('/a.dart', '''
+// @dart = 2.7
+var a = 0;
+''');
+
+    var library = await checkLibrary(r'''
+import 'a.dart';
+var b = a;
+''');
+
+    checkElementText(
+        library,
+        r'''
+import 'a.dart';
+int b;
+''',
+        annotateNullability: true);
   }
 
   test_variableInitializer_contextType_after_astRewrite() async {

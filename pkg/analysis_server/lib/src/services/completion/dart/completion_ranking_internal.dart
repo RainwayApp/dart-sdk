@@ -4,37 +4,11 @@
 
 import 'package:_fe_analyzer_shared/src/scanner/scanner.dart';
 import 'package:analysis_server/src/protocol_server.dart';
-import 'package:analysis_server/src/services/correction/util.dart';
 import 'package:analysis_server/src/provisional/completion/dart/completion_dart.dart';
+import 'package:analysis_server/src/services/correction/util.dart';
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
-
-/// Constructs a [CompletionSuggestion] object.
-CompletionSuggestion createCompletionSuggestion(
-    String completion, FeatureSet featureSet, int relevance) {
-  final tokens = TokenUtils.getTokens(completion, featureSet);
-  final token = tokens.isNotEmpty ? tokens[0] : null;
-  final completionKind = token != null && token.isKeyword
-      ? CompletionSuggestionKind.KEYWORD
-      : CompletionSuggestionKind.IDENTIFIER;
-  if (isLiteral(completion) &&
-      (completion.startsWith('"package:') ||
-          completion.startsWith('\'package:'))) {
-    completion = completion.replaceAll('\'', '').replaceAll('\"', '');
-  }
-  return CompletionSuggestion(completionKind, relevance, completion,
-      completion.length, 0, false, false);
-}
-
-/// Finds the token at which completion was requested.
-Token getCursorToken(DartCompletionRequest request) {
-  final entity = request.target.entity;
-  if (entity is AstNode) {
-    return entity.endToken;
-  }
-  return entity is Token ? entity : null;
-}
 
 /// Fuzzy matching between static analysis and model-predicted lexemes
 /// that considers pairs like "main" and "main()" to be equal.
@@ -55,6 +29,103 @@ bool areCompletionsEquivalent(String dasCompletion, String modelCompletion) {
 
   // Checks that the strings are equal until the first non-alphanumeric token.
   return dasCompletion.substring(0, index) == modelCompletion;
+}
+
+/// Finds the previous n tokens occurring before the cursor.
+List<String> constructQuery(DartCompletionRequest request, int n) {
+  var token = getCursorToken(request);
+  if (request.offset == null) {
+    return null;
+  }
+
+  while (!isStopToken(token, request.offset)) {
+    token = token.previous;
+  }
+
+  if (token?.offset == null || token?.type == null) {
+    return null;
+  }
+
+  final result = <String>[];
+  for (var size = 0;
+      size < n && token != null && !token.isEof;
+      token = token.previous) {
+    if (!token.isSynthetic && token is! ErrorToken) {
+      // Omit the optional new keyword as we remove it at training time to
+      // prevent model from suggesting it.
+      if (token.lexeme == 'new') {
+        continue;
+      }
+
+      result.add(token.lexeme);
+      size += 1;
+    }
+  }
+
+  return result.reversed.toList(growable: false);
+}
+
+/// Constructs a [CompletionSuggestion] object.
+CompletionSuggestion createCompletionSuggestion(
+    String completion, FeatureSet featureSet, int relevance) {
+  final tokens = TokenUtils.getTokens(completion, featureSet);
+  final token = tokens.isNotEmpty ? tokens[0] : null;
+  final completionKind = token != null && token.isKeyword
+      ? CompletionSuggestionKind.KEYWORD
+      : CompletionSuggestionKind.IDENTIFIER;
+  if (isLiteral(completion) &&
+      (completion.startsWith('"package:') ||
+          completion.startsWith('\'package:'))) {
+    completion = completion.replaceAll('\'', '').replaceAll('\"', '');
+  }
+  return CompletionSuggestion(completionKind, relevance, completion,
+      completion.length, 0, false, false);
+}
+
+/// Maps included relevance tags formatted as
+/// '${element.librarySource.uri}::${element.name}' to element.name.
+String elementNameFromRelevanceTag(String tag) {
+  final index = tag.lastIndexOf('::');
+  if (index == -1) {
+    return null;
+  }
+
+  return tag.substring(index + 2);
+}
+
+Token getCurrentToken(DartCompletionRequest request) {
+  var token = getCursorToken(request);
+  while (!isStopToken(token.previous, request.offset)) {
+    token = token.previous;
+  }
+  return token;
+}
+
+/// Finds the token at which completion was requested.
+Token getCursorToken(DartCompletionRequest request) {
+  final entity = request.target.entity;
+  if (entity is AstNode) {
+    return entity.endToken;
+  }
+  return entity is Token ? entity : null;
+}
+
+bool isLiteral(String lexeme) {
+  if (lexeme == null || lexeme.isEmpty) {
+    return false;
+  }
+  if (RegExp(r'^[0-9]+$').hasMatch(lexeme)) {
+    // Check for number lexeme.
+    return true;
+  }
+  return isStringLiteral(lexeme);
+}
+
+bool isNotWhitespace(String lexeme) {
+  return lexeme
+      .replaceAll("'", '')
+      .split('')
+      .any((String chr) => !RegExp(r'\s').hasMatch(chr));
 }
 
 /// Step to previous token until we are at the first token before where the
@@ -88,30 +159,24 @@ bool isStringLiteral(String lexeme) {
       (lexeme.length > 2 && lexeme[0] == 'r' && lexeme[1] == "'");
 }
 
-bool isLiteral(String lexeme) {
-  if (lexeme == null || lexeme.isEmpty) {
-    return false;
-  }
-  if (RegExp(r'^[0-9]+$').hasMatch(lexeme)) {
-    // Check for number lexeme.
-    return true;
-  }
-  return isStringLiteral(lexeme);
+bool isTokenDot(Token token) {
+  return token != null && !token.isSynthetic && token.lexeme.endsWith('.');
 }
 
-bool isNotWhitespace(String lexeme) {
-  return lexeme
-      .replaceAll("'", '')
-      .split('')
-      .any((String chr) => !RegExp(r'\s').hasMatch(chr));
+/// Filters the entries list down to only those which represent string literals
+/// and then strips quotes.
+List<MapEntry<String, double>> selectStringLiterals(List<MapEntry> entries) {
+  return entries
+      .where((MapEntry entry) =>
+          isStringLiteral(entry.key) && isNotWhitespace(entry.key))
+      .map<MapEntry<String, double>>(
+          (MapEntry entry) => MapEntry(trimQuotes(entry.key), entry.value))
+      .toList();
 }
 
-Token getCurrentToken(DartCompletionRequest request) {
-  var token = getCursorToken(request);
-  while (!isStopToken(token.previous, request.offset)) {
-    token = token.previous;
-  }
-  return token;
+bool testFollowingDot(DartCompletionRequest request) {
+  final token = getCurrentToken(request);
+  return isTokenDot(token) || isTokenDot(token.previous);
 }
 
 bool testInsideQuotes(DartCompletionRequest request) {
@@ -135,15 +200,6 @@ bool testInsideQuotes(DartCompletionRequest request) {
   return lexeme.length > 1 && (lexeme[0] == "'" || lexeme[0] == '"');
 }
 
-bool isTokenDot(Token token) {
-  return token != null && !token.isSynthetic && token.lexeme.endsWith('.');
-}
-
-bool testFollowingDot(DartCompletionRequest request) {
-  final token = getCurrentToken(request);
-  return isTokenDot(token) || isTokenDot(token.previous);
-}
-
 /// Tests whether all completion suggestions are for named arguments.
 bool testNamedArgument(List<CompletionSuggestion> suggestions) {
   if (suggestions == null) {
@@ -152,62 +208,6 @@ bool testNamedArgument(List<CompletionSuggestion> suggestions) {
 
   return suggestions.any((CompletionSuggestion suggestion) =>
       suggestion.kind == CompletionSuggestionKind.NAMED_ARGUMENT);
-}
-
-/// Finds the previous n tokens occurring before the cursor.
-List<String> constructQuery(DartCompletionRequest request, int n) {
-  var token = getCursorToken(request);
-  if (request.offset == null) {
-    return null;
-  }
-
-  while (!isStopToken(token, request.offset)) {
-    token = token.previous;
-  }
-
-  if (token?.offset == null || token?.type == null) {
-    return null;
-  }
-
-  final result = List<String>();
-  for (var size = 0;
-      size < n && token != null && !token.isEof;
-      token = token.previous) {
-    if (!token.isSynthetic && token is! ErrorToken) {
-      // Omit the optional new keyword as we remove it at training time to
-      // prevent model from suggesting it.
-      if (token.lexeme == 'new') {
-        continue;
-      }
-
-      result.add(token.lexeme);
-      size += 1;
-    }
-  }
-
-  return result.reversed.toList(growable: false);
-}
-
-/// Maps included relevance tags formatted as
-/// '${element.librarySource.uri}::${element.name}' to element.name.
-String elementNameFromRelevanceTag(String tag) {
-  final index = tag.lastIndexOf('::');
-  if (index == -1) {
-    return null;
-  }
-
-  return tag.substring(index + 2);
-}
-
-/// Filters the entries list down to only those which represent string literals
-/// and then strips quotes.
-List<MapEntry<String, double>> selectStringLiterals(List<MapEntry> entries) {
-  return entries
-      .where((MapEntry entry) =>
-          isStringLiteral(entry.key) && isNotWhitespace(entry.key))
-      .map<MapEntry<String, double>>(
-          (MapEntry entry) => MapEntry(trimQuotes(entry.key), entry.value))
-      .toList();
 }
 
 String trimQuotes(String input) {

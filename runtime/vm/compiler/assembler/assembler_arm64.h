@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_ARM64_H_
 #define RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_ARM64_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #ifndef RUNTIME_VM_COMPILER_ASSEMBLER_ASSEMBLER_H_
 #error Do not include assembler_arm64.h directly; use assembler.h instead.
 #endif
@@ -14,6 +18,7 @@
 #include "platform/assert.h"
 #include "platform/utils.h"
 #include "vm/class_id.h"
+#include "vm/compiler/assembler/assembler_base.h"
 #include "vm/constants.h"
 #include "vm/hash_map.h"
 #include "vm/simulator.h"
@@ -146,7 +151,8 @@ class Address : public ValueObject {
       ASSERT((at == PairOffset) || (at == PairPreIndex) ||
              (at == PairPostIndex));
       ASSERT(Utils::IsInt(7 + scale, offset) &&
-             (offset == ((offset >> scale) << scale)));
+             (static_cast<uint32_t>(offset) ==
+              ((static_cast<uint32_t>(offset) >> scale) << scale)));
       int32_t idx = 0;
       switch (at) {
         case PairPostIndex:
@@ -162,8 +168,10 @@ class Address : public ValueObject {
           UNREACHABLE();
           break;
       }
-      encoding_ = idx | (((offset >> scale) << kImm7Shift) & kImm7Mask) |
-                  Arm64Encode::Rn(rn);
+      encoding_ =
+          idx |
+          ((static_cast<uint32_t>(offset >> scale) << kImm7Shift) & kImm7Mask) |
+          Arm64Encode::Rn(rn);
     }
     type_ = at;
     base_ = ConcreteRegister(rn);
@@ -194,7 +202,8 @@ class Address : public ValueObject {
              (at == PairPostIndex));
       const int32_t scale = Log2OperandSizeBytes(sz);
       return (Utils::IsInt(7 + scale, offset) &&
-              (offset == ((offset >> scale) << scale)));
+              (static_cast<uint32_t>(offset) ==
+               ((static_cast<uint32_t>(offset) >> scale) << scale)));
     }
   }
 
@@ -467,7 +476,7 @@ class Assembler : public AssemblerBase {
   void Drop(intptr_t stack_elements) {
     ASSERT(stack_elements >= 0);
     if (stack_elements > 0) {
-      add(SP, SP, Operand(stack_elements * target::kWordSize));
+      AddImmediate(SP, SP, stack_elements * target::kWordSize);
     }
   }
 
@@ -475,10 +484,42 @@ class Assembler : public AssemblerBase {
   void Jump(Label* label) { b(label); }
 
   void LoadField(Register dst, FieldAddress address) { ldr(dst, address); }
+  void LoadMemoryValue(Register dst, Register base, int32_t offset) {
+    LoadFromOffset(dst, base, offset, kDoubleWord);
+  }
+  void StoreMemoryValue(Register src, Register base, int32_t offset) {
+    StoreToOffset(src, base, offset, kDoubleWord);
+  }
+  void LoadAcquire(Register dst, Register address, int32_t offset = 0) {
+    if (offset != 0) {
+      AddImmediate(TMP2, address, offset);
+      ldar(dst, TMP2);
+    } else {
+      ldar(dst, address);
+    }
+  }
+  void StoreRelease(Register src, Register address, int32_t offset = 0) {
+    if (offset != 0) {
+      AddImmediate(TMP2, address, offset);
+      stlr(src, TMP2);
+    } else {
+      stlr(src, address);
+    }
+  }
 
   void CompareWithFieldValue(Register value, FieldAddress address) {
+    CompareWithMemoryValue(value, address);
+  }
+
+  void CompareWithMemoryValue(Register value, Address address) {
     ldr(TMP, address);
     cmp(value, Operand(TMP));
+  }
+
+  void CompareTypeNullabilityWith(Register type, int8_t value) {
+    ldr(TMP, FieldAddress(type, compiler::target::Type::nullability_offset()),
+        kUnsignedByte);
+    cmp(TMP, Operand(value));
   }
 
   bool use_far_branches() const {
@@ -489,9 +530,6 @@ class Assembler : public AssemblerBase {
 
   // Debugging and bringup support.
   void Breakpoint() override { brk(0); }
-  void Stop(const char* message) override;
-
-  static void InitializeMemoryWithBreakpoints(uword data, intptr_t length);
 
   void SetPrologueOffset() {
     if (prologue_offset_ == -1) {
@@ -935,6 +973,14 @@ class Assembler : public AssemblerBase {
     Emit(encoding);
   }
 
+  void ldar(Register rt, Register rn, OperandSize sz = kDoubleWord) {
+    EmitLoadStoreExclusive(LDAR, R31, rn, rt, sz);
+  }
+
+  void stlr(Register rt, Register rn, OperandSize sz = kDoubleWord) {
+    EmitLoadStoreExclusive(STLR, R31, rn, rt, sz);
+  }
+
   // Conditional select.
   void csel(Register rd, Register rn, Register rm, Condition cond) {
     EmitConditionalSelect(CSEL, rd, rn, rm, cond, kDoubleWord);
@@ -1002,6 +1048,11 @@ class Assembler : public AssemblerBase {
     EmitCompareAndBranch(CBNZ, rt, label, sz);
   }
 
+  // Generate 64-bit compare with zero and branch when condition allows to use
+  // a single instruction: cbz/cbnz/tbz/tbnz.
+  bool CanGenerateXCbzTbz(Register rn, Condition cond);
+  void GenerateXCbzTbz(Register rn, Condition cond, Label* label);
+
   // Test bit and branch if zero.
   void tbz(Label* label, Register rt, intptr_t bit_number) {
     EmitTestAndBranch(TBZ, rt, bit_number, label);
@@ -1017,11 +1068,6 @@ class Assembler : public AssemblerBase {
 
   // Breakpoint.
   void brk(uint16_t imm) { EmitExceptionGenOp(BRK, imm); }
-
-  static uword GetBreakInstructionFiller() {
-    const intptr_t encoding = ExceptionGenOpEncoding(BRK, 0);
-    return encoding << 32 | encoding;
-  }
 
   // Double floating point.
   bool fmovdi(VRegister vd, double immd) {
@@ -1265,6 +1311,13 @@ class Assembler : public AssemblerBase {
       orr(rd, ZR, Operand(rn));
     }
   }
+  void movw(Register rd, Register rn) {
+    if ((rd == CSP) || (rn == CSP)) {
+      addw(rd, rn, Operand(0));
+    } else {
+      orrw(rd, ZR, Operand(rn));
+    }
+  }
   void vmov(VRegister vd, VRegister vn) { vorr(vd, vn, vn); }
   void mvn(Register rd, Register rm) { orn(rd, ZR, Operand(rm)); }
   void mvnw(Register rd, Register rm) { ornw(rd, ZR, Operand(rm)); }
@@ -1383,16 +1436,19 @@ class Assembler : public AssemblerBase {
   }
   void BranchLinkToRuntime();
 
-  void CallNullErrorShared(bool save_fpu_registers);
-
-  void CallNullArgErrorShared(bool save_fpu_registers);
-
   // Emit a call that shares its object pool entries with other calls
   // that have the same equivalence marker.
   void BranchLinkWithEquivalence(
       const Code& code,
       const Object& equivalence,
       CodeEntryKind entry_kind = CodeEntryKind::kNormal);
+
+  void Call(Address target) {
+    ldr(LR, target);
+    blr(LR);
+  }
+
+  void CallCFunction(Address target) { Call(target); }
 
   void AddImmediate(Register dest, int64_t imm) {
     AddImmediate(dest, dest, imm);
@@ -1401,7 +1457,7 @@ class Assembler : public AssemblerBase {
   // Macros accepting a pp Register argument may attempt to load values from
   // the object pool when possible. Unless you are sure that the untagged object
   // pool pointer is in another register, or that it is not available at all,
-  // PP should be passed for pp.
+  // PP should be passed for pp. `dest` can be TMP2, `rn` cannot.
   void AddImmediate(Register dest, Register rn, int64_t imm);
   void AddImmediateSetFlags(Register dest,
                             Register rn,
@@ -1427,6 +1483,7 @@ class Assembler : public AssemblerBase {
                            OperandSize sz = kDoubleWord) {
     LoadFromOffset(dest, base, offset - kHeapObjectTag, sz);
   }
+  void LoadSFromOffset(VRegister dest, Register base, int32_t offset);
   void LoadDFromOffset(VRegister dest, Register base, int32_t offset);
   void LoadDFieldFromOffset(VRegister dest, Register base, int32_t offset) {
     LoadDFromOffset(dest, base, offset - kHeapObjectTag);
@@ -1446,6 +1503,8 @@ class Assembler : public AssemblerBase {
                           OperandSize sz = kDoubleWord) {
     StoreToOffset(src, base, offset - kHeapObjectTag, sz);
   }
+
+  void StoreSToOffset(VRegister src, Register base, int32_t offset);
   void StoreDToOffset(VRegister src, Register base, int32_t offset);
   void StoreDFieldToOffset(VRegister src, Register base, int32_t offset) {
     StoreDToOffset(src, base, offset - kHeapObjectTag);
@@ -1545,15 +1604,20 @@ class Assembler : public AssemblerBase {
   }
   void CompareObject(Register reg, const Object& object);
 
+  void ExtractClassIdFromTags(Register result, Register tags);
+  void ExtractInstanceSizeFromTags(Register result, Register tags);
+
   void LoadClassId(Register result, Register object);
   void LoadClassById(Register result, Register class_id);
   void CompareClassId(Register object,
                       intptr_t class_id,
                       Register scratch = kNoRegister);
+  // Note: input and output registers must be different.
   void LoadClassIdMayBeSmi(Register result, Register object);
   void LoadTaggedClassIdMayBeSmi(Register result, Register object);
 
-  void SetupDartSP();
+  // Reserve specifies how much space to reserve for the Dart stack.
+  void SetupDartSP(intptr_t reserve = 4096);
   void SetupCSPFromThread(Register thr);
   void RestoreCSP();
 
@@ -1568,7 +1632,7 @@ class Assembler : public AssemblerBase {
 
   void TransitionGeneratedToNative(Register destination_address,
                                    Register new_exit_frame,
-                                   Register scratch,
+                                   Register new_exit_through_ffi,
                                    bool enter_safepoint);
   void TransitionNativeToGenerated(Register scratch, bool exit_safepoint);
   void EnterSafepoint(Register scratch);
@@ -1580,6 +1644,8 @@ class Assembler : public AssemblerBase {
   // Restores the values of the registers that are blocked to cache some values
   // e.g. BARRIER_MASK and NULL_REG.
   void RestorePinnedRegisters();
+
+  void SetupGlobalPoolAndDispatchTable();
 
   void EnterDartFrame(intptr_t frame_size, Register new_pp = kNoRegister);
   void EnterOsrFrame(intptr_t extra_size, Register new_pp = kNoRegister);
@@ -1593,6 +1659,13 @@ class Assembler : public AssemblerBase {
   // a stub frame.
   void EnterStubFrame();
   void LeaveStubFrame();
+
+  // Set up a frame for calling a C function.
+  // Automatically save the pinned registers in Dart which are not callee-
+  // saved in the native calling convention.
+  // Use together with CallCFunction.
+  void EnterCFrame(intptr_t frame_space);
+  void LeaveCFrame();
 
   void MonomorphicCheckedEntryJIT();
   void MonomorphicCheckedEntryAOT();
@@ -1628,8 +1701,8 @@ class Assembler : public AssemblerBase {
   // the code can be used.
   //
   // The neccessary information for the "linker" (i.e. the relocation
-  // information) is stored in [RawCode::static_calls_target_table_]: an entry
-  // of the form
+  // information) is stored in [CodeLayout::static_calls_target_table_]: an
+  // entry of the form
   //
   //   (Code::kPcRelativeCall & pc_offset, <target-code>, <target-function>)
   //
@@ -1639,6 +1712,11 @@ class Assembler : public AssemblerBase {
   // destination.  It can be used e.g. for calling into the middle of a
   // function.
   void GenerateUnRelocatedPcRelativeCall(intptr_t offset_into_target = 0);
+
+  // This emits an PC-relative tail call of the form "b <offset>".
+  //
+  // See also above for the pc-relative call.
+  void GenerateUnRelocatedPcRelativeTailCall(intptr_t offset_into_target = 0);
 
   Address ElementAddressForIntIndex(bool is_external,
                                     intptr_t cid,
@@ -1654,6 +1732,7 @@ class Assembler : public AssemblerBase {
   Address ElementAddressForRegIndex(bool is_external,
                                     intptr_t cid,
                                     intptr_t index_scale,
+                                    bool index_unboxed,
                                     Register array,
                                     Register index,
                                     Register temp);
@@ -1665,6 +1744,7 @@ class Assembler : public AssemblerBase {
                                             intptr_t cid,
                                             OperandSize size,
                                             intptr_t index_scale,
+                                            bool index_unboxed,
                                             Register array,
                                             Register index,
                                             Register temp);
@@ -1673,8 +1753,13 @@ class Assembler : public AssemblerBase {
                                         bool is_external,
                                         intptr_t cid,
                                         intptr_t index_scale,
+                                        bool index_unboxed,
                                         Register array,
                                         Register index);
+
+  void LoadFieldAddressForRegOffset(Register address,
+                                    Register instance,
+                                    Register offset_in_words_as_smi);
 
   // Returns object data offset for address calculation; for heap objects also
   // accounts for the tag.
@@ -1832,12 +1917,14 @@ class Assembler : public AssemblerBase {
       BailoutWithBranchOffsetError();
     }
     const int32_t imm32 = static_cast<int32_t>(imm);
-    const int32_t off = (((imm32 >> 2) << kImm19Shift) & kImm19Mask);
+    const int32_t off =
+        ((static_cast<uint32_t>(imm32 >> 2) << kImm19Shift) & kImm19Mask);
     return (instr & ~kImm19Mask) | off;
   }
 
   int64_t DecodeImm19BranchOffset(int32_t instr) {
-    const int32_t off = (((instr & kImm19Mask) >> kImm19Shift) << 13) >> 11;
+    int32_t insns = (static_cast<uint32_t>(instr) & kImm19Mask) >> kImm19Shift;
+    const int32_t off = static_cast<int32_t>(insns << 13) >> 11;
     return static_cast<int64_t>(off);
   }
 
@@ -1847,12 +1934,14 @@ class Assembler : public AssemblerBase {
       BailoutWithBranchOffsetError();
     }
     const int32_t imm32 = static_cast<int32_t>(imm);
-    const int32_t off = (((imm32 >> 2) << kImm14Shift) & kImm14Mask);
+    const int32_t off =
+        ((static_cast<uint32_t>(imm32 >> 2) << kImm14Shift) & kImm14Mask);
     return (instr & ~kImm14Mask) | off;
   }
 
   int64_t DecodeImm14BranchOffset(int32_t instr) {
-    const int32_t off = (((instr & kImm14Mask) >> kImm14Shift) << 18) >> 16;
+    int32_t insns = (static_cast<uint32_t>(instr) & kImm14Mask) >> kImm14Shift;
+    const int32_t off = static_cast<int32_t>(insns << 18) >> 16;
     return static_cast<int64_t>(off);
   }
 
@@ -2166,7 +2255,8 @@ class Assembler : public AssemblerBase {
     ASSERT(Utils::IsInt(21, imm.value()));
     ASSERT((rd != R31) && (rd != CSP));
     const int32_t loimm = (imm.value() & 0x3) << 29;
-    const int32_t hiimm = ((imm.value() >> 2) << kImm19Shift) & kImm19Mask;
+    const int32_t hiimm =
+        (static_cast<uint32_t>(imm.value() >> 2) << kImm19Shift) & kImm19Mask;
     const int32_t encoding = op | loimm | hiimm | Arm64Encode::Rd(rd);
     Emit(encoding);
   }

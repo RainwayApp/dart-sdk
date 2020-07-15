@@ -12,13 +12,10 @@ import 'package:analyzer/dart/ast/syntactic_entity.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
-import 'package:analyzer/error/error.dart';
-import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/exception/exception.dart';
 import 'package:analyzer/src/dart/ast/to_source_visitor.dart';
 import 'package:analyzer/src/dart/ast/token.dart';
 import 'package:analyzer/src/dart/element/element.dart';
-import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/fasta/token_utils.dart' as util show findPrevious;
 import 'package:analyzer/src/generated/engine.dart' show AnalysisEngine;
 import 'package:analyzer/src/generated/engine.dart';
@@ -806,9 +803,7 @@ abstract class AstNodeImpl implements AstNode {
         }
       }
     } else {
-      if (_propertyMap == null) {
-        _propertyMap = HashMap<String, Object>();
-      }
+      _propertyMap ??= HashMap<String, Object>();
       _propertyMap[name] = value;
     }
   }
@@ -1198,6 +1193,7 @@ class BreakStatementImpl extends StatementImpl implements BreakStatement {
 ///        '[ ' expression '] '
 ///      | identifier
 class CascadeExpressionImpl extends ExpressionImpl
+    with NullShortableExpressionImpl
     implements CascadeExpression {
   /// The target of the cascade sections.
   ExpressionImpl _target;
@@ -1228,6 +1224,11 @@ class CascadeExpressionImpl extends ExpressionImpl
   Token get endToken => _cascadeSections.endToken;
 
   @override
+  bool get isNullAware {
+    return target.endToken.next.type == TokenType.QUESTION_PERIOD_PERIOD;
+  }
+
+  @override
   Precedence get precedence => Precedence.cascade;
 
   @override
@@ -1239,12 +1240,20 @@ class CascadeExpressionImpl extends ExpressionImpl
   }
 
   @override
+  AstNode get _nullShortingExtensionCandidate => null;
+
+  @override
   E accept<E>(AstVisitor<E> visitor) => visitor.visitCascadeExpression(this);
 
   @override
   void visitChildren(AstVisitor visitor) {
     _target?.accept(visitor);
     _cascadeSections.accept(visitor);
+  }
+
+  @override
+  bool _extendsNullShorting(Expression descendant) {
+    return _cascadeSections.contains(descendant);
   }
 }
 
@@ -1392,14 +1401,14 @@ class ChildEntities
   @override
   Iterator<SyntacticEntity> get iterator => _entities.iterator;
 
-  /// Add an AST node or token as the next child entity, if it is not null.
+  /// Add an AST node or token as the next child entity, if it is not `null`.
   void add(SyntacticEntity entity) {
     if (entity != null) {
       _entities.add(entity);
     }
   }
 
-  /// Add the given items as the next child entities, if [items] is not null.
+  /// Add the given items as the next child entities, if [items] is not `null`.
   void addAll(Iterable<SyntacticEntity> items) {
     if (items != null) {
       _entities.addAll(items);
@@ -2010,6 +2019,9 @@ class CompilationUnitImpl extends AstNodeImpl implements CompilationUnit {
   @override
   LineInfo lineInfo;
 
+  /// The language version information.
+  LibraryLanguageVersion languageVersion;
+
   @override
   final FeatureSet featureSet;
 
@@ -2050,6 +2062,18 @@ class CompilationUnitImpl extends AstNodeImpl implements CompilationUnit {
   @override
   set element(CompilationUnitElement element) {
     declaredElement = element;
+  }
+
+  @override
+  LanguageVersionToken get languageVersionToken {
+    CommentToken comment = beginToken.precedingComments;
+    while (comment != null) {
+      if (comment is LanguageVersionToken) {
+        return comment;
+      }
+      comment = comment.next;
+    }
+    return null;
   }
 
   @override
@@ -2322,40 +2346,6 @@ class ConfigurationImpl extends AstNodeImpl implements Configuration {
     _name?.accept(visitor);
     _value?.accept(visitor);
     _uri?.accept(visitor);
-  }
-}
-
-/// An error listener that only records whether any constant related errors have
-/// been reported.
-class ConstantAnalysisErrorListener extends AnalysisErrorListener {
-  /// A flag indicating whether any constant related errors have been reported
-  /// to this listener.
-  bool hasConstError = false;
-
-  @override
-  void onError(AnalysisError error) {
-    ErrorCode errorCode = error.errorCode;
-    if (errorCode is CompileTimeErrorCode) {
-      switch (errorCode) {
-        case CompileTimeErrorCode
-            .CONST_CONSTRUCTOR_WITH_FIELD_INITIALIZED_BY_NON_CONST:
-        case CompileTimeErrorCode.CONST_EVAL_TYPE_BOOL:
-        case CompileTimeErrorCode.CONST_EVAL_TYPE_BOOL_INT:
-        case CompileTimeErrorCode.CONST_EVAL_TYPE_BOOL_NUM_STRING:
-        case CompileTimeErrorCode.CONST_EVAL_TYPE_INT:
-        case CompileTimeErrorCode.CONST_EVAL_TYPE_NUM:
-        case CompileTimeErrorCode.CONST_EVAL_THROWS_EXCEPTION:
-        case CompileTimeErrorCode.CONST_EVAL_THROWS_IDBZE:
-        case CompileTimeErrorCode.CONST_WITH_NON_CONST:
-        case CompileTimeErrorCode.CONST_WITH_NON_CONSTANT_ARGUMENT:
-        case CompileTimeErrorCode.CONST_WITH_TYPE_PARAMETERS:
-        case CompileTimeErrorCode.INVALID_CONSTANT:
-        case CompileTimeErrorCode.MISSING_CONST_IN_LIST_LITERAL:
-        case CompileTimeErrorCode.MISSING_CONST_IN_MAP_LITERAL:
-        case CompileTimeErrorCode.MISSING_CONST_IN_SET_LITERAL:
-          hasConstError = true;
-      }
-    }
   }
 }
 
@@ -3433,6 +3423,7 @@ class ExportDirectiveImpl extends NamespaceDirectiveImpl
 
   @override
   void visitChildren(AstVisitor visitor) {
+    configurations.accept(visitor);
     super.visitChildren(visitor);
     combinators.accept(visitor);
   }
@@ -3892,6 +3883,13 @@ class ExtensionOverrideImpl extends ExpressionImpl
   }
 
   @override
+  bool get isNullAware {
+    var nextType = argumentList.endToken.next.type;
+    return nextType == TokenType.QUESTION_PERIOD ||
+        nextType == TokenType.QUESTION;
+  }
+
+  @override
   Precedence get precedence => Precedence.postfix;
 
   @override
@@ -4062,6 +4060,8 @@ class FieldFormalParameterImpl extends NormalFormalParameterImpl
     NodeList<Annotation> metadata = this.metadata;
     if (metadata.isNotEmpty) {
       return metadata.beginToken;
+    } else if (requiredKeyword != null) {
+      return requiredKeyword;
     } else if (covariantKeyword != null) {
       return covariantKeyword;
     } else if (keyword != null) {
@@ -4083,10 +4083,7 @@ class FieldFormalParameterImpl extends NormalFormalParameterImpl
 
   @override
   Token get endToken {
-    if (_parameters != null) {
-      return _parameters.endToken;
-    }
-    return identifier.endToken;
+    return question ?? _parameters?.endToken ?? identifier.endToken;
   }
 
   @override
@@ -4342,7 +4339,6 @@ abstract class FormalParameterImpl extends AstNodeImpl
   bool get isRequiredPositional => kind == ParameterKind.REQUIRED;
 
   @override
-  // Overridden to remove the 'deprecated' annotation.
   ParameterKind get kind;
 }
 
@@ -4645,8 +4641,6 @@ class ForStatementImpl extends StatementImpl
     this.rightParenthesis = rightParenthesis;
     _body = _becomeParentOf(body);
   }
-
-  ForStatementImpl._();
 
   @override
   Statement get body => _body;
@@ -4984,6 +4978,7 @@ class FunctionExpressionImpl extends ExpressionImpl
 ///    functionExpressionInvocation ::=
 ///        [Expression] [TypeArgumentList]? [ArgumentList]
 class FunctionExpressionInvocationImpl extends InvocationExpressionImpl
+    with NullShortableExpressionImpl
     implements FunctionExpressionInvocation {
   /// The expression producing the function being invoked.
   ExpressionImpl _function;
@@ -5023,6 +5018,9 @@ class FunctionExpressionInvocationImpl extends InvocationExpressionImpl
   Precedence get precedence => Precedence.postfix;
 
   @override
+  AstNode get _nullShortingExtensionCandidate => parent;
+
+  @override
   E accept<E>(AstVisitor<E> visitor) =>
       visitor.visitFunctionExpressionInvocation(this);
 
@@ -5032,6 +5030,9 @@ class FunctionExpressionInvocationImpl extends InvocationExpressionImpl
     _typeArguments?.accept(visitor);
     _argumentList?.accept(visitor);
   }
+
+  @override
+  bool _extendsNullShorting(Expression child) => identical(child, _function);
 }
 
 /// A function type alias.
@@ -5166,18 +5167,26 @@ class FunctionTypedFormalParameterImpl extends NormalFormalParameterImpl
   }
 
   @override
-  Token get beginToken =>
-      this.metadata.beginToken ??
-      covariantKeyword ??
-      _returnType?.beginToken ??
-      identifier?.beginToken;
+  Token get beginToken {
+    NodeList<Annotation> metadata = this.metadata;
+    if (metadata.isNotEmpty) {
+      return metadata.beginToken;
+    } else if (requiredKeyword != null) {
+      return requiredKeyword;
+    } else if (covariantKeyword != null) {
+      return covariantKeyword;
+    } else if (_returnType != null) {
+      return _returnType.beginToken;
+    }
+    return identifier?.beginToken;
+  }
 
   @override
   Iterable<SyntacticEntity> get childEntities =>
       super._childEntities..add(_returnType)..add(identifier)..add(parameters);
 
   @override
-  Token get endToken => _parameters.endToken;
+  Token get endToken => question ?? _parameters.endToken;
 
   @override
   bool get isConst => false;
@@ -5760,6 +5769,7 @@ class ImportDirectiveImpl extends NamespaceDirectiveImpl
   @override
   void visitChildren(AstVisitor visitor) {
     super.visitChildren(visitor);
+    configurations.accept(visitor);
     _prefix?.accept(visitor);
     combinators.accept(visitor);
   }
@@ -5772,23 +5782,22 @@ class ImportDirectiveImpl extends NamespaceDirectiveImpl
 class IndexExpressionImpl extends ExpressionImpl
     with NullShortableExpressionImpl
     implements IndexExpression {
+  @override
+  Token period;
+
   /// The expression used to compute the object being indexed, or `null` if this
   /// index expression is part of a cascade expression.
   ExpressionImpl _target;
 
-  /// The period (".." | "?..") before a cascaded index expression,
-  /// or `null` if this index expression is not part of a cascade expression.
   @override
-  Token period;
+  Token question;
 
-  /// The left square bracket.
   @override
   Token leftBracket;
 
   /// The expression used to compute the index.
   ExpressionImpl _index;
 
-  /// The right square bracket.
   @override
   Token rightBracket;
 
@@ -5804,15 +5813,17 @@ class IndexExpressionImpl extends ExpressionImpl
   @override
   AuxiliaryElements auxiliaryElements;
 
-  /// Initialize a newly created index expression.
-  IndexExpressionImpl.forCascade(
-      this.period, this.leftBracket, ExpressionImpl index, this.rightBracket) {
+  /// Initialize a newly created index expression that is a child of a cascade
+  /// expression.
+  IndexExpressionImpl.forCascade(this.period, this.question, this.leftBracket,
+      ExpressionImpl index, this.rightBracket) {
     _index = _becomeParentOf(index);
   }
 
-  /// Initialize a newly created index expression.
-  IndexExpressionImpl.forTarget(ExpressionImpl target, this.leftBracket,
-      ExpressionImpl index, this.rightBracket) {
+  /// Initialize a newly created index expression that is not a child of a
+  /// cascade expression.
+  IndexExpressionImpl.forTarget(ExpressionImpl target, this.question,
+      this.leftBracket, ExpressionImpl index, this.rightBracket) {
     _target = _becomeParentOf(target);
     _index = _becomeParentOf(index);
   }
@@ -5851,11 +5862,15 @@ class IndexExpressionImpl extends ExpressionImpl
   bool get isCascaded => period != null;
 
   @override
-  bool get isNullAware =>
-      leftBracket.type == TokenType.QUESTION_PERIOD_OPEN_SQUARE_BRACKET ||
-      (leftBracket.type == TokenType.OPEN_SQUARE_BRACKET &&
-          period != null &&
-          period.type == TokenType.QUESTION_PERIOD_PERIOD);
+  bool get isNullAware {
+    if (isCascaded) {
+      return _ancestorCascade.isNullAware;
+    }
+    return question != null ||
+        (leftBracket.type == TokenType.OPEN_SQUARE_BRACKET &&
+            period != null &&
+            period.type == TokenType.QUESTION_PERIOD_PERIOD);
+  }
 
   @override
   Precedence get precedence => Precedence.postfix;
@@ -5863,14 +5878,7 @@ class IndexExpressionImpl extends ExpressionImpl
   @override
   Expression get realTarget {
     if (isCascaded) {
-      AstNode ancestor = parent;
-      while (ancestor is! CascadeExpression) {
-        if (ancestor == null) {
-          return _target;
-        }
-        ancestor = ancestor.parent;
-      }
-      return (ancestor as CascadeExpression).target;
+      return _ancestorCascade.target;
     }
     return _target;
   }
@@ -5881,6 +5889,18 @@ class IndexExpressionImpl extends ExpressionImpl
   @override
   set target(Expression expression) {
     _target = _becomeParentOf(expression as ExpressionImpl);
+  }
+
+  /// Return the cascade that contains this [IndexExpression].
+  ///
+  /// We expect that [isCascaded] is `true`.
+  CascadeExpression get _ancestorCascade {
+    assert(isCascaded);
+    for (var ancestor = parent;; ancestor = ancestor.parent) {
+      if (ancestor is CascadeExpression) {
+        return ancestor;
+      }
+    }
   }
 
   @override
@@ -5970,12 +5990,6 @@ class InstanceCreationExpressionImpl extends ExpressionImpl
   /// The list of arguments to the constructor.
   ArgumentListImpl _argumentList;
 
-  /// The element associated with the constructor based on static type
-  /// information, or `null` if the AST structure has not been resolved or if
-  /// the constructor could not be resolved.
-  @override
-  ConstructorElement staticElement;
-
   /// Initialize a newly created instance creation expression.
   InstanceCreationExpressionImpl(this.keyword,
       ConstructorNameImpl constructorName, ArgumentListImpl argumentList,
@@ -6028,6 +6042,14 @@ class InstanceCreationExpressionImpl extends ExpressionImpl
 
   @override
   Precedence get precedence => Precedence.primary;
+
+  @Deprecated('Use constructorName.staticElement')
+  @override
+  ConstructorElement get staticElement => constructorName.staticElement;
+
+  @Deprecated('Use constructorName.staticElement')
+  @override
+  set staticElement(ConstructorElement staticElement) {}
 
   /// Return the type arguments associated with the constructor, rather than
   /// with the class in which the constructor is defined. It is always an error
@@ -6962,6 +6984,7 @@ class MethodDeclarationImpl extends ClassMemberImpl
 ///        ([Expression] '.')? [SimpleIdentifier] [TypeArgumentList]?
 ///        [ArgumentList]
 class MethodInvocationImpl extends InvocationExpressionImpl
+    with NullShortableExpressionImpl
     implements MethodInvocation {
   /// The expression producing the object on which the method is defined, or
   /// `null` if there is no target (that is, the target is implicitly `this`).
@@ -7024,10 +7047,14 @@ class MethodInvocationImpl extends InvocationExpressionImpl
           operator.type == TokenType.QUESTION_PERIOD_PERIOD);
 
   @override
-  bool get isNullAware =>
-      operator != null &&
-      (operator.type == TokenType.QUESTION_PERIOD ||
-          operator.type == TokenType.QUESTION_PERIOD_PERIOD);
+  bool get isNullAware {
+    if (isCascaded) {
+      return _ancestorCascade.isNullAware;
+    }
+    return operator != null &&
+        (operator.type == TokenType.QUESTION_PERIOD ||
+            operator.type == TokenType.QUESTION_PERIOD_PERIOD);
+  }
 
   @override
   SimpleIdentifier get methodName => _methodName;
@@ -7059,14 +7086,7 @@ class MethodInvocationImpl extends InvocationExpressionImpl
   @override
   Expression get realTarget {
     if (isCascaded) {
-      AstNode ancestor = parent;
-      while (ancestor is! CascadeExpression) {
-        if (ancestor == null) {
-          return _target;
-        }
-        ancestor = ancestor.parent;
-      }
-      return (ancestor as CascadeExpression).target;
+      return _ancestorCascade.target;
     }
     return _target;
   }
@@ -7079,6 +7099,21 @@ class MethodInvocationImpl extends InvocationExpressionImpl
     _target = _becomeParentOf(expression as ExpressionImpl);
   }
 
+  /// Return the cascade that contains this [IndexExpression].
+  ///
+  /// We expect that [isCascaded] is `true`.
+  CascadeExpression get _ancestorCascade {
+    assert(isCascaded);
+    for (var ancestor = parent;; ancestor = ancestor.parent) {
+      if (ancestor is CascadeExpression) {
+        return ancestor;
+      }
+    }
+  }
+
+  @override
+  AstNode get _nullShortingExtensionCandidate => parent;
+
   @override
   E accept<E>(AstVisitor<E> visitor) => visitor.visitMethodInvocation(this);
 
@@ -7089,6 +7124,9 @@ class MethodInvocationImpl extends InvocationExpressionImpl
     _typeArguments?.accept(visitor);
     _argumentList?.accept(visitor);
   }
+
+  @override
+  bool _extendsNullShorting(Expression child) => identical(child, _target);
 }
 
 /// The declaration of a mixin.
@@ -7514,7 +7552,7 @@ class NodeListImpl<E extends AstNode> with ListMixin<E> implements NodeList<E> {
   }
 
   @override
-  accept(AstVisitor visitor) {
+  void accept(AstVisitor visitor) {
     int length = _elements.length;
     for (var i = 0; i < length; i++) {
       _elements[i].accept(visitor);
@@ -7646,11 +7684,10 @@ abstract class NormalFormalParameterImpl extends FormalParameterImpl
     _identifier = _becomeParentOf(identifier as SimpleIdentifierImpl);
   }
 
-  @deprecated
   @override
   ParameterKind get kind {
     AstNode parent = this.parent;
-    if (parent is DefaultFormalParameter) {
+    if (parent is DefaultFormalParameterImpl) {
       return parent.kind;
     }
     return ParameterKind.REQUIRED;
@@ -7682,9 +7719,7 @@ abstract class NormalFormalParameterImpl extends FormalParameterImpl
     } else {
       result.addAll(sortedCommentAndAnnotations);
     }
-    if (covariantKeyword != null) {
-      result.add(covariantKeyword);
-    }
+    result..add(requiredKeyword)..add(covariantKeyword);
     return result;
   }
 
@@ -8011,6 +8046,7 @@ class PartOfDirectiveImpl extends DirectiveImpl implements PartOfDirective {
 ///    postfixExpression ::=
 ///        [Expression] [Token]
 class PostfixExpressionImpl extends ExpressionImpl
+    with NullShortableExpressionImpl
     implements PostfixExpression {
   /// The expression computing the operand for the operator.
   ExpressionImpl _operand;
@@ -8051,6 +8087,9 @@ class PostfixExpressionImpl extends ExpressionImpl
   @override
   Precedence get precedence => Precedence.postfix;
 
+  @override
+  AstNode get _nullShortingExtensionCandidate => parent;
+
   /// If the AST structure has been resolved, and the function being invoked is
   /// known based on static type information, then return the parameter element
   /// representing the parameter to which the value of the operand will be
@@ -8073,6 +8112,9 @@ class PostfixExpressionImpl extends ExpressionImpl
   void visitChildren(AstVisitor visitor) {
     _operand?.accept(visitor);
   }
+
+  @override
+  bool _extendsNullShorting(Expression child) => identical(child, operand);
 }
 
 /// An identifier that is prefixed or an access to an object property where the
@@ -8172,7 +8214,9 @@ class PrefixedIdentifierImpl extends IdentifierImpl
 ///
 ///    prefixExpression ::=
 ///        [Token] [Expression]
-class PrefixExpressionImpl extends ExpressionImpl implements PrefixExpression {
+class PrefixExpressionImpl extends ExpressionImpl
+    with NullShortableExpressionImpl
+    implements PrefixExpression {
   /// The prefix operator being applied to the operand.
   @override
   Token operator;
@@ -8212,6 +8256,9 @@ class PrefixExpressionImpl extends ExpressionImpl implements PrefixExpression {
   @override
   Precedence get precedence => Precedence.prefix;
 
+  @override
+  AstNode get _nullShortingExtensionCandidate => parent;
+
   /// If the AST structure has been resolved, and the function being invoked is
   /// known based on static type information, then return the parameter element
   /// representing the parameter to which the value of the operand will be
@@ -8234,6 +8281,9 @@ class PrefixExpressionImpl extends ExpressionImpl implements PrefixExpression {
   void visitChildren(AstVisitor visitor) {
     _operand?.accept(visitor);
   }
+
+  @override
+  bool _extendsNullShorting(Expression child) => identical(child, operand);
 }
 
 /// The access of a property of an object.
@@ -8289,10 +8339,14 @@ class PropertyAccessImpl extends ExpressionImpl
           operator.type == TokenType.QUESTION_PERIOD_PERIOD);
 
   @override
-  bool get isNullAware =>
-      operator != null &&
-      (operator.type == TokenType.QUESTION_PERIOD ||
-          operator.type == TokenType.QUESTION_PERIOD_PERIOD);
+  bool get isNullAware {
+    if (isCascaded) {
+      return _ancestorCascade.isNullAware;
+    }
+    return operator != null &&
+        (operator.type == TokenType.QUESTION_PERIOD ||
+            operator.type == TokenType.QUESTION_PERIOD_PERIOD);
+  }
 
   @override
   Precedence get precedence => Precedence.postfix;
@@ -8308,14 +8362,7 @@ class PropertyAccessImpl extends ExpressionImpl
   @override
   Expression get realTarget {
     if (isCascaded) {
-      AstNode ancestor = parent;
-      while (ancestor is! CascadeExpression) {
-        if (ancestor == null) {
-          return _target;
-        }
-        ancestor = ancestor.parent;
-      }
-      return (ancestor as CascadeExpression).target;
+      return _ancestorCascade.target;
     }
     return _target;
   }
@@ -8326,6 +8373,18 @@ class PropertyAccessImpl extends ExpressionImpl
   @override
   set target(Expression expression) {
     _target = _becomeParentOf(expression as ExpressionImpl);
+  }
+
+  /// Return the cascade that contains this [IndexExpression].
+  ///
+  /// We expect that [isCascaded] is `true`.
+  CascadeExpression get _ancestorCascade {
+    assert(isCascaded);
+    for (var ancestor = parent;; ancestor = ancestor.parent) {
+      if (ancestor is CascadeExpression) {
+        return ancestor;
+      }
+    }
   }
 
   @override
@@ -8625,6 +8684,10 @@ class SetOrMapLiteralImpl extends TypedLiteralImpl implements SetOrMapLiteral {
     _resolvedKind = _SetOrMapKind.set;
   }
 
+  void becomeUnresolved() {
+    _resolvedKind = _SetOrMapKind.unresolved;
+  }
+
   @override
   void visitChildren(AstVisitor visitor) {
     super.visitChildren(visitor);
@@ -8712,6 +8775,8 @@ class SimpleFormalParameterImpl extends NormalFormalParameterImpl
     NodeList<Annotation> metadata = this.metadata;
     if (metadata.isNotEmpty) {
       return metadata.beginToken;
+    } else if (requiredKeyword != null) {
+      return requiredKeyword;
     } else if (covariantKeyword != null) {
       return covariantKeyword;
     } else if (keyword != null) {
@@ -10473,7 +10538,9 @@ class VariableDeclarationListImpl extends AnnotatedNodeImpl
 
   @override
   Token get firstTokenAfterCommentAndMetadata {
-    if (keyword != null) {
+    if (lateKeyword != null) {
+      return lateKeyword;
+    } else if (keyword != null) {
       return keyword;
     } else if (_type != null) {
       return _type.beginToken;

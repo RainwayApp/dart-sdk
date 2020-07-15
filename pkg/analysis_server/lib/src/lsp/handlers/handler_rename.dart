@@ -23,6 +23,10 @@ class PrepareRenameHandler
   @override
   Future<ErrorOr<RangeAndPlaceholder>> handle(
       TextDocumentPositionParams params, CancellationToken token) async {
+    if (!isDartDocument(params.textDocument)) {
+      return success(null);
+    }
+
     final pos = params.position;
     final path = pathOfDoc(params.textDocument);
     final unit = await path.mapResult(requireResolvedUnit);
@@ -39,6 +43,9 @@ class PrepareRenameHandler
           RenameRefactoring.getElementToRename(node, element);
       final refactoring = RenameRefactoring(
           server.refactoringWorkspace, unit.result, refactorDetails.element);
+      if (refactoring == null) {
+        return success(null);
+      }
 
       // Check the rename is valid here.
       final initStatus = await refactoring.checkInitialConditions();
@@ -48,7 +55,7 @@ class PrepareRenameHandler
       }
 
       return success(RangeAndPlaceholder(
-        toRange(
+        range: toRange(
           unit.result.lineInfo,
           // If the offset is set to -1 it means there is no location for the
           // old name. However since we must provide a range for LSP, we'll use
@@ -57,7 +64,7 @@ class PrepareRenameHandler
           refactorDetails.offset == -1 ? offset : refactorDetails.offset,
           refactorDetails.length,
         ),
-        refactoring.oldName,
+        placeholder: refactoring.oldName,
       ));
     });
   }
@@ -75,6 +82,10 @@ class RenameHandler extends MessageHandler<RenameParams, WorkspaceEdit> {
   @override
   Future<ErrorOr<WorkspaceEdit>> handle(
       RenameParams params, CancellationToken token) async {
+    if (!isDartDocument(params.textDocument)) {
+      return success(null);
+    }
+
     final pos = params.position;
     final path = pathOfDoc(params.textDocument);
     // If the client provided us a version doc identifier, we'll use it to ensure
@@ -100,6 +111,9 @@ class RenameHandler extends MessageHandler<RenameParams, WorkspaceEdit> {
           RenameRefactoring.getElementToRename(node, element);
       final refactoring = RenameRefactoring(
           server.refactoringWorkspace, unit.result, refactorDetails.element);
+      if (refactoring == null) {
+        return success(null);
+      }
 
       // TODO(dantup): Consider using window/showMessageRequest to prompt
       // the user to see if they'd like to proceed with a rename if there

@@ -13,9 +13,8 @@ import "dart:math";
 import "dart:typed_data";
 
 import 'package:expect/expect.dart';
+import 'package:native_stack_traces/native_stack_traces.dart';
 import 'package:path/path.dart' as path;
-import 'package:vm/dwarf/convert.dart';
-import 'package:vm/dwarf/dwarf.dart';
 
 import 'use_flag_test_helper.dart';
 
@@ -104,17 +103,6 @@ main(List<String> args) async {
     ]);
     final strippedOffsets = collectPCOffsets(strippedTrace);
 
-    if (Platform.isWindows) {
-      // TODO(dartbug.com/35274): After this point, we make sure that we get
-      // the same offsets from the DWARF stack traces. On Windows, we currently
-      // aren't guaranteed to get the same offset in DWARF stack traces from
-      // different runs because we aren't using the native loader for dynamic
-      // libraries (as the Windows one does not understand ELF). Instead, we
-      // fall back onto our own ELF loader, and the DWARF stack trace output
-      // only prints relative PC addresses for dynamically loaded libraries.
-      return;
-    }
-
     // The retrieved offsets should be the same for all runs.
     Expect.deepEquals(wholeOffsets, strippedOffsets);
     Expect.deepEquals(strippedOnlyOffsets, strippedOffsets);
@@ -122,20 +110,20 @@ main(List<String> args) async {
     // Stripped output should not change when --save-debugging-info is used.
     compareSnapshots(scriptStrippedOnlySnapshot, scriptStrippedSnapshot);
 
-    final stackTraceWithTerminators = strippedTrace.map((String s) => s + "\n");
-    print("\nOriginal stack trace:");
-    print(stackTraceWithTerminators.join());
+    print('');
+    print("Original stack trace:");
+    strippedTrace.forEach(print);
 
     final debugDwarf = Dwarf.fromFile(scriptDebuggingInfo);
     final wholeDwarf = Dwarf.fromFile(scriptWholeSnapshot);
 
-    final fromDebug = await Stream.fromIterable(stackTraceWithTerminators)
+    final fromDebug = await Stream.fromIterable(strippedTrace)
         .transform(DwarfStackTraceDecoder(debugDwarf))
         .toList();
     print("\nStack trace converted using separate debugging info:");
     print(fromDebug.join());
 
-    final fromWhole = await Stream.fromIterable(stackTraceWithTerminators)
+    final fromWhole = await Stream.fromIterable(strippedTrace)
         .transform(DwarfStackTraceDecoder(wholeDwarf))
         .toList();
     print("\nStack trace converted using unstripped ELF file:");
@@ -180,7 +168,7 @@ Map<int, List<int>> diffBinary(Uint8List bytes1, Uint8List bytes2) {
 void printDiff(Map<int, List<int>> map, [int maxOutput = 100]) {
   int lines = 0;
   for (var index in map.keys) {
-    final pair = map[index];
+    final pair = map[index]!;
     if (pair[0] == -1) {
       print('$index: <>, ${pair[1]}');
       lines++;

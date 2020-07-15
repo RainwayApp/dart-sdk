@@ -4,10 +4,14 @@
 
 #include "vm/type_testing_stubs.h"
 #include "vm/compiler/assembler/disassembler.h"
+#include "vm/object_store.h"
+#include "vm/stub_code.h"
+#include "vm/timeline.h"
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
 #include "vm/compiler/backend/flow_graph_compiler.h"
 #include "vm/compiler/backend/il_printer.h"
-#include "vm/object_store.h"
-#include "vm/timeline.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 #define __ assembler->
 
@@ -24,15 +28,13 @@ TypeTestingStubNamer::TypeTestingStubNamer()
 
 const char* TypeTestingStubNamer::StubNameForType(
     const AbstractType& type) const {
-  const uintptr_t address =
-      reinterpret_cast<uintptr_t>(type.raw()) & 0x7fffffff;
   Zone* Z = Thread::Current()->zone();
-  return OS::SCreate(Z, "TypeTestingStub_%s__%" Pd "", StringifyType(type),
-                     address);
+  return OS::SCreate(Z, "TypeTestingStub_%s", StringifyType(type));
 }
 
 const char* TypeTestingStubNamer::StringifyType(
     const AbstractType& type) const {
+  NoSafepointScope no_safepoint;
   Zone* Z = Thread::Current()->zone();
   if (type.IsType() && !type.IsFunctionType()) {
     const intptr_t cid = Type::Cast(type).type_class_id();
@@ -50,10 +52,8 @@ const char* TypeTestingStubNamer::StringifyType(
       curl = OS::SCreate(Z, "nolib%" Pd "_", counter++);
     }
 
-    string_ = klass_.ScrubbedName();
-    ASSERT(!string_.IsNull());
-    const char* concatenated =
-        AssemblerSafeName(OS::SCreate(Z, "%s_%s", curl, string_.ToCString()));
+    const char* concatenated = AssemblerSafeName(
+        OS::SCreate(Z, "%s_%s", curl, klass_.ScrubbedNameCString()));
 
     const intptr_t type_parameters = klass_.NumTypeParameters();
     if (type.arguments() != TypeArguments::null() && type_parameters > 0) {
@@ -88,36 +88,38 @@ const char* TypeTestingStubNamer::AssemblerSafeName(char* cname) {
   return cname;
 }
 
-RawCode* TypeTestingStubGenerator::DefaultCodeForType(
+CodePtr TypeTestingStubGenerator::DefaultCodeForType(
     const AbstractType& type,
     bool lazy_specialize /* = true */) {
   if (type.IsTypeRef()) {
-    return StubCode::DefaultTypeTest().raw();
+    return Isolate::Current()->null_safety()
+               ? StubCode::DefaultTypeTest().raw()
+               : StubCode::DefaultNullableTypeTest().raw();
   }
 
-  const intptr_t cid = type.type_class_id();
   // During bootstrapping we have no access to stubs yet, so we'll just return
   // `null` and patch these later in `Object::FinishInit()`.
   if (!StubCode::HasBeenInitialized()) {
     ASSERT(type.IsType());
-    ASSERT(cid == kDynamicCid || cid == kVoidCid | cid == kNeverCid);
+    const classid_t cid = type.type_class_id();
+    ASSERT(cid == kDynamicCid || cid == kVoidCid);
     return Code::null();
   }
 
-  // TODO(regis): Revisit when type checking mode is not kLegacy anymore.
-  if (cid == kDynamicCid || cid == kVoidCid || cid == kInstanceCid) {
+  if (type.IsTopTypeForSubtyping()) {
     return StubCode::TopTypeTypeTest().raw();
-  }
-
-  if (cid == kNeverCid) {
-    // TODO(regis): Revisit.
-    return StubCode::StubCode::DefaultTypeTest().raw();
   }
 
   if (type.IsType() || type.IsTypeParameter()) {
     const bool should_specialize = !FLAG_precompiled_mode && lazy_specialize;
-    return should_specialize ? StubCode::LazySpecializeTypeTest().raw()
-                             : StubCode::DefaultTypeTest().raw();
+    const bool nullable = Instance::NullIsAssignableTo(type);
+    if (should_specialize) {
+      return nullable ? StubCode::LazySpecializeNullableTypeTest().raw()
+                      : StubCode::LazySpecializeTypeTest().raw();
+    } else {
+      return nullable ? StubCode::DefaultNullableTypeTest().raw()
+                      : StubCode::DefaultTypeTest().raw();
+    }
   }
 
   return StubCode::UnreachableTypeTest().raw();
@@ -137,17 +139,17 @@ void TypeTestingStubGenerator::SpecializeStubFor(Thread* thread,
 TypeTestingStubGenerator::TypeTestingStubGenerator()
     : object_store_(Isolate::Current()->object_store()) {}
 
-RawCode* TypeTestingStubGenerator::OptimizedCodeForType(
+CodePtr TypeTestingStubGenerator::OptimizedCodeForType(
     const AbstractType& type) {
 #if !defined(TARGET_ARCH_IA32)
   ASSERT(StubCode::HasBeenInitialized());
 
   if (type.IsTypeRef()) {
-    return StubCode::DefaultTypeTest().raw();
+    return TypeTestingStubGenerator::DefaultCodeForType(
+        type, /*lazy_specialize=*/false);
   }
 
-  const intptr_t cid = type.type_class_id();
-  if (cid == kDynamicCid || cid == kVoidCid || cid == kInstanceCid) {
+  if (type.IsTopTypeForSubtyping()) {
     return StubCode::TopTypeTypeTest().raw();
   }
 
@@ -161,24 +163,24 @@ RawCode* TypeTestingStubGenerator::OptimizedCodeForType(
       }
 
       // Fall back to default.
-      return StubCode::DefaultTypeTest().raw();
 #else
       // In the precompiled runtime we cannot lazily create new optimized type
       // testing stubs, so if we cannot find one, we'll just return the default
       // one.
-      return StubCode::DefaultTypeTest().raw();
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
     }
   }
 #endif  // !defined(TARGET_ARCH_IA32)
-  return TypeTestingStubGenerator::DefaultCodeForType(type, false);
+  return TypeTestingStubGenerator::DefaultCodeForType(
+      type, /*lazy_specialize=*/false);
 }
 
 #if !defined(TARGET_ARCH_IA32)
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
-RawCode* TypeTestingStubGenerator::BuildCodeForType(const Type& type) {
+CodePtr TypeTestingStubGenerator::BuildCodeForType(const Type& type) {
   auto thread = Thread::Current();
+  auto zone = thread->zone();
   HierarchyInfo* hi = thread->hierarchy_info();
   ASSERT(hi != NULL);
 
@@ -190,9 +192,20 @@ RawCode* TypeTestingStubGenerator::BuildCodeForType(const Type& type) {
   const Class& type_class = Class::Handle(type.type_class());
   ASSERT(!type_class.IsNull());
 
+  auto& slow_tts_stub = Code::ZoneHandle(zone);
+  if (FLAG_precompiled_mode && FLAG_use_bare_instructions) {
+    slow_tts_stub = thread->isolate()->object_store()->slow_tts_stub();
+  }
+
   // To use the already-defined __ Macro !
   compiler::Assembler assembler(nullptr);
-  BuildOptimizedTypeTestStub(&assembler, hi, type, type_class);
+  compiler::UnresolvedPcRelativeCalls unresolved_calls;
+  BuildOptimizedTypeTestStub(&assembler, &unresolved_calls, slow_tts_stub, hi,
+                             type, type_class);
+
+  const auto& static_calls_table =
+      Array::Handle(zone, compiler::StubCodeCompiler::BuildStaticCallsTable(
+                              zone, &unresolved_calls));
 
   const char* name = namer_.StubNameForType(type);
   const auto pool_attachment = FLAG_use_bare_instructions
@@ -203,6 +216,9 @@ RawCode* TypeTestingStubGenerator::BuildCodeForType(const Type& type) {
   auto install_code_fun = [&]() {
     code = Code::FinalizeCode(nullptr, &assembler, pool_attachment,
                               /*optimized=*/false, /*stats=*/nullptr);
+    if (!static_calls_table.IsNull()) {
+      code.set_static_calls_target_table(static_calls_table);
+    }
   };
 
   // We have to ensure no mutators are running, because:
@@ -210,8 +226,8 @@ RawCode* TypeTestingStubGenerator::BuildCodeForType(const Type& type) {
   //   a) We allocate an instructions object, which might cause us to
   //      temporarily flip page protections from (RX -> RW -> RX).
   //
-  thread->isolate_group()->RunWithStoppedMutators(
-      install_code_fun, install_code_fun, /*use_force_growth=*/true);
+  thread->isolate_group()->RunWithStoppedMutators(install_code_fun,
+                                                  /*use_force_growth=*/true);
 
   Code::NotifyCodeObservers(name, code, /*optimized=*/false);
 
@@ -237,22 +253,28 @@ void TypeTestingStubGenerator::BuildOptimizedTypeTestStubFastCases(
     compiler::Assembler* assembler,
     HierarchyInfo* hi,
     const Type& type,
-    const Class& type_class,
-    Register instance_reg,
-    Register class_id_reg) {
+    const Class& type_class) {
   // These are handled via the TopTypeTypeTestStub!
-  ASSERT(!(type.IsDynamicType() || type.IsVoidType() || type.IsObjectType()));
+  ASSERT(!type.IsTopTypeForSubtyping());
 
   // Fast case for 'int'.
   if (type.IsIntType()) {
     compiler::Label non_smi_value;
-    __ BranchIfNotSmi(instance_reg, &non_smi_value);
+    __ BranchIfNotSmi(TypeTestABI::kInstanceReg, &non_smi_value);
     __ Ret();
     __ Bind(&non_smi_value);
   } else if (type.IsDartFunctionType()) {
     compiler::Label continue_checking;
-    __ CompareImmediate(class_id_reg, kClosureCid);
+    __ CompareImmediate(TTSInternalRegs::kScratchReg, kClosureCid);
     __ BranchIf(NOT_EQUAL, &continue_checking);
+    __ Ret();
+    __ Bind(&continue_checking);
+
+  } else if (type.IsObjectType()) {
+    ASSERT(type.IsNonNullable() && Isolate::Current()->null_safety());
+    compiler::Label continue_checking;
+    __ CompareObject(TypeTestABI::kInstanceReg, Object::null_object());
+    __ BranchIf(EQUAL, &continue_checking);
     __ Ret();
     __ Bind(&continue_checking);
 
@@ -263,17 +285,15 @@ void TypeTestingStubGenerator::BuildOptimizedTypeTestStubFastCases(
 
   // Check the cid ranges which are a subtype of [type].
   if (hi->CanUseSubtypeRangeCheckFor(type)) {
-    const CidRangeVector& ranges =
-        hi->SubtypeRangesForClass(type_class,
-                                  /*include_abstract=*/false,
-                                  /*exclude_null=*/false);
+    const CidRangeVector& ranges = hi->SubtypeRangesForClass(
+        type_class,
+        /*include_abstract=*/false,
+        /*exclude_null=*/!Instance::NullIsAssignableTo(type));
 
     const Type& int_type = Type::Handle(Type::IntType());
-    const bool smi_is_ok =
-        int_type.IsSubtypeOf(NNBDMode::kLegacyLib, type, Heap::kNew);
+    const bool smi_is_ok = int_type.IsSubtypeOf(type, Heap::kNew);
 
-    BuildOptimizedSubtypeRangeCheck(assembler, ranges, class_id_reg,
-                                    instance_reg, smi_is_ok);
+    BuildOptimizedSubtypeRangeCheck(assembler, ranges, smi_is_ok);
   } else {
     ASSERT(hi->CanUseGenericSubtypeRangeCheckFor(type));
 
@@ -287,35 +307,37 @@ void TypeTestingStubGenerator::BuildOptimizedTypeTestStubFastCases(
     const TypeArguments& ta = TypeArguments::Handle(type.arguments());
     ASSERT(ta.Length() == num_type_arguments);
 
-    BuildOptimizedSubclassRangeCheckWithTypeArguments(assembler, hi, type_class,
-                                                      tp, ta);
+    BuildOptimizedSubclassRangeCheckWithTypeArguments(assembler, hi, type,
+                                                      type_class, tp, ta);
   }
 
-  // Fast case for 'null'.
-  compiler::Label non_null;
-  __ CompareObject(instance_reg, Object::null_object());
-  __ BranchIf(NOT_EQUAL, &non_null);
-  __ Ret();
-  __ Bind(&non_null);
+  if (Instance::NullIsAssignableTo(type)) {
+    // Fast case for 'null'.
+    compiler::Label non_null;
+    __ CompareObject(TypeTestABI::kInstanceReg, Object::null_object());
+    __ BranchIf(NOT_EQUAL, &non_null);
+    __ Ret();
+    __ Bind(&non_null);
+  }
 }
 
 void TypeTestingStubGenerator::BuildOptimizedSubtypeRangeCheck(
     compiler::Assembler* assembler,
     const CidRangeVector& ranges,
-    Register class_id_reg,
-    Register instance_reg,
     bool smi_is_ok) {
   compiler::Label cid_range_failed, is_subtype;
 
   if (smi_is_ok) {
-    __ LoadClassIdMayBeSmi(class_id_reg, instance_reg);
+    __ LoadClassIdMayBeSmi(TTSInternalRegs::kScratchReg,
+                           TypeTestABI::kInstanceReg);
   } else {
-    __ BranchIfSmi(instance_reg, &cid_range_failed);
-    __ LoadClassId(class_id_reg, instance_reg);
+    __ BranchIfSmi(TypeTestABI::kInstanceReg, &cid_range_failed);
+    __ LoadClassId(TTSInternalRegs::kScratchReg, TypeTestABI::kInstanceReg);
   }
 
   FlowGraphCompiler::GenerateCidRangesCheck(
-      assembler, class_id_reg, ranges, &is_subtype, &cid_range_failed, true);
+      assembler, TTSInternalRegs::kScratchReg, ranges, &is_subtype,
+      &cid_range_failed, true);
   __ Bind(&is_subtype);
   __ Ret();
   __ Bind(&cid_range_failed);
@@ -325,25 +347,22 @@ void TypeTestingStubGenerator::
     BuildOptimizedSubclassRangeCheckWithTypeArguments(
         compiler::Assembler* assembler,
         HierarchyInfo* hi,
+        const Type& type,
         const Class& type_class,
         const TypeArguments& tp,
-        const TypeArguments& ta,
-        const Register class_id_reg,
-        const Register instance_reg,
-        const Register instance_type_args_reg) {
+        const TypeArguments& ta) {
   // a) First we make a quick sub*class* cid-range check.
   compiler::Label check_failed;
   ASSERT(!type_class.is_implemented());
   const CidRangeVector& ranges = hi->SubclassRangesForClass(type_class);
-  BuildOptimizedSubclassRangeCheck(assembler, ranges, class_id_reg,
-                                   instance_reg, &check_failed);
+  BuildOptimizedSubclassRangeCheck(assembler, ranges, &check_failed);
   // fall through to continue
 
   // b) Then we'll load the values for the type parameters.
   __ LoadField(
-      instance_type_args_reg,
+      TTSInternalRegs::kInstanceTypeArgumentsReg,
       compiler::FieldAddress(
-          instance_reg,
+          TypeTestABI::kInstanceReg,
           compiler::target::Class::TypeArgumentsFieldOffset(type_class)));
 
   // The kernel frontend should fill in any non-assigned type parameters on
@@ -353,11 +372,17 @@ void TypeTestingStubGenerator::
   // TODO(kustermann): We could consider not using "null" as type argument
   // vector representing all-dynamic to avoid this extra check (which will be
   // uncommon because most Dart code in 2.0 will be strongly typed)!
-  compiler::Label process_done;
-  __ CompareObject(instance_type_args_reg, Object::null_object());
-  __ BranchIf(NOT_EQUAL, &process_done);
-  __ Ret();
-  __ Bind(&process_done);
+  __ CompareObject(TTSInternalRegs::kInstanceTypeArgumentsReg,
+                   Object::null_object());
+  const Type& rare_type = Type::Handle(Type::RawCast(type_class.RareType()));
+  if (rare_type.IsSubtypeOf(type, Heap::kNew)) {
+    compiler::Label process_done;
+    __ BranchIf(NOT_EQUAL, &process_done);
+    __ Ret();
+    __ Bind(&process_done);
+  } else {
+    __ BranchIf(EQUAL, &check_failed);
+  }
 
   // c) Then we'll check each value of the type argument.
   AbstractType& type_arg = AbstractType::Handle();
@@ -384,70 +409,97 @@ void TypeTestingStubGenerator::
 void TypeTestingStubGenerator::BuildOptimizedSubclassRangeCheck(
     compiler::Assembler* assembler,
     const CidRangeVector& ranges,
-    Register class_id_reg,
-    Register instance_reg,
     compiler::Label* check_failed) {
-  __ LoadClassIdMayBeSmi(class_id_reg, instance_reg);
+  __ LoadClassIdMayBeSmi(TTSInternalRegs::kScratchReg,
+                         TypeTestABI::kInstanceReg);
 
   compiler::Label is_subtype;
-  FlowGraphCompiler::GenerateCidRangesCheck(assembler, class_id_reg, ranges,
-                                            &is_subtype, check_failed, true);
+  FlowGraphCompiler::GenerateCidRangesCheck(
+      assembler, TTSInternalRegs::kScratchReg, ranges, &is_subtype,
+      check_failed, true);
   __ Bind(&is_subtype);
 }
 
+// Generate code to verify that instance's type argument is a subtype of
+// 'type_arg'.
 void TypeTestingStubGenerator::BuildOptimizedTypeArgumentValueCheck(
     compiler::Assembler* assembler,
     HierarchyInfo* hi,
     const AbstractType& type_arg,
     intptr_t type_param_value_offset_i,
-    const Register class_id_reg,
-    const Register instance_type_args_reg,
-    const Register instantiator_type_args_reg,
-    const Register function_type_args_reg,
-    const Register own_type_arg_reg,
     compiler::Label* check_failed) {
-  const intptr_t cid = type_arg.type_class_id();
-  if (!(cid == kDynamicCid || cid == kVoidCid || cid == kInstanceCid)) {
-    // TODO(kustermann): Even though it should be safe to use TMP here, we
-    // should avoid using TMP outside the assembler.  Try to find a free
-    // register to use here!
-    __ LoadField(TMP, compiler::FieldAddress(
-                          instance_type_args_reg,
-                          compiler::target::TypeArguments::type_at_offset(
-                              type_param_value_offset_i)));
-    __ LoadField(class_id_reg,
-                 compiler::FieldAddress(
-                     TMP, compiler::target::Type::type_class_id_offset()));
+  if (type_arg.IsTopTypeForSubtyping()) {
+    return;
+  }
 
-    if (type_arg.IsTypeParameter()) {
-      const TypeParameter& type_param = TypeParameter::Cast(type_arg);
-      const Register kTypeArgumentsReg = type_param.IsClassTypeParameter()
-                                             ? instantiator_type_args_reg
-                                             : function_type_args_reg;
-      __ LoadField(own_type_arg_reg,
+  // If the upper bound is a type parameter and its value is "dynamic"
+  // we always succeed.
+  compiler::Label is_dynamic;
+  if (type_arg.IsTypeParameter()) {
+    const TypeParameter& type_param = TypeParameter::Cast(type_arg);
+    const Register kTypeArgumentsReg =
+        type_param.IsClassTypeParameter()
+            ? TypeTestABI::kInstantiatorTypeArgumentsReg
+            : TypeTestABI::kFunctionTypeArgumentsReg;
+
+    __ CompareObject(kTypeArgumentsReg, Object::null_object());
+    __ BranchIf(EQUAL, &is_dynamic);
+
+    __ LoadField(
+        TTSInternalRegs::kScratchReg,
+        compiler::FieldAddress(kTypeArgumentsReg,
+                               compiler::target::TypeArguments::type_at_offset(
+                                   type_param.index())));
+    __ CompareWithFieldValue(
+        TTSInternalRegs::kScratchReg,
+        compiler::FieldAddress(TTSInternalRegs::kInstanceTypeArgumentsReg,
+                               compiler::target::TypeArguments::type_at_offset(
+                                   type_param_value_offset_i)));
+    __ BranchIf(NOT_EQUAL, check_failed);
+  } else {
+    const Class& type_class = Class::Handle(type_arg.type_class());
+    const CidRangeVector& ranges = hi->SubtypeRangesForClass(
+        type_class,
+        /*include_abstract=*/true,
+        /*exclude_null=*/!Instance::NullIsAssignableTo(type_arg));
+
+    __ LoadField(
+        TTSInternalRegs::kScratchReg,
+        compiler::FieldAddress(TTSInternalRegs::kInstanceTypeArgumentsReg,
+                               compiler::target::TypeArguments::type_at_offset(
+                                   type_param_value_offset_i)));
+    __ LoadField(
+        TTSInternalRegs::kScratchReg,
+        compiler::FieldAddress(TTSInternalRegs::kScratchReg,
+                               compiler::target::Type::type_class_id_offset()));
+
+    compiler::Label is_subtype;
+    __ SmiUntag(TTSInternalRegs::kScratchReg);
+    FlowGraphCompiler::GenerateCidRangesCheck(
+        assembler, TTSInternalRegs::kScratchReg, ranges, &is_subtype,
+        check_failed, true);
+    __ Bind(&is_subtype);
+
+    // Weak NNBD mode uses LEGACY_SUBTYPE which ignores nullability.
+    // We don't need to check nullability of LHS for nullable and legacy RHS
+    // ("Right Legacy", "Right Nullable" rules).
+    if (Isolate::Current()->null_safety() && !type_arg.IsNullable() &&
+        !type_arg.IsLegacy()) {
+      // Nullable type is not a subtype of non-nullable type.
+      // TODO(dartbug.com/40736): Allocate a register for instance type argument
+      // and avoid reloading it.
+      __ LoadField(TTSInternalRegs::kScratchReg,
                    compiler::FieldAddress(
-                       kTypeArgumentsReg,
+                       TTSInternalRegs::kInstanceTypeArgumentsReg,
                        compiler::target::TypeArguments::type_at_offset(
-                           type_param.index())));
-      __ CompareWithFieldValue(
-          class_id_reg, compiler::FieldAddress(
-                            own_type_arg_reg,
-                            compiler::target::Type::type_class_id_offset()));
-      __ BranchIf(NOT_EQUAL, check_failed);
-    } else {
-      const Class& type_class = Class::Handle(type_arg.type_class());
-      const CidRangeVector& ranges =
-          hi->SubtypeRangesForClass(type_class,
-                                    /*include_abstract=*/true,
-                                    /*exclude_null=*/false);
-
-      compiler::Label is_subtype;
-      __ SmiUntag(class_id_reg);
-      FlowGraphCompiler::GenerateCidRangesCheck(
-          assembler, class_id_reg, ranges, &is_subtype, check_failed, true);
-      __ Bind(&is_subtype);
+                           type_param_value_offset_i)));
+      __ CompareTypeNullabilityWith(TTSInternalRegs::kScratchReg,
+                                    compiler::target::Nullability::kNullable);
+      __ BranchIf(EQUAL, check_failed);
     }
   }
+
+  __ Bind(&is_dynamic);
 }
 
 void RegisterTypeArgumentsUse(const Function& function,
@@ -550,6 +602,7 @@ void RegisterTypeArgumentsUse(const Function& function,
 
 #else  // !defined(TARGET_ARCH_IA32)
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
 void RegisterTypeArgumentsUse(const Function& function,
                               TypeUsageInfo* type_usage_info,
                               const Class& klass,
@@ -557,6 +610,7 @@ void RegisterTypeArgumentsUse(const Function& function,
   // We only have a [TypeUsageInfo] object available durin AOT compilation.
   UNREACHABLE();
 }
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 #endif  // !defined(TARGET_ARCH_IA32)
 
@@ -582,7 +636,7 @@ const TypeArguments& TypeArgumentInstantiator::InstantiateTypeArguments(
   return *instantiated_type_arguments;
 }
 
-RawAbstractType* TypeArgumentInstantiator::InstantiateType(
+AbstractTypePtr TypeArgumentInstantiator::InstantiateType(
     const AbstractType& type) {
   if (type.IsTypeParameter()) {
     const TypeParameter& parameter = TypeParameter::Cast(type);
@@ -591,7 +645,11 @@ RawAbstractType* TypeArgumentInstantiator::InstantiateType(
     if (instantiator_type_arguments_.IsNull()) {
       return Type::DynamicType();
     }
-    return instantiator_type_arguments_.TypeAt(parameter.index());
+    AbstractType& result = AbstractType::Handle(
+        instantiator_type_arguments_.TypeAt(parameter.index()));
+    result = result.SetInstantiatedNullability(TypeParameter::Cast(type),
+                                               Heap::kOld);
+    return result.NormalizeFutureOrType(Heap::kOld);
   } else if (type.IsFunctionType()) {
     // No support for function types yet.
     UNREACHABLE();
@@ -815,7 +873,7 @@ void TypeUsageInfo::UpdateAssertAssignableTypes(
   // eagerly and avoid doing it down inside the loop.
   type = Type::DynamicType();
   UseTypeInAssertAssignable(type);
-  type = Type::ObjectType();
+  type = Type::ObjectType();  // TODO(regis): Add nullable Object?
   UseTypeInAssertAssignable(type);
 
   for (intptr_t cid = 0; cid < cid_count; ++cid) {
@@ -886,7 +944,7 @@ void DeoptimizeTypeTestingStubs() {
     CollectTypes(GrowableArray<AbstractType*>* types, Zone* zone)
         : types_(types), object_(Object::Handle(zone)), zone_(zone) {}
 
-    void VisitObject(RawObject* object) {
+    void VisitObject(ObjectPtr object) {
       if (object->IsPseudoObject()) {
         // Cannot even be wrapped in handles.
         return;

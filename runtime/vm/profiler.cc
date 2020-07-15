@@ -32,17 +32,10 @@ static const intptr_t kMaxSamplesPerTick = 16;
 
 DEFINE_FLAG(bool, trace_profiled_isolates, false, "Trace profiled isolates.");
 
-#if defined(TARGET_ARCH_ARM_6)
-DEFINE_FLAG(int,
-            profile_period,
-            10000,
-            "Time between profiler samples in microseconds. Minimum 50.");
-#else
 DEFINE_FLAG(int,
             profile_period,
             1000,
             "Time between profiler samples in microseconds. Minimum 50.");
-#endif
 DEFINE_FLAG(int,
             max_profile_depth,
             kSampleSize* kMaxSamplesPerTick,
@@ -107,13 +100,8 @@ void Profiler::Cleanup() {
   }
   ASSERT(initialized_);
   ThreadInterrupter::Cleanup();
-#if defined(HOST_OS_LINUX) || defined(HOST_OS_MACOS) || defined(HOST_OS_ANDROID)
-  // TODO(30309): Free the sample buffer on platforms that use a signal-based
-  // thread interrupter.
-#else
   delete sample_buffer_;
   sample_buffer_ = NULL;
-#endif
   initialized_ = false;
 }
 
@@ -462,12 +450,12 @@ void ClearProfileVisitor::VisitSample(Sample* sample) {
 }
 
 static void DumpStackFrame(intptr_t frame_index, uword pc, uword fp) {
-  uintptr_t start = 0;
-  char* native_symbol_name = NativeSymbolResolver::LookupSymbolName(pc, &start);
-  if (native_symbol_name != NULL) {
-    OS::PrintErr("  pc 0x%" Pp " fp 0x%" Pp " %s\n", pc, fp,
-                 native_symbol_name);
-    NativeSymbolResolver::FreeSymbolName(native_symbol_name);
+  uword start = 0;
+  if (auto const name = NativeSymbolResolver::LookupSymbolName(pc, &start)) {
+    uword offset = pc - start;
+    OS::PrintErr("  pc 0x%" Pp " fp 0x%" Pp " %s+0x%" Px "\n", pc, fp, name,
+                 offset);
+    NativeSymbolResolver::FreeSymbolName(name);
     return;
   }
 
@@ -1137,20 +1125,37 @@ void Profiler::DumpStackTrace(uword sp, uword fp, uword pc, bool for_crash) {
     }
   }
 
-  OSThread* os_thread = OSThread::Current();
-  ASSERT(os_thread != NULL);
-  Isolate* isolate = Isolate::Current();
-  const char* name = isolate == NULL ? NULL : isolate->name();
-  OS::PrintErr(
-      "version=%s\nthread=%" Pd ", isolate=%s(%p)\n", Version::String(),
-      OSThread::ThreadIdToIntPtr(os_thread->trace_id()), name, isolate);
+  auto os_thread = OSThread::Current();
+  ASSERT(os_thread != nullptr);
+  auto thread = Thread::Current();  // NULL if no current isolate.
+  auto isolate = thread == nullptr ? nullptr : thread->isolate();
+  auto isolate_group = thread == nullptr ? nullptr : thread->isolate_group();
+  auto source = isolate_group == nullptr ? nullptr : isolate_group->source();
+  auto vm_source =
+      Dart::vm_isolate() == nullptr ? nullptr : Dart::vm_isolate()->source();
+  const char* isolate_group_name =
+      isolate_group == nullptr ? "(nil)" : isolate_group->source()->name;
+  const char* isolate_name = isolate == nullptr ? "(nil)" : isolate->name();
+
+  OS::PrintErr("version=%s\n", Version::String());
+  OS::PrintErr("pid=%" Pd ", thread=%" Pd
+               ", isolate_group=%s(%p), isolate=%s(%p)\n",
+               static_cast<intptr_t>(OS::ProcessId()),
+               OSThread::ThreadIdToIntPtr(os_thread->trace_id()),
+               isolate_group_name, isolate_group, isolate_name, isolate);
+  OS::PrintErr("isolate_instructions=%" Px ", vm_instructions=%" Px "\n",
+               source == nullptr
+                   ? 0
+                   : reinterpret_cast<uword>(source->snapshot_instructions),
+               vm_source == nullptr
+                   ? 0
+                   : reinterpret_cast<uword>(vm_source->snapshot_instructions));
 
   if (!InitialRegisterCheck(pc, fp, sp)) {
     OS::PrintErr("Stack dump aborted because InitialRegisterCheck failed.\n");
     return;
   }
 
-  Thread* thread = Thread::Current();  // NULL if no current isolate.
   uword stack_lower = 0;
   uword stack_upper = 0;
   if (!GetAndValidateThreadStackBounds(os_thread, thread, fp, sp, &stack_lower,
@@ -1167,11 +1172,13 @@ void Profiler::DumpStackTrace(uword sp, uword fp, uword pc, bool for_crash) {
   native_stack_walker.walk();
   OS::PrintErr("-- End of DumpStackTrace\n");
 
-  if (thread->execution_state() == Thread::kThreadInNative) {
-    TransitionNativeToVM transition(thread);
-    StackFrame::DumpCurrentTrace();
-  } else if (thread->execution_state() == Thread::kThreadInVM) {
-    StackFrame::DumpCurrentTrace();
+  if (thread != nullptr) {
+    if (thread->execution_state() == Thread::kThreadInNative) {
+      TransitionNativeToVM transition(thread);
+      StackFrame::DumpCurrentTrace();
+    } else if (thread->execution_state() == Thread::kThreadInVM) {
+      StackFrame::DumpCurrentTrace();
+    }
   }
 }
 
@@ -1365,7 +1372,7 @@ void Profiler::SampleThread(Thread* thread,
       SampleThreadSingleFrame(thread, pc);
       return;
     }
-    if (isolate->compaction_in_progress()) {
+    if (isolate->group()->compaction_in_progress()) {
       // The Dart stack isn't fully walkable.
       SampleThreadSingleFrame(thread, pc);
       return;
@@ -1444,7 +1451,7 @@ class CodeLookupTableBuilder : public ObjectVisitor {
 
   ~CodeLookupTableBuilder() {}
 
-  void VisitObject(RawObject* raw_obj) {
+  void VisitObject(ObjectPtr raw_obj) {
     if (raw_obj->IsCode()) {
       table_->Add(Code::Handle(Code::RawCast(raw_obj)));
     } else if (raw_obj->IsBytecode()) {

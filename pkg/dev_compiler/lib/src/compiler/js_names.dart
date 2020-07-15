@@ -123,7 +123,7 @@ class _FunctionScope {
 
   /// Nested scopes, these are visited after everything else so the names
   /// they might need are in scope.
-  final childScopes = Map<Node, _FunctionScope>();
+  final childScopes = <Node, _FunctionScope>{};
 
   /// New names assigned for temps and identifiers.
   final renames = HashMap<Object, String>();
@@ -133,7 +133,7 @@ class _FunctionScope {
 
 /// Collects all names used in the visited tree.
 class _RenameVisitor extends VariableDeclarationVisitor {
-  final pendingRenames = Map<Object, Set<_FunctionScope>>();
+  final pendingRenames = <Object, Set<_FunctionScope>>{};
 
   final _FunctionScope globalScope = _FunctionScope(null);
   final _FunctionScope rootScope = _FunctionScope(null);
@@ -245,7 +245,7 @@ class _RenameVisitor extends VariableDeclarationVisitor {
       // TODO(jmesserly): what's the most readable scheme here? Maybe 1-letter
       // names in some cases?
       candidate = name == 'function' ? 'func' : '${name}\$';
-      for (int i = 0;
+      for (var i = 0;
           scopes.any((scope) => scope.used.contains(candidate));
           i++) {
         candidate = '${name}\$$i';
@@ -343,7 +343,7 @@ bool isFunctionPrototypeGetter(String name) {
 ///
 /// http://www.ecma-international.org/ecma-262/6.0/#sec-properties-of-the-object-prototype-object
 /// http://www.ecma-international.org/ecma-262/6.0/#sec-additional-properties-of-the-object.prototype-object
-final objectProperties = <String>[
+final objectProperties = <String>{
   'constructor',
   'toString',
   'toLocaleString',
@@ -356,7 +356,7 @@ final objectProperties = <String>[
   '__defineSetter__',
   '__lookupSetter__',
   '__proto__'
-].toSet();
+};
 
 /// Returns the JS member name for a public Dart instance member, before it
 /// is symbolized; generally you should use [_emitMemberName] or
@@ -415,7 +415,7 @@ String toJSIdentifier(String name) {
 
   // Escape any invalid characters
   StringBuffer buffer;
-  for (int i = 0; i < name.length; i++) {
+  for (var i = 0; i < name.length; i++) {
     var ch = name[i];
     var needsEscape = ch == r'$' || invalidCharInIdentifier.hasMatch(ch);
     if (needsEscape && buffer == null) {

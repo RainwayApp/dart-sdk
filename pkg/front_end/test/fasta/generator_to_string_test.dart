@@ -8,6 +8,7 @@ import 'package:_fe_analyzer_shared/src/scanner/scanner.dart'
     show Token, scanString;
 
 import 'package:expect/expect.dart' show Expect;
+import 'package:front_end/src/fasta/uri_translator.dart';
 
 import 'package:kernel/ast.dart'
     show
@@ -57,8 +58,8 @@ void check(String expected, Generator generator) {
   Expect.stringEquals(expected, "$generator");
 }
 
-main() {
-  CompilerContext.runWithDefaultOptions((CompilerContext c) {
+main() async {
+  await CompilerContext.runWithDefaultOptions((CompilerContext c) async {
     Token token = scanString("    myToken").tokens;
     Uri uri = Uri.parse("org-dartlang-test:my_library.dart");
 
@@ -67,14 +68,17 @@ main() {
     Expression expression =
         new VariableGet(new VariableDeclaration("expression"));
     Expression index = new VariableGet(new VariableDeclaration("index"));
+    UriTranslator uriTranslator = await c.options.getUriTranslator();
     SourceLibraryBuilder libraryBuilder = new SourceLibraryBuilder(
         uri,
         uri,
+        /*packageUri*/ null,
         new KernelTarget(
                 null,
                 false,
-                new DillTarget(null, null, new NoneTarget(new TargetFlags())),
-                null)
+                new DillTarget(c.options.ticker, uriTranslator,
+                    new NoneTarget(new TargetFlags())),
+                uriTranslator)
             .loader,
         null);
     LoadLibraryBuilder loadLibraryBuilder =
@@ -167,7 +171,7 @@ main() {
     check("IncompleteErrorGenerator(offset: 4, message: Unspecified)",
         new IncompleteErrorGenerator(helper, token, message));
     check("SendAccessGenerator(offset: 4, name: bar, arguments: (\"arg\"))",
-        new SendAccessGenerator(helper, token, name, arguments));
+        new SendAccessGenerator(helper, token, name, null, arguments));
     check("IncompletePropertyAccessGenerator(offset: 4, name: bar)",
         new IncompletePropertyAccessGenerator(helper, token, name));
     check(
@@ -181,11 +185,13 @@ main() {
             helper, token, prefixUseGenerator, generator));
     check(
         "ReadOnlyAccessGenerator(offset: 4, expression: expression,"
-        " plainNameForRead: foo, value: null)",
-        new ReadOnlyAccessGenerator(helper, token, expression, "foo"));
+        " plainNameForRead: foo, kind: ReadOnlyAccessKind.FinalVariable)",
+        new ReadOnlyAccessGenerator(helper, token, expression, "foo",
+            ReadOnlyAccessKind.FinalVariable));
     check(
         "ParenthesizedExpressionGenerator(offset: 4, expression: expression,"
-        " plainNameForRead: null, value: null)",
+        " plainNameForRead: null, kind:"
+        " ReadOnlyAccessKind.ParenthesizedExpression)",
         new ParenthesizedExpressionGenerator(helper, token, expression));
     check("TypeUseGenerator(offset: 4, declaration: T, plainNameForRead: foo)",
         new TypeUseGenerator(helper, token, declaration, "foo"));

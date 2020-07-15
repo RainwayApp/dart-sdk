@@ -3,8 +3,10 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'dart:io' show Platform, Process, ProcessResult;
+
 import 'package:front_end/src/api_prototype/compiler_options.dart';
-import 'package:kernel/ast.dart' as kernel show Library;
+
+import 'package:kernel/ast.dart' as kernel show Version, defaultLanguageVersion;
 
 import '../utils/io_utils.dart';
 
@@ -33,14 +35,12 @@ main(List<String> args) async {
   List<String> dotSeparatedParts = versionString.split(".");
   int major = int.tryParse(dotSeparatedParts[0]);
   int minor = int.tryParse(dotSeparatedParts[1]);
+  kernel.Version version = new kernel.Version(major, minor);
 
-  if (kernel.Library.defaultLanguageVersionMajor != major ||
-      kernel.Library.defaultLanguageVersionMinor != minor) {
+  if (kernel.defaultLanguageVersion != version) {
     throw "Kernel defaults "
-        "${kernel.Library.defaultLanguageVersionMajor}"
-        "."
-        "${kernel.Library.defaultLanguageVersionMinor}"
-        " does not match output from make_version.py ($major.$minor)";
+        "${kernel.defaultLanguageVersion}"
+        " does not match output from make_version.py ($version)";
   } else {
     print("Kernel version matches.");
   }

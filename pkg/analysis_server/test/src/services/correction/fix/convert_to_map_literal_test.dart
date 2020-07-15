@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ConvertToMapLiteralTest);
   });
@@ -23,50 +23,50 @@ class ConvertToMapLiteralTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.prefer_collection_literals;
 
-  test_default_declaredType() async {
+  Future<void> test_default_declaredType() async {
     await resolveTestUnit('''
-Map m = /*LINT*/Map();
+Map m = Map();
 ''');
     await assertHasFix('''
-Map m = /*LINT*/{};
+Map m = {};
 ''');
   }
 
-  test_default_linkedHashMap() async {
+  Future<void> test_default_linkedHashMap() async {
     await resolveTestUnit('''
 import 'dart:collection';
-var m = /*LINT*/LinkedHashMap();
+var m = LinkedHashMap();
 ''');
     await assertHasFix('''
 import 'dart:collection';
-var m = /*LINT*/{};
+var m = {};
 ''');
   }
 
-  test_default_minimal() async {
+  Future<void> test_default_minimal() async {
     await resolveTestUnit('''
-var m = /*LINT*/Map();
+var m = Map();
 ''');
     await assertHasFix('''
-var m = /*LINT*/{};
+var m = {};
 ''');
   }
 
-  test_default_newKeyword() async {
+  Future<void> test_default_newKeyword() async {
     await resolveTestUnit('''
-var m = /*LINT*/new Map();
+var m = new Map();
 ''');
     await assertHasFix('''
-var m = /*LINT*/{};
+var m = {};
 ''');
   }
 
-  test_default_typeArg() async {
+  Future<void> test_default_typeArg() async {
     await resolveTestUnit('''
-var m = /*LINT*/Map<String, int>();
+var m = Map<String, int>();
 ''');
     await assertHasFix('''
-var m = /*LINT*/<String, int>{};
+var m = <String, int>{};
 ''');
   }
 }

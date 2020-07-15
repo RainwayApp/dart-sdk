@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:analyzer/src/context/builder.dart';
 import 'package:analyzer/src/dart/element/inheritance_manager3.dart';
 import 'package:analyzer/src/lint/linter.dart';
+import 'package:analyzer/src/workspace/pub.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -15,8 +16,10 @@ import '../../dart/resolution/driver_resolution.dart';
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(CanBeConstConstructorTest);
-    defineReflectiveTests(CanBeConstTest);
+    defineReflectiveTests(CanBeConstInstanceCreationTest);
+    defineReflectiveTests(CanBeConstTypedLiteralTest);
     defineReflectiveTests(EvaluateExpressionTest);
+    defineReflectiveTests(PubDependencyTest);
   });
 }
 
@@ -147,7 +150,7 @@ class C {
 }
 
 @reflectiveTest
-class CanBeConstTest extends AbstractLinterContextTest {
+class CanBeConstInstanceCreationTest extends AbstractLinterContextTest {
   void assertCanBeConst(String snippet, bool expectedResult) {
     var node = findNode.instanceCreation(snippet);
     expect(context.canBeConst(node), expectedResult);
@@ -188,12 +191,48 @@ B f() => B(A());
     assertCanBeConst("B(A(", false);
   }
 
+  void test_false_mapKeyType_implementsEqual() async {
+    await resolve('''
+class A {
+  const A();
+  bool operator ==(other) => false;
+}
+
+class B {
+  const B(_);
+}
+
+main() {
+  B({A(): 0});
+}
+''');
+    assertCanBeConst("B({", false);
+  }
+
   void test_false_nonConstConstructor() async {
     await resolve('''
 class A {}
 A f() => A();
 ''');
     assertCanBeConst("A(", false);
+  }
+
+  void test_false_setElementType_implementsEqual() async {
+    await resolve('''
+class A {
+  const A();
+  bool operator ==(other) => false;
+}
+
+class B {
+  const B(_);
+}
+
+main() {
+  B({A()});
+}
+''');
+    assertCanBeConst("B({", false);
   }
 
   void test_false_typeParameter() async {
@@ -204,6 +243,23 @@ class A<T> {
 f<U>() => A<U>();
 ''');
     assertCanBeConst("A<U>", false);
+  }
+
+  void test_true_computeDependencies() async {
+    newFile('/test/lib/a.dart', content: r'''
+const a = 0;
+''');
+
+    await resolve('''
+import 'a.dart';
+
+class A {
+  const A(int a);
+}
+
+A f() => A(a);
+''');
+    assertCanBeConst('A(a)', true);
   }
 
   void test_true_constConstructorArg() async {
@@ -247,6 +303,102 @@ A f() => A();
 }
 
 @reflectiveTest
+class CanBeConstTypedLiteralTest extends AbstractLinterContextTest {
+  void assertCanBeConst(String snippet, bool expectedResult) {
+    var node = findNode.typedLiteral(snippet);
+    expect(context.canBeConst(node), expectedResult);
+  }
+
+  void test_listLiteral_false_methodInvocation() async {
+    await resolve('''
+f() => [g()];
+int g() => 0;
+''');
+    assertCanBeConst('[', false);
+  }
+
+  void test_listLiteral_false_typeParameter() async {
+    await resolve('''
+class A<T> {
+  const A();
+}
+
+f<U>() => [A<U>()];
+''');
+    assertCanBeConst('[', false);
+  }
+
+  void test_listLiteral_true_computeDependencies() async {
+    newFile('/test/lib/a.dart', content: r'''
+const a = 0;
+''');
+
+    await resolve('''
+import 'a.dart';
+
+f() => [a];
+''');
+    assertCanBeConst('[', true);
+  }
+
+  void test_listLiteral_true_constConstructor() async {
+    await resolve('''
+class A {
+  const A();
+}
+
+f() => [A()];
+''');
+    assertCanBeConst('[', true);
+  }
+
+  void test_listLiteral_true_integerLiteral() async {
+    await resolve('''
+f() => [1, 2, 3];
+''');
+    assertCanBeConst('[', true);
+  }
+
+  void test_mapLiteral_false_methodInvocation_key() async {
+    await resolve('''
+f() => {g(): 0};
+int g() => 0;
+''');
+    assertCanBeConst('{', false);
+  }
+
+  void test_mapLiteral_false_methodInvocation_value() async {
+    await resolve('''
+f() => {0: g()};
+int g() => 0;
+''');
+    assertCanBeConst('{', false);
+  }
+
+  void test_mapLiteral_true_integerLiteral() async {
+    await resolve('''
+f() => {1: 2, 3: 4};
+''');
+    assertCanBeConst('{', true);
+  }
+
+  void test_setLiteral_false_methodInvocation() async {
+    await resolve('''
+f() => {g()};
+int g() => 0;
+''');
+    assertCanBeConst('{', false);
+  }
+
+  void test_setLiteral_true_integerLiteral() async {
+    await resolve('''
+f() => {1, 2, 3};
+''');
+    assertCanBeConst('{', true);
+  }
+}
+
+@reflectiveTest
 class EvaluateExpressionTest extends AbstractLinterContextTest {
   test_hasError_listLiteral_forElement() async {
     await resolve('''
@@ -257,9 +409,27 @@ var x = const [for (var i = 0; i < 4; i++) i];
     expect(result.value, isNull);
   }
 
+  test_hasError_mapLiteral_forElement() async {
+    await resolve('''
+var x = const {for (var i = 0; i < 4; i++) i: 0};
+''');
+    var result = _evaluateX();
+    expect(result.errors, isNotEmpty);
+    expect(result.value, isNull);
+  }
+
   test_hasError_methodInvocation() async {
     await resolve('''
 var x = 42.abs();
+''');
+    var result = _evaluateX();
+    expect(result.errors, isNotEmpty);
+    expect(result.value, isNull);
+  }
+
+  test_hasError_setLiteral_forElement() async {
+    await resolve('''
+var x = const {for (var i = 0; i < 4; i++) i};
 ''');
     var result = _evaluateX();
     expect(result.errors, isNotEmpty);
@@ -287,5 +457,34 @@ var x = 42;
   LinterConstantEvaluationResult _evaluateX() {
     var node = findNode.topVariableDeclarationByName('x').initializer;
     return context.evaluateConstant(node);
+  }
+}
+
+@reflectiveTest
+class PubDependencyTest extends AbstractLinterContextTest {
+  test_dependencies() async {
+    newFile('/test/pubspec.yaml', content: '''
+name: test
+
+dependencies:
+  args: '>=0.12.1 <2.0.0'
+  charcode: ^1.1.0
+''');
+    await resolve(r'''
+/// Dummy class.
+class C { }
+''');
+
+    expect(context.package, TypeMatcher<PubWorkspacePackage>());
+    final pubPackage = context.package as PubWorkspacePackage;
+    final pubspec = pubPackage.pubspec;
+
+    final argsDep = pubspec.dependencies
+        .singleWhere((element) => element.name.text == 'args');
+    expect(argsDep.version.value.text, '>=0.12.1 <2.0.0');
+
+    final charCodeDep = pubspec.dependencies
+        .singleWhere((element) => element.name.text == 'charcode');
+    expect(charCodeDep.version.value.text, '^1.1.0');
   }
 }

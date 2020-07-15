@@ -27,7 +27,6 @@ import '../elements/names.dart';
 import '../elements/types.dart';
 import '../js/js.dart' as jsAst;
 import '../js_backend/field_analysis.dart';
-import '../js_backend/runtime_types.dart' show RuntimeTypeTags;
 import '../js_model/closure.dart';
 import '../js_model/elements.dart' show JGeneratorBody;
 import '../universe/call_structure.dart' show CallStructure;
@@ -266,7 +265,7 @@ class Namer extends ModularNamer {
 
     // 15.1.4 Constructor Properties of the Global Object
     "Object", "Function", "Array", "String", "Boolean", "Number", "Date",
-    "RegExp", "Error", "EvalError", "RangeError", "ReferenceError",
+    "RegExp", "Symbol", "Error", "EvalError", "RangeError", "ReferenceError",
     "SyntaxError", "TypeError", "URIError",
 
     // 15.1.5 Other Properties of the Global Object
@@ -432,9 +431,6 @@ class Namer extends ModularNamer {
       r'$methodsWithOptionalArguments';
 
   @override
-  final RuntimeTypeTags rtiTags;
-
-  @override
   final FixedNames fixedNames;
 
   /// The non-minifying namer's [callPrefix] with a dollar after it.
@@ -557,7 +553,7 @@ class Namer extends ModularNamer {
   /// key into maps.
   final Map<LibraryEntity, String> _libraryKeys = HashMap();
 
-  Namer(this._closedWorld, this.rtiTags, this.fixedNames) {
+  Namer(this._closedWorld, this.fixedNames) {
     _literalGetterPrefix = new StringBackedName(fixedNames.getterPrefix);
     _literalSetterPrefix = new StringBackedName(fixedNames.setterPrefix);
   }
@@ -636,6 +632,8 @@ class Namer extends ModularNamer {
   String privateName(Name originalName) {
     String text = originalName.text;
 
+    text = text.replaceAll(_nonIdentifierRE, '_');
+
     // Public names are easy.
     if (!originalName.isPrivate) return text;
 
@@ -683,7 +681,8 @@ class Namer extends ModularNamer {
       String invocationName = operatorNameToIdentifier(function.name);
       // TODO(sra): If the generator is for a closure's 'call' method, we don't
       // need to incorporate the enclosing class.
-      String className = method.enclosingClass.name.replaceAll('&', '_');
+      String className =
+          method.enclosingClass.name.replaceAll(_nonIdentifierRE, '_');
       return '${invocationName}\$body\$${className}';
     });
   }
@@ -883,7 +882,8 @@ class Namer extends ModularNamer {
     if (_closedWorld.isUsedAsMixin(enclosingClass) ||
         _isShadowingSuperField(element) ||
         _isUserClassExtendingNative(enclosingClass)) {
-      String proposeName() => '${enclosingClass.name}_${element.name}';
+      String proposeName() => '${enclosingClass.name}_${element.name}'
+          .replaceAll(_nonIdentifierRE, '_');
       return _disambiguateInternalMember(element, proposeName);
     }
 
@@ -1258,7 +1258,8 @@ class Namer extends ModularNamer {
       return _proposeNameForMember(element.function) + r'$body';
     } else if (element.enclosingClass != null) {
       ClassEntity enclosingClass = element.enclosingClass;
-      return '${enclosingClass.name}_${element.name}';
+      return '${enclosingClass.name}_${element.name}'
+          .replaceAll(_nonIdentifierRE, '_');
     }
     return element.name.replaceAll(_nonIdentifierRE, '_');
   }
@@ -1433,17 +1434,11 @@ class Namer extends ModularNamer {
   }
 
   String globalObjectForType(Entity element) {
-    if (element is TypedefEntity) {
-      return globalObjectForLibrary(element.library);
-    }
     return globalObjectForClass(element);
   }
 
   @override
   jsAst.VariableUse readGlobalObjectForType(Entity element) {
-    if (element is TypedefEntity) {
-      return readGlobalObjectForLibrary(element.library);
-    }
     return readGlobalObjectForClass(element);
   }
 
@@ -1618,11 +1613,9 @@ class Namer extends ModularNamer {
   }
 
   String getTypeRepresentationForTypeConstant(DartType type) {
+    type = type.withoutNullability;
     if (type is DynamicType) return "dynamic";
-    if (type is TypedefType) {
-      return uniqueNameForTypeConstantElement(
-          type.element.library, type.element);
-    }
+    if (type is NeverType) return "Never";
     if (type is FutureOrType) {
       return "FutureOr<dynamic>";
     }
@@ -1897,8 +1890,6 @@ class ConstantNamingVisitor implements ConstantValueVisitor {
     String name;
     if (type is InterfaceType) {
       name = type.element.name;
-    } else if (type is TypedefType) {
-      name = type.element.name;
     }
     if (name == null) {
       // e.g. DartType 'dynamic' has no element.
@@ -2172,11 +2163,6 @@ class FunctionTypeNamer extends BaseDartTypeVisitor {
   }
 
   @override
-  visitTypedefType(TypedefType type, _) {
-    sb.write(type.element.name);
-  }
-
-  @override
   visitTypeVariableType(TypeVariableType type, _) {
     sb.write(type.element.name);
   }
@@ -2262,8 +2248,6 @@ class FixedNames {
   String get callPrefix => 'call';
   String get callCatchAllName => r'call*';
   String get callNameField => r'$callName';
-  String get reflectableField => r'$reflectable';
-  String get classDescriptorProperty => r'^';
   String get defaultValuesField => r'$defaultValues';
   String get deferredAction => r'$deferredAction';
   String get operatorIsPrefix => r'$is';
@@ -2302,7 +2286,6 @@ class MinifiedFixedNames extends FixedNames {
 /// Namer interface that can be used in modular code generation.
 abstract class ModularNamer {
   FixedNames get fixedNames;
-  RuntimeTypeTags get rtiTags;
 
   /// Returns a variable use for accessing [library].
   ///
@@ -2561,10 +2544,6 @@ abstract class ModularNamer {
         return asName('${fixedNames.callPrefix}\$5');
       case JsGetName.CALL_CATCH_ALL:
         return asName(fixedNames.callCatchAllName);
-      case JsGetName.REFLECTABLE:
-        return asName(fixedNames.reflectableField);
-      case JsGetName.CLASS_DESCRIPTOR_PROPERTY:
-        return asName(fixedNames.classDescriptorProperty);
       case JsGetName.REQUIRED_PARAMETER_PROPERTY:
         return asName(fixedNames.requiredParameterField);
       case JsGetName.DEFAULT_VALUES_PROPERTY:
@@ -2581,48 +2560,16 @@ abstract class ModularNamer {
         return asName(fixedNames.operatorSignature);
       case JsGetName.RTI_NAME:
         return asName(fixedNames.rtiName);
-      case JsGetName.TYPEDEF_TAG:
-        return asName(rtiTags.typedefTag);
-      case JsGetName.FUNCTION_TYPE_TAG:
-        return asName(rtiTags.functionTypeTag);
-      case JsGetName.FUNCTION_TYPE_GENERIC_BOUNDS_TAG:
-        return asName(rtiTags.functionTypeGenericBoundsTag);
-      case JsGetName.FUNCTION_TYPE_VOID_RETURN_TAG:
-        return asName(rtiTags.functionTypeVoidReturnTag);
-      case JsGetName.FUNCTION_TYPE_RETURN_TYPE_TAG:
-        return asName(rtiTags.functionTypeReturnTypeTag);
-      case JsGetName.FUNCTION_TYPE_REQUIRED_PARAMETERS_TAG:
-        return asName(rtiTags.functionTypeRequiredParametersTag);
-      case JsGetName.FUNCTION_TYPE_OPTIONAL_PARAMETERS_TAG:
-        return asName(rtiTags.functionTypeOptionalParametersTag);
-      case JsGetName.FUNCTION_TYPE_NAMED_PARAMETERS_TAG:
-        return asName(rtiTags.functionTypeNamedParametersTag);
-      case JsGetName.FUTURE_OR_TAG:
-        return asName(rtiTags.futureOrTag);
-      case JsGetName.FUTURE_OR_TYPE_ARGUMENT_TAG:
-        return asName(rtiTags.futureOrTypeTag);
       case JsGetName.IS_INDEXABLE_FIELD_NAME:
         return operatorIs(_commonElements.jsIndexingBehaviorInterface);
       case JsGetName.NULL_CLASS_TYPE_NAME:
         return runtimeTypeName(_commonElements.nullClass);
       case JsGetName.OBJECT_CLASS_TYPE_NAME:
         return runtimeTypeName(_commonElements.objectClass);
-      case JsGetName.FUNCTION_CLASS_TYPE_NAME:
-        return runtimeTypeName(_commonElements.functionClass);
-      case JsGetName.JS_FUNCTION_CLASS_TYPE_NAME:
-        return runtimeTypeName(_commonElements.jsJavaScriptFunctionClass);
       case JsGetName.FUTURE_CLASS_TYPE_NAME:
         return runtimeTypeName(_commonElements.futureClass);
-      case JsGetName.BOOL_RECIPE:
-        return runtimeTypeName(_commonElements.boolClass);
-      case JsGetName.DOUBLE_RECIPE:
-        return runtimeTypeName(_commonElements.doubleClass);
-      case JsGetName.INT_RECIPE:
-        return runtimeTypeName(_commonElements.intClass);
-      case JsGetName.NUM_RECIPE:
-        return runtimeTypeName(_commonElements.numClass);
-      case JsGetName.STRING_RECIPE:
-        return runtimeTypeName(_commonElements.stringClass);
+      case JsGetName.RTI_FIELD_AS:
+        return instanceFieldPropertyName(_commonElements.rtiAsField);
       case JsGetName.RTI_FIELD_IS:
         return instanceFieldPropertyName(_commonElements.rtiIsField);
       default:
@@ -2634,15 +2581,12 @@ abstract class ModularNamer {
 class ModularNamerImpl extends ModularNamer {
   final CodegenRegistry _registry;
   @override
-  final RuntimeTypeTags rtiTags;
-  @override
   final FixedNames fixedNames;
 
   @override
   final CommonElements _commonElements;
 
-  ModularNamerImpl(
-      this._registry, this._commonElements, this.rtiTags, this.fixedNames);
+  ModularNamerImpl(this._registry, this._commonElements, this.fixedNames);
 
   @override
   jsAst.Name get rtiFieldJsName {

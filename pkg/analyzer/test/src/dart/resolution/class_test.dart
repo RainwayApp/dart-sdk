@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/src/dart/error/syntactic_errors.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
@@ -18,139 +19,6 @@ main() {
 @reflectiveTest
 class ClassDriverResolutionTest extends DriverResolutionTest
     with ElementsTypesMixin {
-  test_abstractSuperMemberReference_getter() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  get foo;
-}
-abstract class B extends A {
-  bar() {
-    super.foo; // ref
-  }
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 81, 3),
-    ]);
-    assertElement(findNode.simple('foo; // ref'), findElement.getter('foo'));
-  }
-
-  test_abstractSuperMemberReference_getter2() async {
-    await assertErrorsInCode(r'''
-abstract class Foo {
-  String get foo;
-}
-
-abstract class Bar implements Foo {
-}
-
-class Baz extends Bar {
-  String get foo => super.foo; // ref
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 131, 3),
-    ]);
-    assertElement(
-      findNode.simple('foo; // ref'),
-      findElement.getter('foo', of: 'Foo'),
-    );
-  }
-
-  test_abstractSuperMemberReference_method_reference() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  foo();
-}
-abstract class B extends A {
-  bar() {
-    super.foo; // ref
-  }
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 79, 3),
-    ]);
-    assertElement(findNode.simple('foo; // ref'), findElement.method('foo'));
-  }
-
-  test_abstractSuperMemberReference_OK_superHasConcrete_mixinHasAbstract_method() async {
-    await assertNoErrorsInCode('''
-class A {
-  void foo() {}
-}
-
-abstract class B {
-  void foo();
-}
-
-class C extends A with B {
-  void bar() {
-    super.foo(); // ref
-  }
-}
-''');
-    assertElement(
-      findNode.simple('foo(); // ref'),
-      findElement.method('foo', of: 'A'),
-    );
-  }
-
-  test_abstractSuperMemberReference_OK_superSuperHasConcrete_getter() async {
-    await assertNoErrorsInCode('''
-abstract class A {
-  int get foo => 0;
-}
-
-abstract class B extends A {
-  int get foo;
-}
-
-class C extends B {
-  int get bar => super.foo; // ref
-}
-''');
-    assertElement(
-      findNode.simple('foo; // ref'),
-      findElement.getter('foo', of: 'A'),
-    );
-  }
-
-  test_abstractSuperMemberReference_OK_superSuperHasConcrete_setter() async {
-    await assertNoErrorsInCode('''
-abstract class A {
-  void set foo(_) {}
-}
-
-abstract class B extends A {
-  void set foo(_);
-}
-
-class C extends B {
-  void bar() {
-    super.foo = 0;
-  }
-}
-''');
-    assertElement(
-      findNode.simple('foo = 0;'),
-      findElement.setter('foo', of: 'A'),
-    );
-  }
-
-  test_abstractSuperMemberReference_setter() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  set foo(_);
-}
-abstract class B extends A {
-  bar() {
-    super.foo = 0;
-  }
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 84, 3),
-    ]);
-    assertElement(findNode.simple('foo = 0;'), findElement.setter('foo'));
-  }
-
   test_element_allSupertypes() async {
     await assertNoErrorsInCode(r'''
 class A {}
@@ -260,6 +128,54 @@ class X extends A {}
     assertElementTypes(
       findElement.class_('X').allSupertypes,
       [interfaceTypeStar(a), interfaceTypeStar(b), interfaceTypeStar(c)],
+    );
+  }
+
+  test_element_typeFunction_extends() async {
+    await assertErrorsInCode(r'''
+class A extends Function {}
+''', [
+      error(HintCode.DEPRECATED_EXTENDS_FUNCTION, 16, 8),
+    ]);
+    var a = findElement.class_('A');
+    assertType(a.supertype, 'Object');
+  }
+
+  test_element_typeFunction_implements() async {
+    await assertNoErrorsInCode(r'''
+class A {}
+class B {}
+class C implements A, Function, B {}
+''');
+    var a = findElement.class_('A');
+    var b = findElement.class_('B');
+    var c = findElement.class_('C');
+    assertElementTypes(
+      c.interfaces,
+      [
+        interfaceTypeStar(a),
+        interfaceTypeStar(b),
+      ],
+    );
+  }
+
+  test_element_typeFunction_with() async {
+    await assertErrorsInCode(r'''
+class A {}
+class B {}
+class C extends Object with A, Function, B {}
+''', [
+      error(HintCode.DEPRECATED_MIXIN_FUNCTION, 53, 8),
+    ]);
+    var a = findElement.class_('A');
+    var b = findElement.class_('B');
+    var c = findElement.class_('C');
+    assertElementTypes(
+      c.mixins,
+      [
+        interfaceTypeStar(a),
+        interfaceTypeStar(b),
+      ],
     );
   }
 
@@ -540,13 +456,23 @@ class B implements A, A, A, A {}
     ]);
   }
 
+  test_error_memberWithClassName_field() async {
+    await assertErrorsInCode(r'''
+class C {
+  int C = 42;
+}
+''', [
+      error(ParserErrorCode.MEMBER_WITH_CLASS_NAME, 16, 1),
+    ]);
+  }
+
   test_error_memberWithClassName_getter() async {
     await assertErrorsInCode(r'''
 class C {
   int get C => null;
 }
 ''', [
-      error(CompileTimeErrorCode.MEMBER_WITH_CLASS_NAME, 20, 1),
+      error(ParserErrorCode.MEMBER_WITH_CLASS_NAME, 20, 1),
     ]);
   }
 
@@ -556,7 +482,7 @@ class C {
   static int get C => null;
 }
 ''', [
-      error(CompileTimeErrorCode.MEMBER_WITH_CLASS_NAME, 27, 1),
+      error(ParserErrorCode.MEMBER_WITH_CLASS_NAME, 27, 1),
     ]);
 
     var method = findNode.methodDeclaration('C =>');
@@ -571,7 +497,7 @@ class C {
   set C(_) {}
 }
 ''', [
-      error(CompileTimeErrorCode.MEMBER_WITH_CLASS_NAME, 16, 1),
+      error(ParserErrorCode.MEMBER_WITH_CLASS_NAME, 16, 1),
     ]);
   }
 
@@ -581,233 +507,12 @@ class C {
   static set C(_) {}
 }
 ''', [
-      error(CompileTimeErrorCode.MEMBER_WITH_CLASS_NAME, 23, 1),
+      error(ParserErrorCode.MEMBER_WITH_CLASS_NAME, 23, 1),
     ]);
 
     var method = findNode.methodDeclaration('C(_)');
     expect(method.isSetter, isTrue);
     expect(method.isStatic, isTrue);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_class() async {
-    await assertErrorsInCode(r'''
-class C {
-  int get foo => 0;
-  set foo(String _) {}
-}
-''', [
-      error(StaticWarningCode.MISMATCHED_GETTER_AND_SETTER_TYPES, 20, 3),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_interfaces() async {
-    await assertErrorsInCode(r'''
-class A {
-  int get foo {
-    return 0;
-  }
-}
-
-class B {
-  set foo(String _) {}
-}
-
-abstract class X implements A, B {}
-''', [
-      error(StaticWarningCode.MISMATCHED_GETTER_AND_SETTER_TYPES, 98, 1),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_private_getter() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  int get _foo => 0;
-}
-''');
-    await assertErrorsInCode(r'''
-import 'a.dart';
-
-class B extends A {
-  set _foo(String _) {}
-}
-''', [
-      error(HintCode.UNUSED_ELEMENT, 44, 4),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_private_interfaces() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  int get _foo => 0;
-}
-''');
-    newFile('/test/lib/b.dart', content: r'''
-class B {
-  set _foo(String _) {}
-}
-''');
-    await assertNoErrorsInCode(r'''
-import 'a.dart';
-import 'b.dart';
-
-class X implements A, B {}
-''');
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_private_interfaces2() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  int get _foo => 0;
-}
-
-class B {
-  set _foo(String _) {}
-}
-''');
-    await assertNoErrorsInCode(r'''
-import 'a.dart';
-
-class X implements A, B {}
-''');
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_private_setter() async {
-    newFile('/test/lib/a.dart', content: r'''
-class A {
-  set _foo(String _) {}
-}
-''');
-    await assertErrorsInCode(r'''
-import 'a.dart';
-
-class B extends A {
-  int get _foo => 0;
-}
-''', [
-      error(HintCode.UNUSED_ELEMENT, 48, 4),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_setterParameter_0() async {
-    await assertErrorsInCode(r'''
-class C {
-  int get foo => 0;
-  set foo() {}
-}
-''', [
-      error(CompileTimeErrorCode.WRONG_NUMBER_OF_PARAMETERS_FOR_SETTER, 36, 3),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_OK_setterParameter_2() async {
-    await assertErrorsInCode(r'''
-class C {
-  int get foo => 0;
-  set foo(String p1, String p2) {}
-}
-''', [
-      error(CompileTimeErrorCode.WRONG_NUMBER_OF_PARAMETERS_FOR_SETTER, 36, 3),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_superGetter() async {
-    await assertErrorsInCode(r'''
-class A {
-  int get foo => 0;
-}
-
-class B extends A {
-  set foo(String _) {}
-}
-''', [
-      error(StaticWarningCode.MISMATCHED_GETTER_AND_SETTER_TYPES, 59, 3),
-    ]);
-  }
-
-  test_error_mismatchedGetterAndSetterTypes_superSetter() async {
-    await assertErrorsInCode(r'''
-class A {
-  set foo(String _) {}
-}
-
-class B extends A {
-  int get foo => 0;
-}
-''', [
-      error(StaticWarningCode.MISMATCHED_GETTER_AND_SETTER_TYPES, 66, 3),
-    ]);
-  }
-
-  test_inconsistentInheritance_parameterType() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  x(int i);
-}
-abstract class B {
-  x(String s);
-}
-abstract class C implements A, B {}
-''', [
-      error(CompileTimeErrorCode.INCONSISTENT_INHERITANCE, 84, 1),
-    ]);
-  }
-
-  test_inconsistentInheritance_requiredParameters() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  x();
-}
-abstract class B {
-  x(int y);
-}
-abstract class C implements A, B {}
-''', [
-      error(CompileTimeErrorCode.INCONSISTENT_INHERITANCE, 76, 1),
-    ]);
-  }
-
-  test_inconsistentInheritance_returnType() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  int x();
-}
-abstract class B {
-  String x();
-}
-abstract class C implements A, B {}
-''', [
-      error(CompileTimeErrorCode.INCONSISTENT_INHERITANCE, 82, 1),
-    ]);
-  }
-
-  test_inconsistentInheritanceGetterAndMethod_getter_method() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  int get x;
-}
-abstract class B {
-  int x();
-}
-abstract class C implements A, B {}
-''', [
-      error(CompileTimeErrorCode.INCONSISTENT_INHERITANCE_GETTER_AND_METHOD, 81,
-          1),
-    ]);
-  }
-
-  test_inconsistentInheritanceGetterAndMethod_method_getter() async {
-    await assertErrorsInCode(r'''
-abstract class A {
-  int x();
-}
-abstract class B {
-  int get x;
-}
-abstract class C implements A, B {}
-''', [
-      error(CompileTimeErrorCode.INCONSISTENT_INHERITANCE_GETTER_AND_METHOD, 81,
-          1),
-    ]);
   }
 
   test_issue32815() async {

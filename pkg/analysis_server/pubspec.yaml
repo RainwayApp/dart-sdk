@@ -1,13 +1,15 @@
 name: analysis_server
+# This package is not intended for consumption on pub.dev. DO NOT publish.
 publish_to: none
 
 environment:
-  sdk: '>=2.2.2 <3.0.0'
+  sdk: '>=2.6.0 <3.0.0'
 
 dependencies:
   analyzer: any
   analyzer_plugin: any
   args: any
+  charcode: any
   convert: any
   crypto: any
   dart_style: any
@@ -15,9 +17,9 @@ dependencies:
   linter: any
   logging: any
   meta: any
-  mustache: any
-  nnbd_migration: any
+  pub_semver: any
   source_span: any
+  stream_channel: any
   package_config: any
   path: any
   tflite_native: any

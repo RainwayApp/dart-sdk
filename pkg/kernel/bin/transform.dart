@@ -7,7 +7,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:front_end/src/api_prototype/constant_evaluator.dart'
-    as constants show SimpleErrorReporter, transformComponent;
+    as constants show EvaluationMode, SimpleErrorReporter, transformComponent;
 
 import 'package:args/args.dart';
 import 'package:kernel/class_hierarchy.dart';
@@ -95,13 +95,17 @@ Future<CompilerOutcome> runTransformation(List<String> arguments) async {
           productMode: productMode);
       break;
     case 'resolve-mixins':
-      mix.transformLibraries(
-          new NoneTarget(null), coreTypes, hierarchy, component.libraries);
+      mix.transformLibraries(new NoneTarget(null), coreTypes, hierarchy,
+          component.libraries, null);
       break;
     case 'constants':
       final VmConstantsBackend backend = new VmConstantsBackend(coreTypes);
-      component = constants.transformComponent(
-          component, backend, defines, const constants.SimpleErrorReporter());
+      component = constants.transformComponent(component, backend, defines,
+          const constants.SimpleErrorReporter(), constants.EvaluationMode.weak,
+          desugarSets: false,
+          evaluateAnnotations: true,
+          enableTripleShift: false,
+          errorOnUnevaluatedConstant: false);
       break;
     case 'empty':
       component = empty.transformComponent(component);

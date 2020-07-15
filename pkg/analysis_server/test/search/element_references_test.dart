@@ -4,7 +4,6 @@
 
 import 'dart:async';
 
-import 'package:analysis_server/protocol/protocol.dart';
 import 'package:analysis_server/protocol/protocol_generated.dart';
 import 'package:analyzer_plugin/protocol/protocol_common.dart';
 import 'package:test/test.dart';
@@ -12,7 +11,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'abstract_search_domain.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ElementReferencesTest);
   });
@@ -29,12 +28,12 @@ class ElementReferencesTest extends AbstractSearchDomainTest {
 
   Future<void> findElementReferences(
       String search, bool includePotential) async {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     await waitForTasksFinished();
-    Request request =
+    var request =
         SearchFindElementReferencesParams(testFile, offset, includePotential)
             .toRequest('0');
-    Response response = await waitResponse(request);
+    var response = await waitResponse(request);
     var result = SearchFindElementReferencesResult.fromResponse(response);
     searchId = result.id;
     searchElement = result.element;
@@ -128,8 +127,7 @@ main() {
     assertHasResult(SearchResultKind.REFERENCE, '(1)', 0);
   }
 
-  test_extension() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_extension() async {
     addTestFile('''
 extension E on int {
   static void foo() {}
@@ -238,8 +236,7 @@ class A {
     assertHasResult(SearchResultKind.READ, 'fff); // in m()');
   }
 
-  test_field_ofExtension_explicit_static() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_field_ofExtension_explicit_static() async {
     addTestFile('''
 extension E on int {
   static var fff; // declaration
@@ -274,8 +271,7 @@ main() {
     assertHasResult(SearchResultKind.READ, 'fff(); // in main()');
   }
 
-  test_field_ofExtension_implicit_instance() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_field_ofExtension_implicit_instance() async {
     addTestFile('''
 extension E on int {
   var get fff => null;
@@ -309,8 +305,7 @@ main() {
     }
   }
 
-  test_field_ofExtension_implicit_static() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_field_ofExtension_implicit_static() async {
     addTestFile('''
 extension E on int {
   static var get fff => null;
@@ -515,8 +510,7 @@ main(A a) {
     assertHasResult(SearchResultKind.REFERENCE, 'mmm); // in main()');
   }
 
-  test_method_ofExtension() async {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
+  Future<void> test_method_ofExtension() async {
     addTestFile('''
 extension E on int {
   void foo() {}
@@ -764,7 +758,7 @@ main() {
   ppp.Stream b;
 }
 ''');
-    await findElementReferences("ppp;", false);
+    await findElementReferences('ppp;', false);
     expect(searchElement.kind, ElementKind.PREFIX);
     expect(searchElement.name, 'ppp');
     expect(searchElement.location.startLine, 1);

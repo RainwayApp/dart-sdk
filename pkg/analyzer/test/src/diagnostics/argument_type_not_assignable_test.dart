@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -388,8 +389,28 @@ g(C c) {
 @reflectiveTest
 class ArgumentTypeNotAssignableTest_NNBD extends ArgumentTypeNotAssignableTest {
   @override
-  AnalysisOptionsImpl get analysisOptions =>
-      AnalysisOptionsImpl()..enabledExperiments = [EnableString.non_nullable];
+  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.non_nullable],
+    );
+
+  test_binary_eqEq_covariantParameterType() async {
+    await assertErrorsInCode(r'''
+class A {
+  bool operator==(covariant A other) => false;
+}
+
+main(A a, A? aq) {
+  a == 0;
+  aq == 1;
+  aq == aq;
+  aq == null;
+}
+''', [
+      error(StaticWarningCode.ARGUMENT_TYPE_NOT_ASSIGNABLE, 86, 1),
+      error(StaticWarningCode.ARGUMENT_TYPE_NOT_ASSIGNABLE, 97, 1),
+    ]);
+  }
 
   test_downcast() async {
     await assertErrorsInCode(r'''

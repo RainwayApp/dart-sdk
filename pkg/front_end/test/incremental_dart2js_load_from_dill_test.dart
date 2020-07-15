@@ -34,7 +34,8 @@ main() async {
 
 Future<void> testDart2jsCompile() async {
   final Uri dart2jsUrl = Uri.base.resolve("pkg/compiler/bin/dart2js.dart");
-  final Uri invalidateUri = Uri.parse("package:compiler/src/filenames.dart");
+  final Uri invalidateUri =
+      Uri.parse("package:_fe_analyzer_shared/src/util/filenames.dart");
   Uri normalDill = outDir.uri.resolve("dart2js.full.dill");
   Uri fullDillFromInitialized =
       outDir.uri.resolve("dart2js.full_from_initialized.dill");
@@ -45,7 +46,7 @@ Future<void> testDart2jsCompile() async {
   // type inference occurring before or after mixin transformation.
   Stopwatch stopwatch = new Stopwatch()..start();
   await normalCompile(dart2jsUrl, normalDill,
-      options: getOptions()..target = new NoneTarget(new TargetFlags()));
+      options: getOptions(target: new NoneTarget(new TargetFlags())));
   print("Normal compile took ${stopwatch.elapsedMilliseconds} ms");
   {
     // Check that we don't include the source from files from the sdk.
@@ -83,7 +84,7 @@ Future<void> testDart2jsCompile() async {
     stopwatch.reset();
     bool initializeResult = await initializedCompile(
         dart2jsUrl, fullDillFromInitialized, initializeWith, [invalidateUri],
-        options: getOptions()..target = new NoneTarget(new TargetFlags()));
+        options: getOptions(target: new NoneTarget(new TargetFlags())));
     Expect.equals(initializeExpect, initializeResult);
     print("Initialized compile(s) from ${initializeWith.pathSegments.last} "
         "took ${stopwatch.elapsedMilliseconds} ms");
@@ -98,7 +99,7 @@ Future<void> testDart2jsCompile() async {
     stopwatch.reset();
     initializeResult = await initializedCompile(
         dart2jsUrl, fullDillFromInitialized, initializeWith, [],
-        options: getOptions()..target = new NoneTarget(new TargetFlags()));
+        options: getOptions(target: new NoneTarget(new TargetFlags())));
     Expect.equals(initializeExpect, initializeResult);
     print("Initialized compile(s) from ${initializeWith.pathSegments.last} "
         "took ${stopwatch.elapsedMilliseconds} ms");

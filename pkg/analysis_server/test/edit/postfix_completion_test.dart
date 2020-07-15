@@ -12,7 +12,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 import '../analysis_abstract.dart';
 import '../mocks.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(PostfixCompletionTest);
   });
@@ -29,7 +29,7 @@ class PostfixCompletionTest extends AbstractAnalysisTest {
     handler = EditDomainHandler(server);
   }
 
-  test_for() async {
+  Future<void> test_for() async {
     addTestFile('''
 main() {
   [].for
@@ -46,7 +46,7 @@ main() {
 ''');
   }
 
-  test_invalidFilePathFormat_notAbsolute() async {
+  Future<void> test_invalidFilePathFormat_notAbsolute() async {
     var request =
         EditGetPostfixCompletionParams('test.dart', '.for', 0).toRequest('0');
     var response = await waitResponse(request);
@@ -56,7 +56,7 @@ main() {
     );
   }
 
-  test_invalidFilePathFormat_notNormalized() async {
+  Future<void> test_invalidFilePathFormat_notNormalized() async {
     var request = EditGetPostfixCompletionParams(
             convertPath('/foo/../bar/test.dart'), '.for', 0)
         .toRequest('0');
@@ -70,7 +70,7 @@ main() {
   void _assertHasChange(String message, String expectedCode, [Function cmp]) {
     if (change.message == message) {
       if (change.edits.isNotEmpty) {
-        String resultCode =
+        var resultCode =
             SourceEdit.applySequence(testCode, change.edits[0].edits);
         expect(resultCode, expectedCode.replaceAll('/*caret*/', ''));
         if (cmp != null) {
@@ -85,26 +85,26 @@ main() {
       }
       return;
     }
-    fail("Expected to find |$message| but got: " + change.message);
+    fail('Expected to find |$message| but got: ' + change.message);
   }
 
-  _prepareCompletion(String key,
+  Future<void> _prepareCompletion(String key,
       {bool atStart = false, bool atEnd = false, int delta = 0}) async {
-    int offset = findOffset(key);
-    String src = testCode.replaceFirst(key, '', offset);
+    var offset = findOffset(key);
+    var src = testCode.replaceFirst(key, '', offset);
     modifyTestFile(src);
     await _prepareCompletionAt(offset, key);
   }
 
-  _prepareCompletionAt(int offset, String key) async {
+  Future<void> _prepareCompletionAt(int offset, String key) async {
     var params = EditGetPostfixCompletionParams(testFile, key, offset);
     var request =
-        Request('0', "edit.isPostfixCompletionApplicable", params.toJson());
-    Response response = await waitResponse(request, throwOnError: false);
+        Request('0', 'edit.isPostfixCompletionApplicable', params.toJson());
+    var response = await waitResponse(request, throwOnError: false);
     var isApplicable =
         EditIsPostfixCompletionApplicableResult.fromResponse(response);
     if (!isApplicable.value) {
-      fail("Postfix completion not applicable at given location");
+      fail('Postfix completion not applicable at given location');
     }
     request =
         EditGetPostfixCompletionParams(testFile, key, offset).toRequest('1');

@@ -17,11 +17,15 @@ namespace dart {
   V(WriteBarrier)                                                              \
   V(WriteBarrierWrappers)                                                      \
   V(ArrayWriteBarrier)                                                         \
-  V(PrintStopMessage)                                                          \
   V(AllocateArray)                                                             \
-  V(AllocateMintWithFPURegs)                                                   \
-  V(AllocateMintWithoutFPURegs)                                                \
+  V(AllocateMintSharedWithFPURegs)                                             \
+  V(AllocateMintSharedWithoutFPURegs)                                          \
   V(AllocateContext)                                                           \
+  V(AllocateObject)                                                            \
+  V(AllocateObjectParameterized)                                               \
+  V(AllocateObjectSlow)                                                        \
+  V(AllocateUnhandledException)                                                \
+  V(CloneContext)                                                              \
   V(CallToRuntime)                                                             \
   V(LazyCompile)                                                               \
   V(InterpretCall)                                                             \
@@ -34,8 +38,8 @@ namespace dart {
   V(InvokeDartCode)                                                            \
   V(InvokeDartCodeFromBytecode)                                                \
   V(DebugStepCheck)                                                            \
-  V(UnlinkedCall)                                                              \
-  V(MonomorphicMiss)                                                           \
+  V(SwitchableCallMiss)                                                        \
+  V(MonomorphicSmiableCheck)                                                   \
   V(SingleTargetCall)                                                          \
   V(ICCallThroughCode)                                                         \
   V(MegamorphicCall)                                                           \
@@ -63,24 +67,43 @@ namespace dart {
   V(Subtype4TestCache)                                                         \
   V(Subtype6TestCache)                                                         \
   V(DefaultTypeTest)                                                           \
+  V(DefaultNullableTypeTest)                                                   \
   V(TopTypeTypeTest)                                                           \
   V(UnreachableTypeTest)                                                       \
   V(SlowTypeTest)                                                              \
   V(LazySpecializeTypeTest)                                                    \
+  V(LazySpecializeNullableTypeTest)                                            \
   V(CallClosureNoSuchMethod)                                                   \
   V(FrameAwaitingMaterialization)                                              \
   V(AsynchronousGapMarker)                                                     \
+  V(DispatchTableNullError)                                                    \
   V(NullErrorSharedWithFPURegs)                                                \
   V(NullErrorSharedWithoutFPURegs)                                             \
   V(NullArgErrorSharedWithFPURegs)                                             \
   V(NullArgErrorSharedWithoutFPURegs)                                          \
+  V(NullCastErrorSharedWithFPURegs)                                            \
+  V(NullCastErrorSharedWithoutFPURegs)                                         \
+  V(RangeErrorSharedWithFPURegs)                                               \
+  V(RangeErrorSharedWithoutFPURegs)                                            \
   V(StackOverflowSharedWithFPURegs)                                            \
   V(StackOverflowSharedWithoutFPURegs)                                         \
   V(OneArgCheckInlineCacheWithExactnessCheck)                                  \
   V(OneArgOptimizedCheckInlineCacheWithExactnessCheck)                         \
   V(EnterSafepoint)                                                            \
   V(ExitSafepoint)                                                             \
-  V(CallNativeThroughSafepoint)
+  V(CallNativeThroughSafepoint)                                                \
+  V(InitStaticField)                                                           \
+  V(InitInstanceField)                                                         \
+  V(InitLateInstanceField)                                                     \
+  V(InitLateFinalInstanceField)                                                \
+  V(Throw)                                                                     \
+  V(ReThrow)                                                                   \
+  V(AssertBoolean)                                                             \
+  V(InstanceOf)                                                                \
+  V(InstantiateTypeArguments)                                                  \
+  V(InstantiateTypeArgumentsMayShareInstantiatorTA)                            \
+  V(InstantiateTypeArgumentsMayShareFunctionTA)                                \
+  V(NoSuchMethodDispatcher)
 
 }  // namespace dart
 

@@ -9,6 +9,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+
 #include <cstdlib>
 
 #include "platform/atomic.h"
@@ -105,7 +106,6 @@ static TimelineEventRecorder* CreateTimelineRecorder() {
 
   const bool use_startup_recorder = FLAG_startup_timeline;
   const bool use_systrace_recorder = FLAG_systrace_timeline;
-
   const char* flag = FLAG_timeline_recorder;
 
   if (use_systrace_recorder || (flag != NULL)) {
@@ -116,6 +116,10 @@ static TimelineEventRecorder* CreateTimelineRecorder() {
 
 #if defined(HOST_OS_LINUX) || defined(HOST_OS_ANDROID)
       return new TimelineEventSystraceRecorder();
+#elif defined(HOST_OS_MACOS)
+      if (__builtin_available(iOS 12.0, macOS 10.14, *)) {
+        return new TimelineEventMacosRecorder();
+      }
 #elif defined(HOST_OS_FUCHSIA)
       return new TimelineEventFuchsiaRecorder();
 #else
@@ -162,10 +166,10 @@ static MallocGrowableArray<char*>* GetEnabledByDefaultTimelineStreams() {
   }
   char* save_ptr;  // Needed for strtok_r.
   // strtok modifies arg 1 so we make a copy of it.
-  char* streams = strdup(FLAG_timeline_streams);
+  char* streams = Utils::StrDup(FLAG_timeline_streams);
   char* token = strtok_r(streams, ",", &save_ptr);
   while (token != NULL) {
-    result->Add(strdup(token));
+    result->Add(Utils::StrDup(token));
     token = strtok_r(NULL, ",", &save_ptr);
   }
   free(streams);
@@ -260,6 +264,15 @@ void Timeline::ReclaimCachedBlocksFromThreads() {
 }
 
 #ifndef PRODUCT
+void Timeline::PrintFlagsToJSONArray(JSONArray* arr) {
+#define ADD_RECORDED_STREAM_NAME(name, fuchsia_name)                           \
+  if (stream_##name##_.enabled()) {                                            \
+    arr->AddValue(#name);                                                      \
+  }
+  TIMELINE_STREAM_LIST(ADD_RECORDED_STREAM_NAME);
+#undef ADD_RECORDED_STREAM_NAME
+}
+
 void Timeline::PrintFlagsToJSON(JSONStream* js) {
   JSONObject obj(js);
   obj.AddProperty("type", "TimelineFlags");
@@ -334,7 +347,7 @@ void TimelineEventArguments::SetArgument(intptr_t i,
 void TimelineEventArguments::CopyArgument(intptr_t i,
                                           const char* name,
                                           const char* argument) {
-  SetArgument(i, name, strdup(argument));
+  SetArgument(i, name, Utils::StrDup(argument));
 }
 
 void TimelineEventArguments::FormatArgument(intptr_t i,
@@ -392,7 +405,8 @@ TimelineEvent::TimelineEvent()
       label_(NULL),
       stream_(NULL),
       thread_(OSThread::kInvalidThreadId),
-      isolate_id_(ILLEGAL_PORT) {}
+      isolate_id_(ILLEGAL_PORT),
+      isolate_group_id_(0) {}
 
 TimelineEvent::~TimelineEvent() {
   Reset();
@@ -405,6 +419,7 @@ void TimelineEvent::Reset() {
   state_ = 0;
   thread_ = OSThread::kInvalidThreadId;
   isolate_id_ = ILLEGAL_PORT;
+  isolate_group_id_ = 0;
   stream_ = NULL;
   label_ = NULL;
   arguments_.Free();
@@ -557,12 +572,11 @@ void TimelineEvent::Init(EventType event_type, const char* label) {
   OSThread* os_thread = OSThread::Current();
   ASSERT(os_thread != NULL);
   thread_ = os_thread->trace_id();
-  Isolate* isolate = Isolate::Current();
-  if (isolate != NULL) {
-    isolate_id_ = isolate->main_port();
-  } else {
-    isolate_id_ = ILLEGAL_PORT;
-  }
+  auto thread = Thread::Current();
+  auto isolate = thread != nullptr ? thread->isolate() : nullptr;
+  auto isolate_group = thread != nullptr ? thread->isolate_group() : nullptr;
+  isolate_id_ = (isolate != nullptr) ? isolate->main_port() : ILLEGAL_PORT;
+  isolate_group_id_ = (isolate_group != nullptr) ? isolate_group->id() : 0;
   label_ = label;
   arguments_.Free();
   set_event_type(event_type);
@@ -593,9 +607,6 @@ bool TimelineEvent::Within(int64_t time_origin_micros,
 
 #ifndef PRODUCT
 void TimelineEvent::PrintJSON(JSONStream* stream) const {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject obj(stream);
   int64_t pid = OS::ProcessId();
   int64_t tid = OSThread::ThreadIdToIntPtr(thread_);
@@ -664,11 +675,19 @@ void TimelineEvent::PrintJSON(JSONStream* stream) const {
     ASSERT(arguments_.length() == 1);
     stream->AppendSerializedObject("args", arguments_[0].value);
     if (isolate_id_ != ILLEGAL_PORT) {
-      // If we have one, append the isolate id.
       stream->UncloseObject();
       stream->PrintfProperty("isolateId", ISOLATE_SERVICE_ID_FORMAT_STRING,
                              static_cast<int64_t>(isolate_id_));
       stream->CloseObject();
+    }
+    if (isolate_group_id_ != 0) {
+      stream->UncloseObject();
+      stream->PrintfProperty("isolateGroupId",
+                             ISOLATE_GROUP_SERVICE_ID_FORMAT_STRING,
+                             isolate_group_id_);
+      stream->CloseObject();
+    } else {
+      ASSERT(isolate_group_id_ == ILLEGAL_PORT);
     }
   } else {
     JSONObject args(&obj, "args");
@@ -677,9 +696,15 @@ void TimelineEvent::PrintJSON(JSONStream* stream) const {
       args.AddProperty(arg.name, arg.value);
     }
     if (isolate_id_ != ILLEGAL_PORT) {
-      // If we have one, append the isolate id.
       args.AddPropertyF("isolateId", ISOLATE_SERVICE_ID_FORMAT_STRING,
                         static_cast<int64_t>(isolate_id_));
+    }
+    if (isolate_group_id_ != 0) {
+      args.AddPropertyF("isolateGroupId",
+                        ISOLATE_GROUP_SERVICE_ID_FORMAT_STRING,
+                        isolate_group_id_);
+    } else {
+      ASSERT(isolate_group_id_ == ILLEGAL_PORT);
     }
   }
 }
@@ -742,6 +767,11 @@ TimelineStream::TimelineStream(const char* name,
       enabled_(static_cast<uintptr_t>(enabled))
 #endif
 {
+#if defined(HOST_OS_MACOS)
+  if (__builtin_available(iOS 12.0, macOS 10.14, *)) {
+    macos_log_ = os_log_create("Dart", name);
+  }
+#endif
 }
 
 TimelineEvent* TimelineStream::StartEvent() {
@@ -904,9 +934,6 @@ TimelineEventRecorder::TimelineEventRecorder()
 
 #ifndef PRODUCT
 void TimelineEventRecorder::PrintJSONMeta(JSONArray* events) const {
-  if (!FLAG_support_service) {
-    return;
-  }
   OSThreadIterator it;
   while (it.HasNext()) {
     OSThread* thread = it.Next();
@@ -1028,9 +1055,6 @@ void TimelineEventRecorder::ThreadBlockCompleteEvent(TimelineEvent* event) {
 
 #ifndef PRODUCT
 void TimelineEventRecorder::WriteTo(const char* directory) {
-  if (!FLAG_support_service) {
-    return;
-  }
   Dart_FileOpenCallback file_open = Dart::file_open_callback();
   Dart_FileWriteCallback file_write = Dart::file_write_callback();
   Dart_FileCloseCallback file_close = Dart::file_close_callback();
@@ -1128,9 +1152,6 @@ intptr_t TimelineEventFixedBufferRecorder::Size() {
 void TimelineEventFixedBufferRecorder::PrintJSONEvents(
     JSONArray* events,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   MutexLocker ml(&lock_);
   ResetTimeTracking();
   intptr_t block_offset = FindOldestBlockIndex();
@@ -1159,9 +1180,6 @@ void TimelineEventFixedBufferRecorder::PrintJSONEvents(
 
 void TimelineEventFixedBufferRecorder::PrintJSON(JSONStream* js,
                                                  TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject topLevel(js);
   topLevel.AddProperty("type", "Timeline");
   {
@@ -1176,9 +1194,6 @@ void TimelineEventFixedBufferRecorder::PrintJSON(JSONStream* js,
 void TimelineEventFixedBufferRecorder::PrintTraceEvent(
     JSONStream* js,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONArray events(js);
   PrintJSONMeta(&events);
   PrintJSONEvents(&events, filter);
@@ -1254,9 +1269,6 @@ TimelineEventCallbackRecorder::~TimelineEventCallbackRecorder() {}
 #ifndef PRODUCT
 void TimelineEventCallbackRecorder::PrintJSON(JSONStream* js,
                                               TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject topLevel(js);
   topLevel.AddProperty("type", "Timeline");
   {
@@ -1270,9 +1282,6 @@ void TimelineEventCallbackRecorder::PrintJSON(JSONStream* js,
 void TimelineEventCallbackRecorder::PrintTraceEvent(
     JSONStream* js,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONArray events(js);
 }
 #endif
@@ -1294,9 +1303,6 @@ TimelineEventPlatformRecorder::~TimelineEventPlatformRecorder() {}
 #ifndef PRODUCT
 void TimelineEventPlatformRecorder::PrintJSON(JSONStream* js,
                                               TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject topLevel(js);
   topLevel.AddProperty("type", "Timeline");
   {
@@ -1310,9 +1316,6 @@ void TimelineEventPlatformRecorder::PrintJSON(JSONStream* js,
 void TimelineEventPlatformRecorder::PrintTraceEvent(
     JSONStream* js,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONArray events(js);
 }
 #endif
@@ -1328,13 +1331,13 @@ void TimelineEventPlatformRecorder::CompleteEvent(TimelineEvent* event) {
 }
 
 TimelineEventEndlessRecorder::TimelineEventEndlessRecorder()
-    : head_(NULL), block_index_(0) {}
+    : head_(nullptr), tail_(nullptr), block_index_(0) {}
 
 TimelineEventEndlessRecorder::~TimelineEventEndlessRecorder() {
   TimelineEventBlock* current = head_;
-  head_ = NULL;
+  head_ = tail_ = nullptr;
 
-  while (current != NULL) {
+  while (current != nullptr) {
     TimelineEventBlock* next = current->next();
     delete current;
     current = next;
@@ -1344,9 +1347,6 @@ TimelineEventEndlessRecorder::~TimelineEventEndlessRecorder() {
 #ifndef PRODUCT
 void TimelineEventEndlessRecorder::PrintJSON(JSONStream* js,
                                              TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONObject topLevel(js);
   topLevel.AddProperty("type", "Timeline");
   {
@@ -1361,9 +1361,6 @@ void TimelineEventEndlessRecorder::PrintJSON(JSONStream* js,
 void TimelineEventEndlessRecorder::PrintTraceEvent(
     JSONStream* js,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   JSONArray events(js);
   PrintJSONMeta(&events);
   PrintJSONEvents(&events, filter);
@@ -1387,48 +1384,30 @@ void TimelineEventEndlessRecorder::CompleteEvent(TimelineEvent* event) {
 
 TimelineEventBlock* TimelineEventEndlessRecorder::GetNewBlockLocked() {
   TimelineEventBlock* block = new TimelineEventBlock(block_index_++);
-  block->set_next(head_);
   block->Open();
-  head_ = block;
+  if (head_ == nullptr) {
+    head_ = tail_ = block;
+  } else {
+    tail_->set_next(block);
+    tail_ = block;
+  }
   if (FLAG_trace_timeline) {
     OS::PrintErr("Created new block %p\n", block);
   }
-  return head_;
+  return block;
 }
 
 #ifndef PRODUCT
-static int TimelineEventBlockCompare(TimelineEventBlock* const* a,
-                                     TimelineEventBlock* const* b) {
-  return (*a)->LowerTimeBound() - (*b)->LowerTimeBound();
-}
-
 void TimelineEventEndlessRecorder::PrintJSONEvents(
     JSONArray* events,
     TimelineEventFilter* filter) {
-  if (!FLAG_support_service) {
-    return;
-  }
   MutexLocker ml(&lock_);
   ResetTimeTracking();
-  // Collect all interesting blocks.
-  MallocGrowableArray<TimelineEventBlock*> blocks(8);
-  TimelineEventBlock* current = head_;
-  while (current != NULL) {
-    if (filter->IncludeBlock(current)) {
-      blocks.Add(current);
+  for (TimelineEventBlock* current = head_; current != nullptr;
+       current = current->next()) {
+    if (!filter->IncludeBlock(current)) {
+      continue;
     }
-    current = current->next();
-  }
-  // Bail early.
-  if (blocks.length() == 0) {
-    return;
-  }
-  // Sort the interesting blocks so that blocks with earlier events are
-  // outputted first.
-  blocks.Sort(TimelineEventBlockCompare);
-  // Output blocks in sorted order.
-  for (intptr_t block_idx = 0; block_idx < blocks.length(); block_idx++) {
-    current = blocks[block_idx];
     intptr_t length = current->length();
     for (intptr_t i = 0; i < length; i++) {
       TimelineEvent* event = current->At(i);
@@ -1602,7 +1581,7 @@ void DartTimelineEventHelpers::ReportTaskEvent(Thread* thread,
          (phase[0] == 'B') || (phase[0] == 'E'));
   ASSERT(phase[1] == '\0');
   const int64_t start = OS::GetCurrentMonotonicMicros();
-  const int64_t start_cpu = OS::GetCurrentThreadCPUMicros();
+  const int64_t start_cpu = OS::GetCurrentThreadCPUMicrosForTimeline();
   switch (phase[0]) {
     case 'n':
       event->AsyncInstant(name, id, start);

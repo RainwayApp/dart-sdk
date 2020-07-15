@@ -2,9 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/engine.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../dart/resolution/driver_resolution.dart';
@@ -12,22 +10,12 @@ import '../dart/resolution/driver_resolution.dart';
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(InstanceAccessToStaticMemberTest);
-    defineReflectiveTests(InstanceAccessToStaticMemberWithExtensionMethodsTest);
   });
 }
 
 @reflectiveTest
-class InstanceAccessToStaticMemberTest extends DriverResolutionTest {}
-
-@reflectiveTest
-class InstanceAccessToStaticMemberWithExtensionMethodsTest
-    extends InstanceAccessToStaticMemberTest {
-  @override
-  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..contextFeatures = FeatureSet.forTesting(
-        sdkVersion: '2.3.0', additionalFeatures: [Feature.extension_methods]);
-
-  test_getter() async {
+class InstanceAccessToStaticMemberTest extends DriverResolutionTest {
+  test_extension_getter() async {
     await assertErrorsInCode('''
 class C {}
 
@@ -48,7 +36,7 @@ f(C c) {
     );
   }
 
-  test_method() async {
+  test_extension_method() async {
     await assertErrorsInCode('''
 class C {}
 
@@ -68,7 +56,7 @@ f(C c) {
     );
   }
 
-  test_setter() async {
+  test_extension_setter() async {
     await assertErrorsInCode('''
 class C {}
 
@@ -86,5 +74,57 @@ f(C c) {
       findNode.simple('a = 2;'),
       findElement.setter('a'),
     );
+  }
+
+  test_method_reference() async {
+    await assertErrorsInCode(r'''
+class A {
+  static m() {}
+}
+main(A a) {
+  a.m;
+}
+''', [
+      error(StaticTypeWarningCode.INSTANCE_ACCESS_TO_STATIC_MEMBER, 44, 1),
+    ]);
+  }
+
+  test_propertyAccess_field() async {
+    await assertErrorsInCode(r'''
+class A {
+  static var f;
+}
+main(A a) {
+  a.f;
+}
+''', [
+      error(StaticTypeWarningCode.INSTANCE_ACCESS_TO_STATIC_MEMBER, 44, 1),
+    ]);
+  }
+
+  test_propertyAccess_getter() async {
+    await assertErrorsInCode(r'''
+class A {
+  static get f => 42;
+}
+main(A a) {
+  a.f;
+}
+''', [
+      error(StaticTypeWarningCode.INSTANCE_ACCESS_TO_STATIC_MEMBER, 50, 1),
+    ]);
+  }
+
+  test_propertyAccess_setter() async {
+    await assertErrorsInCode(r'''
+class A {
+  static set f(x) {}
+}
+main(A a) {
+  a.f = 42;
+}
+''', [
+      error(StaticTypeWarningCode.INSTANCE_ACCESS_TO_STATIC_MEMBER, 49, 1),
+    ]);
   }
 }

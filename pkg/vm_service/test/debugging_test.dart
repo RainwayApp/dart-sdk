@@ -21,7 +21,7 @@ void periodicTask(_) {
 }
 
 void startTimer() {
-  new Timer.periodic(const Duration(milliseconds: 10), periodicTask);
+  Timer.periodic(const Duration(milliseconds: 10), periodicTask);
 }
 
 int getLineNumberFromTokenPos(Script s, int token) =>
@@ -30,7 +30,7 @@ int getLineNumberFromTokenPos(Script s, int token) =>
 var tests = <IsolateTest>[
 // Pause
   (VmService service, IsolateRef isolateRef) async {
-    Completer completer = new Completer();
+    Completer completer = Completer();
     var stream = service.onDebugEvent;
     var subscription;
     subscription = stream.listen((Event event) {
@@ -80,16 +80,14 @@ var tests = <IsolateTest>[
       }
     });
     await service.streamListen(EventStreams.kDebug);
-    final script =
+    final Script script =
         await service.getObject(isolate.id, rootLib.scripts.first.id);
     // Add the breakpoint.
-    final Breakpoint result =
+    final Breakpoint bpt =
         await service.addBreakpoint(isolate.id, script.id, 16);
-    print(result);
-    expect(result is Breakpoint, isTrue);
-    Breakpoint bpt = result;
-    expect(bpt.location.script.id, script.id);
-    expect(script.getLineNumberFromTokenPos(bpt.location.tokenPos), 16);
+    final SourceLocation location = bpt.location;
+    expect(location.script.id, script.id);
+    expect(script.getLineNumberFromTokenPos(location.tokenPos), 16);
 
     isolate = await service.getIsolate(isolate.id);
     expect(isolate.breakpoints.length, 1);

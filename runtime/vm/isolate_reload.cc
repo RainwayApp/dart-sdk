@@ -72,7 +72,7 @@ class ObjectLocator : public ObjectVisitor {
   explicit ObjectLocator(IsolateGroupReloadContext* context)
       : context_(context), count_(0) {}
 
-  void VisitObject(RawObject* obj) {
+  void VisitObject(ObjectPtr obj) {
     InstanceMorpher* morpher =
         context_->instance_morpher_by_cid_.LookupValue(obj->GetClassId());
     if (morpher != NULL) {
@@ -110,9 +110,9 @@ InstanceMorpher* InstanceMorpher::CreateFromClassDescriptors(
 
   if (from.NumTypeArguments() > 0) {
     // Add copying of the optional type argument field.
-    intptr_t from_offset = from.type_arguments_field_offset();
+    intptr_t from_offset = from.host_type_arguments_field_offset();
     ASSERT(from_offset != Class::kNoTypeArguments);
-    intptr_t to_offset = to.type_arguments_field_offset();
+    intptr_t to_offset = to.host_type_arguments_field_offset();
     ASSERT(to_offset != Class::kNoTypeArguments);
     mapping->Add(from_offset);
     mapping->Add(to_offset);
@@ -152,8 +152,8 @@ InstanceMorpher* InstanceMorpher::CreateFromClassDescriptors(
       from_name = from_field.name();
       if (from_name.Equals(to_name)) {
         // Success
-        mapping->Add(from_field.Offset());
-        mapping->Add(to_field.Offset());
+        mapping->Add(from_field.HostOffset());
+        mapping->Add(to_field.HostOffset());
         // Field did exist in old class deifnition.
         new_field = false;
       }
@@ -163,7 +163,7 @@ InstanceMorpher* InstanceMorpher::CreateFromClassDescriptors(
       const Field& field = Field::Handle(to_field.raw());
       field.set_needs_load_guard(true);
       field.set_is_unboxing_candidate(false);
-      new_fields_offsets->Add(field.Offset());
+      new_fields_offsets->Add(field.HostOffset());
     }
   }
 
@@ -186,16 +186,41 @@ InstanceMorpher::InstanceMorpher(
       before_(zone, 16),
       after_(zone, 16) {}
 
-void InstanceMorpher::AddObject(RawObject* object) {
+void InstanceMorpher::AddObject(ObjectPtr object) {
   ASSERT(object->GetClassId() == cid_);
   const Instance& instance = Instance::Cast(Object::Handle(Z, object));
   before_.Add(&instance);
 }
 
-RawInstance* InstanceMorpher::Morph(const Instance& instance) const {
+InstancePtr InstanceMorpher::Morph(const Instance& instance) const {
+  // Code can reference constants / canonical objects either directly in the
+  // instruction stream (ia32) or via an object pool.
+  //
+  // We have the following invariants:
+  //
+  //    a) Those canonical objects don't change state (i.e. are not mutable):
+  //       our optimizer can e.g. execute loads of such constants at
+  //       compile-time.
+  //
+  //       => We ensure that const-classes with live constants cannot be
+  //          reloaded to become non-const classes (see Class::CheckReload).
+  //
+  //    b) Those canonical objects live in old space: e.g. on ia32 the scavenger
+  //       does not make the RX pages writable and therefore cannot update
+  //       pointers embedded in the instruction stream.
+  //
+  // In order to maintain these invariants we ensure to always morph canonical
+  // objects to old space.
+  const bool is_canonical = instance.IsCanonical();
+  const Heap::Space space = is_canonical ? Heap::kOld : Heap::kNew;
   const auto& result = Instance::Handle(
-      Z, Instance::NewFromCidAndSize(shared_class_table_, cid_));
+      Z, Instance::NewFromCidAndSize(shared_class_table_, cid_, space));
 
+  // We preserve the canonical bit of the object, since this object is present
+  // in the class's constants.
+  if (is_canonical) {
+    result.SetCanonical();
+  }
 #if defined(HASH_IN_OBJECT_HEADER)
   const uint32_t hash = Object::GetCachedHash(instance.raw());
   Object::SetCachedHash(result.raw(), hash);
@@ -256,13 +281,13 @@ void ReasonForCancelling::Report(IsolateGroupReloadContext* context) {
   context->ReportError(error);
 }
 
-RawError* ReasonForCancelling::ToError() {
+ErrorPtr ReasonForCancelling::ToError() {
   // By default create the error returned from ToString.
   const String& message = String::Handle(ToString());
   return LanguageError::New(message);
 }
 
-RawString* ReasonForCancelling::ToString() {
+StringPtr ReasonForCancelling::ToString() {
   UNREACHABLE();
   return NULL;
 }
@@ -289,7 +314,7 @@ void ClassReasonForCancelling::AppendTo(JSONArray* array) {
   jsobj.AddProperty("message", message.ToCString());
 }
 
-RawError* IsolateGroupReloadContext::error() const {
+ErrorPtr IsolateGroupReloadContext::error() const {
   ASSERT(!reasons_to_cancel_reload_.is_empty());
   // Report the first error to the surroundings.
   return reasons_to_cancel_reload_.At(0)->ToError();
@@ -325,7 +350,7 @@ class ClassMapTraits {
 
   static uword Hash(const Object& obj) {
     uword class_name_hash = String::HashRawSymbol(Class::Cast(obj).Name());
-    RawLibrary* raw_library = Class::Cast(obj).library();
+    LibraryPtr raw_library = Class::Cast(obj).library();
     if (raw_library == Library::null()) {
       return class_name_hash;
     }
@@ -379,11 +404,6 @@ class BecomeMapTraits {
 };
 
 bool IsolateReloadContext::IsSameClass(const Class& a, const Class& b) {
-  if (a.is_patch() != b.is_patch()) {
-    // TODO(johnmccutchan): Should we just check the class kind bits?
-    return false;
-  }
-
   // TODO(turnidge): We need to look at generic type arguments for
   // synthetic mixin classes.  Their names are not necessarily unique
   // currently.
@@ -438,6 +458,7 @@ IsolateReloadContext::IsolateReloadContext(
       group_reload_context_(group_reload_context),
       isolate_(isolate),
       saved_class_table_(nullptr),
+      saved_tlc_class_table_(nullptr),
       old_classes_set_storage_(Array::null()),
       class_map_storage_(Array::null()),
       removed_class_set_storage_(Array::null()),
@@ -456,13 +477,14 @@ IsolateReloadContext::IsolateReloadContext(
 IsolateReloadContext::~IsolateReloadContext() {
   ASSERT(zone_ == Thread::Current()->zone());
   ASSERT(saved_class_table_.load(std::memory_order_relaxed) == nullptr);
+  ASSERT(saved_tlc_class_table_.load(std::memory_order_relaxed) == nullptr);
 }
 
 void IsolateGroupReloadContext::ReportError(const Error& error) {
   // TODO(dartbug.com/36097): We need to change the "reloadSources" service-api
   // call to accept an isolate group instead of an isolate.
   Isolate* isolate = Isolate::Current();
-  if (!FLAG_support_service || Isolate::IsVMInternalIsolate(isolate)) {
+  if (Isolate::IsVMInternalIsolate(isolate)) {
     return;
   }
   TIR_Print("ISO-RELOAD: Error: %s\n", error.ToErrorCString());
@@ -475,7 +497,7 @@ void IsolateGroupReloadContext::ReportSuccess() {
   // TODO(dartbug.com/36097): We need to change the "reloadSources" service-api
   // call to accept an isolate group instead of an isolate.
   Isolate* isolate = Isolate::Current();
-  if (!FLAG_support_service || Isolate::IsVMInternalIsolate(isolate)) {
+  if (Isolate::IsVMInternalIsolate(isolate)) {
     return;
   }
   ServiceEvent service_event(isolate, ServiceEvent::kIsolateReload);
@@ -491,8 +513,8 @@ class Aborted : public ReasonForCancelling {
  private:
   const Error& error_;
 
-  RawError* ToError() { return error_.raw(); }
-  RawString* ToString() {
+  ErrorPtr ToError() { return error_.raw(); }
+  StringPtr ToString() {
     return String::NewFormatted("%s", error_.ToErrorCString());
   }
 };
@@ -599,14 +621,20 @@ bool IsolateGroupReloadContext::Reload(bool force_reload,
       const auto& typed_data = ExternalTypedData::Handle(
           Z, ExternalTypedData::NewFinalizeWithFree(
                  const_cast<uint8_t*>(kernel_buffer), kernel_buffer_size));
-
       kernel_program = kernel::Program::ReadFromTypedData(typed_data);
     }
+
+    ExternalTypedData& external_typed_data =
+        ExternalTypedData::Handle(Z, kernel_program.get()->typed_data()->raw());
+    IsolateGroupSource* source = Isolate::Current()->source();
+    source->add_loaded_blob(Z, external_typed_data);
 
     modified_libs_ = new (Z) BitVector(Z, num_old_libs_);
     kernel::KernelLoader::FindModifiedLibraries(
         kernel_program.get(), first_isolate_, modified_libs_, force_reload,
         &skip_reload, p_num_received_classes, p_num_received_procedures);
+    modified_libs_transitive_ = new (Z) BitVector(Z, num_old_libs_);
+    BuildModifiedLibrariesClosure(modified_libs_);
 
     ASSERT(num_saved_libs_ == -1);
     num_saved_libs_ = 0;
@@ -655,7 +683,7 @@ bool IsolateGroupReloadContext::Reload(bool force_reload,
 
   // Ensure all functions on the stack have unoptimized code.
   // Deoptimize all code that had optimizing decisions that are dependent on
-  // assumptions from field guards or CHA.
+  // assumptions from field guards or CHA or deferred library prefixes.
   // TODO(johnmccutchan): Deoptimizing dependent code here (before the reload)
   // is paranoid. This likely can be moved to the commit phase.
   ForEachIsolate([&](Isolate* isolate) {
@@ -665,6 +693,7 @@ bool IsolateGroupReloadContext::Reload(bool force_reload,
   });
   // Renumbering the libraries has invalidated this.
   modified_libs_ = nullptr;
+  modified_libs_transitive_ = nullptr;
 
   if (FLAG_gc_during_reload) {
     // We use kLowMemory to force the GC to compact, which is more likely to
@@ -863,25 +892,122 @@ bool IsolateGroupReloadContext::Reload(bool force_reload,
     success = false;
   }
 
-  // Once we --enable-isolate-groups in JIT again, we have to ensure unwind
-  // errors will be propagated to all isolates.
-  if (result.IsUnwindError()) {
-    const auto& error = Error::Cast(result);
-    if (thread->top_exit_frame_info() == 0) {
-      // We can only propagate errors when there are Dart frames on the stack.
-      // In this case there are no Dart frames on the stack and we set the
-      // thread's sticky error. This error will be returned to the message
-      // handler.
-      thread->set_sticky_error(error);
-    } else {
-      // If the tag handler returns with an UnwindError error, propagate it and
-      // give up.
-      Exceptions::PropagateError(error);
-      UNREACHABLE();
+  // Re-queue any shutdown requests so they can inform each isolate's own thread
+  // to shut down.
+  isolateIndex = 0;
+  ForEachIsolate([&](Isolate* isolate) {
+    tmp = results.At(isolateIndex);
+    if (tmp.IsUnwindError()) {
+      Isolate::KillIfExists(isolate, UnwindError::Cast(tmp).is_user_initiated()
+                                         ? Isolate::kKillMsg
+                                         : Isolate::kInternalKillMsg);
+    }
+    isolateIndex++;
+  });
+
+  return success;
+}
+
+/// Copied in from https://dart-review.googlesource.com/c/sdk/+/77722.
+static void PropagateLibraryModified(
+    const ZoneGrowableArray<ZoneGrowableArray<intptr_t>*>* imported_by,
+    intptr_t lib_index,
+    BitVector* modified_libs) {
+  ZoneGrowableArray<intptr_t>* dep_libs = (*imported_by)[lib_index];
+  for (intptr_t i = 0; i < dep_libs->length(); i++) {
+    intptr_t dep_lib_index = (*dep_libs)[i];
+    if (!modified_libs->Contains(dep_lib_index)) {
+      modified_libs->Add(dep_lib_index);
+      PropagateLibraryModified(imported_by, dep_lib_index, modified_libs);
+    }
+  }
+}
+
+/// Copied in from https://dart-review.googlesource.com/c/sdk/+/77722.
+void IsolateGroupReloadContext::BuildModifiedLibrariesClosure(
+    BitVector* modified_libs) {
+  const GrowableObjectArray& libs =
+      GrowableObjectArray::Handle(first_isolate_->object_store()->libraries());
+  Library& lib = Library::Handle();
+  intptr_t num_libs = libs.Length();
+
+  // Construct the imported-by graph.
+  ZoneGrowableArray<ZoneGrowableArray<intptr_t>*>* imported_by = new (zone_)
+      ZoneGrowableArray<ZoneGrowableArray<intptr_t>*>(zone_, num_libs);
+  imported_by->SetLength(num_libs);
+  for (intptr_t i = 0; i < num_libs; i++) {
+    (*imported_by)[i] = new (zone_) ZoneGrowableArray<intptr_t>(zone_, 0);
+  }
+  Array& ports = Array::Handle();
+  Namespace& ns = Namespace::Handle();
+  Library& target = Library::Handle();
+  String& target_url = String::Handle();
+
+  for (intptr_t lib_idx = 0; lib_idx < num_libs; lib_idx++) {
+    lib ^= libs.At(lib_idx);
+    ASSERT(lib_idx == lib.index());
+    if (lib.is_dart_scheme()) {
+      // We don't care about imports among dart scheme libraries.
+      continue;
+    }
+
+    // Add imports to the import-by graph.
+    ports = lib.imports();
+    for (intptr_t import_idx = 0; import_idx < ports.Length(); import_idx++) {
+      ns ^= ports.At(import_idx);
+      if (!ns.IsNull()) {
+        target = ns.library();
+        target_url = target.url();
+        if (!target_url.StartsWith(Symbols::DartExtensionScheme())) {
+          (*imported_by)[target.index()]->Add(lib.index());
+        }
+      }
+    }
+
+    // Add exports to the import-by graph.
+    ports = lib.exports();
+    for (intptr_t export_idx = 0; export_idx < ports.Length(); export_idx++) {
+      ns ^= ports.At(export_idx);
+      if (!ns.IsNull()) {
+        target = ns.library();
+        (*imported_by)[target.index()]->Add(lib.index());
+      }
+    }
+
+    // Add prefixed imports to the import-by graph.
+    DictionaryIterator entries(lib);
+    Object& entry = Object::Handle();
+    LibraryPrefix& prefix = LibraryPrefix::Handle();
+    while (entries.HasNext()) {
+      entry = entries.GetNext();
+      if (entry.IsLibraryPrefix()) {
+        prefix ^= entry.raw();
+        ports = prefix.imports();
+        for (intptr_t import_idx = 0; import_idx < ports.Length();
+             import_idx++) {
+          ns ^= ports.At(import_idx);
+          if (!ns.IsNull()) {
+            target = ns.library();
+            (*imported_by)[target.index()]->Add(lib.index());
+          }
+        }
+      }
     }
   }
 
-  return success;
+  for (intptr_t lib_idx = 0; lib_idx < num_libs; lib_idx++) {
+    lib ^= libs.At(lib_idx);
+    if (lib.is_dart_scheme() || modified_libs_transitive_->Contains(lib_idx)) {
+      // We don't consider dart scheme libraries during reload.  If
+      // the modified libs set already contains this library, then we
+      // have already visited it.
+      continue;
+    }
+    if (modified_libs->Contains(lib_idx)) {
+      modified_libs_transitive_->Add(lib_idx);
+      PropagateLibraryModified(imported_by, lib_idx, modified_libs_transitive_);
+    }
+  }
 }
 
 void IsolateGroupReloadContext::GetRootLibUrl(const char* root_script_url) {
@@ -922,9 +1048,10 @@ char* IsolateGroupReloadContext::CompileToKernel(bool force_reload,
 
   Dart_KernelCompilationResult retval = {};
   {
+    const char* root_lib_url = root_lib_url_.ToCString();
     TransitionVMToNative transition(Thread::Current());
-    retval = KernelIsolate::CompileToKernel(root_lib_url_.ToCString(), nullptr,
-                                            0, modified_scripts_count,
+    retval = KernelIsolate::CompileToKernel(root_lib_url, nullptr, 0,
+                                            modified_scripts_count,
                                             modified_scripts, true, nullptr);
   }
   if (retval.status != Dart_KernelCompilationStatus_Ok) {
@@ -963,7 +1090,7 @@ void IsolateReloadContext::ReloadPhase1AllocateStorageMapsAndCheckpoint() {
   }
 }
 
-RawObject* IsolateReloadContext::ReloadPhase2LoadKernel(
+ObjectPtr IsolateReloadContext::ReloadPhase2LoadKernel(
     kernel::Program* program,
     const String& root_lib_url) {
   Thread* thread = Thread::Current();
@@ -1007,7 +1134,11 @@ void IsolateReloadContext::ReloadPhase4Rollback() {
 void IsolateReloadContext::RegisterClass(const Class& new_cls) {
   const Class& old_cls = Class::Handle(OldClassOrNull(new_cls));
   if (old_cls.IsNull()) {
-    I->class_table()->Register(new_cls);
+    if (new_cls.IsTopLevel()) {
+      I->class_table()->RegisterTopLevel(new_cls);
+    } else {
+      I->class_table()->Register(new_cls);
+    }
 
     if (FLAG_identity_reload) {
       TIR_Print("Could not find replacement class for %s\n",
@@ -1130,6 +1261,8 @@ void IsolateReloadContext::DeoptimizeDependentCode() {
   }
 
   DeoptimizeTypeTestingStubs();
+
+  // TODO(rmacnak): Also call LibraryPrefix::InvalidateDependentCode.
 }
 
 void IsolateGroupReloadContext::CheckpointSharedClassTable() {
@@ -1158,8 +1291,10 @@ void IsolateReloadContext::CheckpointClasses() {
 
   // Copy the class table for isolate.
   ClassTable* class_table = I->class_table();
-  RawClass** saved_class_table = nullptr;
-  class_table->CopyBeforeHotReload(&saved_class_table, &saved_num_cids_);
+  ClassPtr* saved_class_table = nullptr;
+  ClassPtr* saved_tlc_class_table = nullptr;
+  class_table->CopyBeforeHotReload(&saved_class_table, &saved_tlc_class_table,
+                                   &saved_num_cids_, &saved_num_tlc_cids_);
 
   // Copy classes into saved_class_table_ first. Make sure there are no
   // safepoints until saved_class_table_ is filled up and saved so class raw
@@ -1169,6 +1304,8 @@ void IsolateReloadContext::CheckpointClasses() {
 
     // The saved_class_table_ is now source of truth for GC.
     saved_class_table_.store(saved_class_table, std::memory_order_release);
+    saved_tlc_class_table_.store(saved_tlc_class_table,
+                                 std::memory_order_release);
 
     // We can therefore wipe out all of the old entries (if that table is used
     // for GC during the hot-reload we have a bug).
@@ -1186,6 +1323,14 @@ void IsolateReloadContext::CheckpointClasses() {
         bool already_present = old_classes_set.Insert(cls);
         ASSERT(!already_present);
       }
+    }
+  }
+  for (intptr_t i = 0; i < saved_num_tlc_cids_; i++) {
+    const intptr_t cid = ClassTable::CidFromTopLevelIndex(i);
+    if (class_table->IsValidIndex(cid) && class_table->HasValidClassAt(cid)) {
+      cls = class_table->At(cid);
+      bool already_present = old_classes_set.Insert(cls);
+      ASSERT(!already_present);
     }
   }
   old_classes_set_storage_ = old_classes_set.Release().raw();
@@ -1247,8 +1392,9 @@ void IsolateGroupReloadContext::FindModifiedSources(
       uri = script.url();
       const bool dart_scheme = uri.StartsWith(Symbols::DartScheme());
       if (dart_scheme) {
-        // If a user-defined class mixes in a mixin from dart:*, it's list of scripts will have
-        // a dart:* script as well. We don't consider those during reload.
+        // If a user-defined class mixes in a mixin from dart:*, it's list of
+        // scripts will have a dart:* script as well. We don't consider those
+        // during reload.
         continue;
       }
       if (ContainsScriptUri(modified_sources_uris, uri.ToCString())) {
@@ -1303,6 +1449,9 @@ void IsolateReloadContext::CheckpointLibraries() {
   Library& lib = Library::Handle();
   UnorderedHashSet<LibraryMapTraits> old_libraries_set(
       old_libraries_set_storage_);
+
+  group_reload_context_->saved_libs_transitive_updated_ = new (Z)
+      BitVector(Z, group_reload_context_->modified_libs_transitive_->length());
   for (intptr_t i = 0; i < libs.Length(); i++) {
     lib ^= libs.At(i);
     if (group_reload_context_->modified_libs_->Contains(i)) {
@@ -1312,6 +1461,11 @@ void IsolateReloadContext::CheckpointLibraries() {
       // We are preserving this library across the reload, assign its new index
       lib.set_index(new_libs.Length());
       new_libs.Add(lib, Heap::kOld);
+
+      if (group_reload_context_->modified_libs_transitive_->Contains(i)) {
+        // Remember the new index.
+        group_reload_context_->saved_libs_transitive_updated_->Add(lib.index());
+      }
     }
     // Add old library to old libraries set.
     bool already_present = old_libraries_set.Insert(lib);
@@ -1327,8 +1481,9 @@ void IsolateReloadContext::CheckpointLibraries() {
 
 void IsolateReloadContext::RollbackClasses() {
   TIR_Print("---- ROLLING BACK CLASS TABLE\n");
-  ASSERT(saved_num_cids_ > 0);
+  ASSERT((saved_num_cids_ + saved_num_tlc_cids_) > 0);
   ASSERT(saved_class_table_.load(std::memory_order_relaxed) != nullptr);
+  ASSERT(saved_tlc_class_table_.load(std::memory_order_relaxed) != nullptr);
 
   DiscardSavedClassTable(/*is_rollback=*/true);
 }
@@ -1491,7 +1646,10 @@ void IsolateReloadContext::CommitBeforeInstanceMorphing() {
     for (intptr_t i = 0; i < libs.Length(); i++) {
       lib = Library::RawCast(libs.At(i));
       // Mark the library dirty if it comes after the libraries we saved.
-      library_infos_[i].dirty = i >= group_reload_context_->num_saved_libs_;
+      library_infos_[i].dirty =
+          i >= group_reload_context_->num_saved_libs_ ||
+          group_reload_context_->saved_libs_transitive_updated_->Contains(
+              lib.index());
     }
   }
 }
@@ -1546,6 +1704,10 @@ void IsolateReloadContext::CommitAfterInstanceMorphing() {
     if (saved_num_cids_ != I->class_table()->NumCids()) {
       TIR_Print("Identity reload failed! B#C=%" Pd " A#C=%" Pd "\n",
                 saved_num_cids_, I->class_table()->NumCids());
+    }
+    if (saved_num_tlc_cids_ != I->class_table()->NumTopLevelCids()) {
+      TIR_Print("Identity reload failed! B#TLC=%" Pd " A#TLC=%" Pd "\n",
+                saved_num_tlc_cids_, I->class_table()->NumTopLevelCids());
     }
     const auto& saved_libs = GrowableObjectArray::Handle(saved_libraries_);
     const GrowableObjectArray& libs =
@@ -1690,21 +1852,30 @@ void IsolateReloadContext::ValidateReload() {
   }
 }
 
-RawClass* IsolateReloadContext::GetClassForHeapWalkAt(intptr_t cid) {
-  RawClass** class_table = saved_class_table_.load(std::memory_order_acquire);
-  if (class_table != NULL) {
-    ASSERT(cid > 0);
-    ASSERT(cid < saved_num_cids_);
-    return class_table[cid];
+ClassPtr IsolateReloadContext::GetClassForHeapWalkAt(intptr_t cid) {
+  ClassPtr* class_table = nullptr;
+  intptr_t index = -1;
+  if (ClassTable::IsTopLevelCid(cid)) {
+    class_table = saved_tlc_class_table_.load(std::memory_order_acquire);
+    index = ClassTable::IndexFromTopLevelCid(cid);
+    ASSERT(index < saved_num_tlc_cids_);
   } else {
-    return isolate_->class_table()->At(cid);
+    class_table = saved_class_table_.load(std::memory_order_acquire);
+    index = cid;
+    ASSERT(cid > 0 && cid < saved_num_cids_);
   }
+  if (class_table != nullptr) {
+    return class_table[index];
+  }
+  return isolate_->class_table()->At(cid);
 }
 
 intptr_t IsolateGroupReloadContext::GetClassSizeForHeapWalkAt(classid_t cid) {
+  if (ClassTable::IsTopLevelCid(cid)) {
+    return 0;
+  }
   intptr_t* size_table = saved_size_table_.load(std::memory_order_acquire);
   if (size_table != nullptr) {
-    ASSERT(cid > 0);
     ASSERT(cid < saved_num_cids_);
     return size_table[cid];
   } else {
@@ -1713,11 +1884,15 @@ intptr_t IsolateGroupReloadContext::GetClassSizeForHeapWalkAt(classid_t cid) {
 }
 
 void IsolateReloadContext::DiscardSavedClassTable(bool is_rollback) {
-  RawClass** local_saved_class_table =
+  ClassPtr* local_saved_class_table =
       saved_class_table_.load(std::memory_order_relaxed);
-  I->class_table()->ResetAfterHotReload(local_saved_class_table,
-                                        saved_num_cids_, is_rollback);
+  ClassPtr* local_saved_tlc_class_table =
+      saved_tlc_class_table_.load(std::memory_order_relaxed);
+  I->class_table()->ResetAfterHotReload(
+      local_saved_class_table, local_saved_tlc_class_table, saved_num_cids_,
+      saved_num_tlc_cids_, is_rollback);
   saved_class_table_.store(nullptr, std::memory_order_release);
+  saved_tlc_class_table_.store(nullptr, std::memory_order_release);
 }
 
 void IsolateGroupReloadContext::DiscardSavedClassTable(bool is_rollback) {
@@ -1735,11 +1910,18 @@ void IsolateGroupReloadContext::VisitObjectPointers(
 void IsolateReloadContext::VisitObjectPointers(ObjectPointerVisitor* visitor) {
   visitor->VisitPointers(from(), to());
 
-  RawClass** saved_class_table =
+  ClassPtr* saved_class_table =
       saved_class_table_.load(std::memory_order_relaxed);
   if (saved_class_table != NULL) {
-    auto class_table = reinterpret_cast<RawObject**>(&(saved_class_table[0]));
+    auto class_table = reinterpret_cast<ObjectPtr*>(&(saved_class_table[0]));
     visitor->VisitPointers(class_table, saved_num_cids_);
+  }
+  ClassPtr* saved_tlc_class_table =
+      saved_class_table_.load(std::memory_order_relaxed);
+  if (saved_tlc_class_table != NULL) {
+    auto class_table =
+        reinterpret_cast<ObjectPtr*>(&(saved_tlc_class_table[0]));
+    visitor->VisitPointers(class_table, saved_num_tlc_cids_);
   }
 }
 
@@ -1805,22 +1987,22 @@ class InvalidationCollector : public ObjectVisitor {
         instances_(instances) {}
   virtual ~InvalidationCollector() {}
 
-  void VisitObject(RawObject* obj) {
+  void VisitObject(ObjectPtr obj) {
     intptr_t cid = obj->GetClassId();
     if (cid == kFunctionCid) {
       const Function& func =
-          Function::Handle(zone_, static_cast<RawFunction*>(obj));
+          Function::Handle(zone_, static_cast<FunctionPtr>(obj));
       if (!func.ForceOptimize()) {
         // Force-optimized functions cannot deoptimize.
         functions_->Add(&func);
       }
     } else if (cid == kKernelProgramInfoCid) {
       kernel_infos_->Add(&KernelProgramInfo::Handle(
-          zone_, static_cast<RawKernelProgramInfo*>(obj)));
+          zone_, static_cast<KernelProgramInfoPtr>(obj)));
     } else if (cid == kFieldCid) {
-      fields_->Add(&Field::Handle(zone_, static_cast<RawField*>(obj)));
+      fields_->Add(&Field::Handle(zone_, static_cast<FieldPtr>(obj)));
     } else if (cid > kNumPredefinedCids) {
-      instances_->Add(&Instance::Handle(zone_, static_cast<RawInstance*>(obj)));
+      instances_->Add(&Instance::Handle(zone_, static_cast<InstancePtr>(obj)));
     }
   }
 
@@ -1984,7 +2166,10 @@ class FieldInvalidator {
         delayed_function_type_arguments_(TypeArguments::Handle(zone)) {}
 
   void CheckStatics(const GrowableArray<const Field*>& fields) {
-    HANDLESCOPE(Thread::Current());
+    Thread* thread = Thread::Current();
+    Isolate* isolate = thread->isolate();
+    bool null_safety = isolate->null_safety();
+    HANDLESCOPE(thread);
     instantiator_type_arguments_ = TypeArguments::null();
     for (intptr_t i = 0; i < fields.length(); i++) {
       const Field& field = *fields[i];
@@ -1996,24 +2181,24 @@ class FieldInvalidator {
       }
       value_ = field.StaticValue();
       if (value_.raw() != Object::sentinel().raw()) {
-        CheckValueType(value_, field);
+        CheckValueType(null_safety, value_, field);
       }
     }
   }
 
   void CheckInstances(const GrowableArray<const Instance*>& instances) {
+    Thread* thread = Thread::Current();
+    Isolate* isolate = thread->isolate();
+    bool null_safety = isolate->null_safety();
+    HANDLESCOPE(thread);
     for (intptr_t i = 0; i < instances.length(); i++) {
-      // This handle scope does run very frequently, but is a net-win by
-      // preventing us from spending too much time in malloc for new handle
-      // blocks.
-      HANDLESCOPE(Thread::Current());
-      CheckInstance(*instances[i]);
+      CheckInstance(null_safety, *instances[i]);
     }
   }
 
  private:
   DART_FORCE_INLINE
-  void CheckInstance(const Instance& instance) {
+  void CheckInstance(bool null_safety, const Instance& instance) {
     cls_ = instance.clazz();
     if (cls_.NumTypeArguments() > 0) {
       instantiator_type_arguments_ = instance.GetTypeArguments();
@@ -2027,28 +2212,36 @@ class FieldInvalidator {
         continue;
       }
       const Field& field = Field::Cast(entry_);
-      CheckInstanceField(instance, field);
+      CheckInstanceField(null_safety, instance, field);
     }
   }
 
   DART_FORCE_INLINE
-  void CheckInstanceField(const Instance& instance, const Field& field) {
+  void CheckInstanceField(bool null_safety,
+                          const Instance& instance,
+                          const Field& field) {
     if (field.needs_load_guard()) {
       return;  // Already guarding.
     }
     value_ ^= instance.GetField(field);
     if (value_.raw() == Object::sentinel().raw()) {
+      if (field.is_late()) {
+        // Late fields already have lazy initialization logic.
+        return;
+      }
       // Needs guard for initialization.
       ASSERT(!FLAG_identity_reload);
       field.set_needs_load_guard(true);
       return;
     }
-    CheckValueType(value_, field);
+    CheckValueType(null_safety, value_, field);
   }
 
   DART_FORCE_INLINE
-  void CheckValueType(const Instance& value, const Field& field) {
-    if (!FLAG_strong_non_nullable_type_checks && value.IsNull()) {
+  void CheckValueType(bool null_safety,
+                      const Instance& value,
+                      const Field& field) {
+    if (!null_safety && value.IsNull()) {
       return;
     }
     type_ = field.type();
@@ -2112,8 +2305,7 @@ class FieldInvalidator {
     }
 
     if (!cache_hit) {
-      const NNBDMode nnbd_mode = Class::Handle(field.Origin()).nnbd_mode();
-      if (!value.IsAssignableTo(nnbd_mode, type_, instantiator_type_arguments_,
+      if (!value.IsAssignableTo(type_, instantiator_type_arguments_,
                                 function_type_arguments_)) {
         ASSERT(!FLAG_identity_reload);
         field.set_needs_load_guard(true);
@@ -2146,6 +2338,7 @@ void IsolateReloadContext::InvalidateFields(
     const GrowableArray<const Field*>& fields,
     const GrowableArray<const Instance*>& instances) {
   TIMELINE_SCOPE(InvalidateFields);
+  SafepointMutexLocker ml(isolate()->group()->subtype_test_cache_mutex());
   FieldInvalidator invalidator(zone);
   invalidator.CheckStatics(fields);
   invalidator.CheckInstances(instances);
@@ -2163,8 +2356,7 @@ void IsolateReloadContext::InvalidateWorld() {
   RunInvalidationVisitors();
 }
 
-RawClass* IsolateReloadContext::OldClassOrNull(
-    const Class& replacement_or_new) {
+ClassPtr IsolateReloadContext::OldClassOrNull(const Class& replacement_or_new) {
   UnorderedHashSet<ClassMapTraits> old_classes_set(old_classes_set_storage_);
   Class& cls = Class::Handle();
   cls ^= old_classes_set.GetOrNull(replacement_or_new);
@@ -2172,7 +2364,7 @@ RawClass* IsolateReloadContext::OldClassOrNull(
   return cls.raw();
 }
 
-RawString* IsolateReloadContext::FindLibraryPrivateKey(
+StringPtr IsolateReloadContext::FindLibraryPrivateKey(
     const Library& replacement_or_new) {
   const Library& old = Library::Handle(OldLibraryOrNull(replacement_or_new));
   if (old.IsNull()) {
@@ -2186,7 +2378,7 @@ RawString* IsolateReloadContext::FindLibraryPrivateKey(
   return old.private_key();
 }
 
-RawLibrary* IsolateReloadContext::OldLibraryOrNull(
+LibraryPtr IsolateReloadContext::OldLibraryOrNull(
     const Library& replacement_or_new) {
   UnorderedHashSet<LibraryMapTraits> old_libraries_set(
       old_libraries_set_storage_);
@@ -2204,7 +2396,7 @@ RawLibrary* IsolateReloadContext::OldLibraryOrNull(
 
 // Attempt to find the pair to |replacement_or_new| with the knowledge that
 // the base url prefix has moved.
-RawLibrary* IsolateReloadContext::OldLibraryOrNullBaseMoved(
+LibraryPtr IsolateReloadContext::OldLibraryOrNullBaseMoved(
     const Library& replacement_or_new) {
   const String& url_prefix =
       String::Handle(group_reload_context_->root_url_prefix_);

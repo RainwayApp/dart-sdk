@@ -10,29 +10,23 @@ import 'package:analysis_server/src/channel/channel.dart';
 import 'package:analysis_server/src/socket_server.dart';
 import 'package:path/path.dart' as path;
 
-/**
- * Instances of the class [DevAnalysisServer] implement a simple analysis
- * server implementation, used to analyze one or more packages and then
- * terminate the server.
- */
+/// Instances of the class [DevAnalysisServer] implement a simple analysis
+/// server implementation, used to analyze one or more packages and then
+/// terminate the server.
 class DevAnalysisServer {
   static bool get _terminalSupportsAnsi {
     return stdout.supportsAnsiEscapes &&
         stdioType(stdout) == StdioType.terminal;
   }
 
-  /**
-   * An object that can handle either a WebSocket connection or a connection
-   * to the client over stdio.
-   */
+  /// An object that can handle either a WebSocket connection or a connection
+  /// to the client over stdio.
   final SocketServer socketServer;
 
   int _nextId = 0;
   DevChannel _channel;
 
-  /**
-   * Initialize a newly created stdio server.
-   */
+  /// Initialize a newly created stdio server.
   DevAnalysisServer(this.socketServer);
 
   void initServer() {
@@ -40,23 +34,21 @@ class DevAnalysisServer {
     socketServer.createAnalysisServer(_channel);
   }
 
-  /**
-   * Analyze the given directories and display any results to stdout.
-   *
-   * Return a future that will be completed with an exit code when analysis
-   * finishes.
-   */
+  /// Analyze the given directories and display any results to stdout.
+  ///
+  /// Return a future that will be completed with an exit code when analysis
+  /// finishes.
   Future<int> processDirectories(List<String> directories) async {
-    final String bold = _terminalSupportsAnsi ? '\u001b[1m' : '';
-    final String none = _terminalSupportsAnsi ? '\u001b[0m' : '';
+    var bold = _terminalSupportsAnsi ? '\u001b[1m' : '';
+    var none = _terminalSupportsAnsi ? '\u001b[0m' : '';
 
     print('Analyzing ${directories.join(', ')}...');
 
-    Stopwatch timer = Stopwatch()..start();
+    var timer = Stopwatch()..start();
 
-    Completer<int> whenComplete = Completer();
+    var whenComplete = Completer<int>();
 
-    int exitCode = 0;
+    var exitCode = 0;
 
     void handleStatusNotification(Notification notification) {
       Map<String, dynamic> params = notification.params;
@@ -64,7 +56,7 @@ class DevAnalysisServer {
         bool isAnalyzing = params['analysis']['isAnalyzing'];
         if (!isAnalyzing) {
           timer.stop();
-          double seconds = timer.elapsedMilliseconds / 1000.0;
+          var seconds = timer.elapsedMilliseconds / 1000.0;
           print('Completed in ${seconds.toStringAsFixed(1)}s.');
           whenComplete.complete(exitCode);
         }
@@ -81,7 +73,7 @@ class DevAnalysisServer {
 
       filePath = path.relative(filePath);
 
-      for (Map error in errors) {
+      for (var error in errors) {
         if (error['type'] == 'TODO') {
           continue;
         }
@@ -123,7 +115,7 @@ class DevAnalysisServer {
       whenComplete.completeError(message);
     }
 
-    StreamSubscription<Notification> notificationSubscriptions =
+    var notificationSubscriptions =
         _channel.onNotification.listen((Notification notification) {
       if (notification.event == 'server.status') {
         handleStatusNotification(notification);
@@ -194,7 +186,7 @@ class DevChannel implements ServerCommunicationChannel {
   }
 
   Future<Response> sendRequest(Request request) {
-    Completer<Response> completer = Completer();
+    var completer = Completer<Response>();
     _responseCompleters[request.id] = completer;
     _requestController.add(request);
     return completer.future;
@@ -202,7 +194,7 @@ class DevChannel implements ServerCommunicationChannel {
 
   @override
   void sendResponse(Response response) {
-    Completer<Response> completer = _responseCompleters.remove(response.id);
+    var completer = _responseCompleters.remove(response.id);
     completer?.complete(response);
   }
 }

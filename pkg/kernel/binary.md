@@ -68,12 +68,12 @@ type Pair<T0, T1> {
 ```
 
 A string table consists of an array of end offsets and a payload array of
-strings encoded as UTF-8.  The array of end offsets maps a string index to the
+strings encoded as WTF-8.  The array of end offsets maps a string index to the
 offset of the _next_ string in the table or the offset of the end of the array
 for the last string.  These offsets are relative to the string payload array.
-Thus, string number 0 consists of the UTF-8 encoded string stretching from
+Thus, string number 0 consists of the WTF-8 encoded string stretching from
 offset 0 (inclusive) to endOffset[0] (exclusive); and string number N for N > 0
-consists of the UTF-8 encoded string stretching from offset endOffset[N-1]
+consists of the WTF-8 encoded string stretching from offset endOffset[N-1]
 (inclusive) to endOffset[N] (exclusive).
 
 ``` scala
@@ -143,7 +143,8 @@ type CanonicalName {
 
 type ComponentFile {
   UInt32 magic = 0x90ABCDEF;
-  UInt32 formatVersion = 36;
+  UInt32 formatVersion = 43;
+  Byte[10] shortSdkHash;
   List<String> problemsAsJson; // Described in problems.md.
   Library[] libraries;
   UriSource sourceMap;
@@ -180,6 +181,7 @@ type ComponentIndex {
   UInt32 binaryOffsetForStringTable;
   UInt32 binaryOffsetForConstantTable;
   UInt32 mainMethodReference; // This is a ProcedureReference with a fixed-size integer.
+  UInt32 compilationMode; // enum NonNullableByDefaultCompiledMode { Disabled = 0, Weak = 1, Strong = 2, Agnostic = 3 } with a fixed-size integer.
   UInt32[libraryCount + 1] libraryOffsets;
   UInt32 libraryCount;
   UInt32 componentFileSizeInBytes;
@@ -228,7 +230,8 @@ type Name {
 }
 
 type Library {
-  Byte flags (_unused_, isSynthetic, isNonNullableByDefault);
+  Byte flags (_unused_, isSynthetic, isNonNullableByDefault,
+              nnbdModeBit1, nnbdModeBit2);
   UInt languageVersionMajor;
   UInt languageVersionMinor;
   CanonicalNameReference canonicalName;
@@ -317,7 +320,8 @@ type Class extends Node {
   FileOffset fileOffset; // Offset of the name of the class.
   FileOffset fileEndOffset;
   Byte flags (levelBit0, levelBit1, isAbstract, isEnum, isAnonymousMixin,
-              isEliminatedMixin, isMixinDeclaration); // Where level is index into ClassLevel
+              isEliminatedMixin, isMixinDeclaration, 
+              hasConstConstructor); // Where level is index into ClassLevel
   StringReference name;
   List<Expression> annotations;
   List<TypeParameter> typeParameters;
@@ -351,7 +355,7 @@ type Extension extends Node {
 enum ExtensionMemberKind { Field = 0, Method = 1, Getter = 2, Setter = 3, Operator = 4, TearOff = 5, }
 
 type ExtensionMemberDescriptor {
-  StringReference name;
+  Name name;
   ExtensionMemberKind kind;
   Byte flags (isStatic);
   MemberReference member;
@@ -367,7 +371,8 @@ type Field extends Member {
   FileOffset fileOffset;
   FileOffset fileEndOffset;
   UInt flags (isFinal, isConst, isStatic, hasImplicitGetter, hasImplicitSetter,
-                isCovariant, isGenericCovariantImpl, isLate, isExtensionMember);
+                isCovariant, isGenericCovariantImpl, isLate, isExtensionMember,
+                isNonNullableByDefault, isInternalImplementation);
   Name name;
   List<Expression> annotations;
   DartType type;
@@ -381,7 +386,7 @@ type Constructor extends Member {
   FileOffset startFileOffset; // Offset of the start of the constructor including any annotations.
   FileOffset fileOffset; // Offset of the constructor name.
   FileOffset fileEndOffset;
-  Byte flags (isConst, isExternal, isSynthetic);
+  Byte flags (isConst, isExternal, isSynthetic, isNonNullableByDefault);
   Name name;
   List<Expression> annotations;
   FunctionNode function;
@@ -409,7 +414,8 @@ type Procedure extends Member {
   Byte kind; // Index into the ProcedureKind enum above.
   UInt flags (isStatic, isAbstract, isExternal, isConst, isForwardingStub,
               isForwardingSemiStub, isRedirectingFactoryConstructor,
-              isNoSuchMethodForwarder, isExtensionMember);
+              isNoSuchMethodForwarder, isExtensionMember, isMemberSignature,
+              isNonNullableByDefault);
   Name name;
   List<Expression> annotations;
   // Only present if the 'isForwardingStub' flag is set.
@@ -776,6 +782,7 @@ type FileUriExpression extends Expression {
 type IsExpression extends Expression {
   Byte tag = 37;
   FileOffset fileOffset;
+  Byte flags (isForNonNullableByDefault);
   Expression operand;
   DartType type;
 }
@@ -783,7 +790,7 @@ type IsExpression extends Expression {
 type AsExpression extends Expression {
   Byte tag = 38;
   FileOffset fileOffset;
-  Byte flags (isTypeError);
+  Byte flags (isTypeError,isCovarianceCheck,isForDynamic,isForNonNullableByDefault);
   Expression operand;
   DartType type;
 }

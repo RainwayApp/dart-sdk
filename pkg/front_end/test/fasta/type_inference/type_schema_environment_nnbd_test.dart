@@ -7,12 +7,11 @@ import 'package:front_end/src/fasta/type_inference/type_schema_environment.dart'
 import 'package:kernel/ast.dart';
 import 'package:kernel/core_types.dart';
 import 'package:kernel/class_hierarchy.dart';
+import 'package:kernel/testing/type_parser_environment.dart';
+import 'package:kernel/testing/mock_sdk.dart';
 import 'package:kernel/type_environment.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
-import '../types/kernel_type_parser.dart';
-import '../types/mock_sdk.dart';
-import '../types/type_parser.dart';
 
 main() {
   defineReflectiveSuite(() {
@@ -28,7 +27,7 @@ class TypeSchemaEnvironmentTest {
 
   TypeSchemaEnvironment env;
 
-  KernelEnvironment kernelEnvironment;
+  TypeParserEnvironment typeParserEnvironment;
 
   Library get testLib => component.libraries.single;
 
@@ -40,25 +39,23 @@ class TypeSchemaEnvironmentTest {
 
   Class get objectClass => coreTypes.objectClass;
 
+  DartType get bottomType => const NeverType(Nullability.nonNullable);
+
   /// Converts the [text] representation of a type into a type.
   ///
   /// If [environment] is passed it's used to resolve the type terms in [text].
   /// If [typeParameters] are passed, they are used to extend
-  /// [kernelEnvironment] to resolve the type terms in [text].  Not more than
-  /// one of [environment] or [typeParameters] should be passed in.
+  /// [typeParserEnvironment] to resolve the type terms in [text].  Not more
+  /// than one of [environment] or [typeParameters] should be passed in.
   DartType toType(String text,
-      {KernelEnvironment environment, String typeParameters}) {
+      {TypeParserEnvironment environment, String typeParameters}) {
     assert(environment == null || typeParameters == null);
     environment ??= extend(typeParameters);
-    return environment.kernelFromParsedType(parse(text).single);
+    return environment.parseType(text);
   }
 
-  KernelEnvironment extend(String typeParameters) {
-    if (typeParameters?.isEmpty ?? true) return kernelEnvironment;
-    return const KernelFromParsedType()
-        .computeTypeParameterEnvironment(
-            parseTypeVariables("<$typeParameters>"), kernelEnvironment)
-        .environment;
+  TypeParserEnvironment extend(String typeParameters) {
+    return typeParserEnvironment.extendWithTypeParameters(typeParameters);
   }
 
   void test_addLowerBound() {
@@ -262,7 +259,7 @@ class TypeSchemaEnvironmentTest {
     "Wn*": "Wn extends Tn, Tn extends Never",
 
     // Null.
-    "Null?": null,
+    "Null": null,
   };
 
   static String joinTypeParameters(
@@ -275,7 +272,7 @@ class TypeSchemaEnvironmentTest {
 
   void testLower(String first, String second, String expected,
       {String typeParameters}) {
-    KernelEnvironment environment = extend(typeParameters);
+    TypeParserEnvironment environment = extend(typeParameters);
     DartType firstType = toType(first, environment: environment);
     DartType secondType = toType(second, environment: environment);
     DartType expectedType = toType(expected, environment: environment);
@@ -288,7 +285,7 @@ class TypeSchemaEnvironmentTest {
 
   void testUpper(String first, String second, String expected,
       {String typeParameters}) {
-    KernelEnvironment environment = extend(typeParameters);
+    TypeParserEnvironment environment = extend(typeParameters);
     DartType firstType = toType(first, environment: environment);
     DartType secondType = toType(second, environment: environment);
     DartType expectedType = toType(expected, environment: environment);
@@ -430,8 +427,8 @@ class TypeSchemaEnvironmentTest {
 
     testLower("<X extends dynamic>() -> void", "<Y extends Object?>() -> void",
         "<Z extends dynamic>() -> void");
-    testLower("<X extends Null?>() -> void", "<Y extends Never?>() -> void",
-        "<Z extends Null?>() -> void");
+    testLower("<X extends Null>() -> void", "<Y extends Never?>() -> void",
+        "<Z extends Null>() -> void");
     testLower(
         "<X extends FutureOr<dynamic>?>() -> void",
         "<Y extends FutureOr<Object?>>() -> void",
@@ -476,6 +473,30 @@ class TypeSchemaEnvironmentTest {
     testLower("B*", "A", "B");
     testLower("B?", "A", "B");
     testLower("B", "A", "B");
+
+    testLower("Iterable<A>*", "List<B>*", "List<B>*");
+    testLower("Iterable<A>*", "List<B>?", "List<B>*");
+    testLower("Iterable<A>*", "List<B>", "List<B>");
+
+    testLower("Iterable<A>?", "List<B>*", "List<B>*");
+    testLower("Iterable<A>?", "List<B>?", "List<B>?");
+    testLower("Iterable<A>?", "List<B>", "List<B>");
+
+    testLower("Iterable<A>", "List<B>*", "List<B>");
+    testLower("Iterable<A>", "List<B>?", "List<B>");
+    testLower("Iterable<A>", "List<B>", "List<B>");
+
+    testLower("List<B>*", "Iterable<A>*", "List<B>*");
+    testLower("List<B>?", "Iterable<A>*", "List<B>*");
+    testLower("List<B>", "Iterable<A>*", "List<B>");
+
+    testLower("List<B>*", "Iterable<A>?", "List<B>*");
+    testLower("List<B>?", "Iterable<A>?", "List<B>?");
+    testLower("List<B>", "Iterable<A>?", "List<B>");
+
+    testLower("List<B>*", "Iterable<A>", "List<B>");
+    testLower("List<B>?", "Iterable<A>", "List<B>");
+    testLower("List<B>", "Iterable<A>", "List<B>");
   }
 
   void test_lower_bound_top() {
@@ -567,30 +588,78 @@ class TypeSchemaEnvironmentTest {
           listClassThisType,
           [T.parameter],
           [T, T],
-          [coreTypes.intLegacyRawType, coreTypes.doubleLegacyRawType],
+          [coreTypes.intNonNullableRawType, coreTypes.doubleNonNullableRawType],
           null,
           inferredTypes,
           testLib);
-      expect(inferredTypes[0], coreTypes.numLegacyRawType);
+      expect(inferredTypes[0], coreTypes.numNonNullableRawType);
     }
     {
       // Test an instantiation of [1, 2.0] with a context of List<Object>.  This
       // should infer as List<Object> during downwards inference.
       List<DartType> inferredTypes = <DartType>[new UnknownType()];
       TypeParameterType T = listClassThisType.typeArguments[0];
-      env.inferGenericFunctionOrType(listClassThisType, [T.parameter], null,
-          null, _list(coreTypes.objectLegacyRawType), inferredTypes, testLib);
-      expect(inferredTypes[0], coreTypes.objectLegacyRawType);
+      env.inferGenericFunctionOrType(
+          listClassThisType,
+          [T.parameter],
+          null,
+          null,
+          _list(coreTypes.objectNonNullableRawType),
+          inferredTypes,
+          testLib);
+      expect(inferredTypes[0], coreTypes.objectNonNullableRawType);
       // And upwards inference should preserve the type.
       env.inferGenericFunctionOrType(
           listClassThisType,
           [T.parameter],
           [T, T],
-          [coreTypes.intLegacyRawType, coreTypes.doubleLegacyRawType],
-          _list(coreTypes.objectLegacyRawType),
+          [coreTypes.intNonNullableRawType, coreTypes.doubleNonNullableRawType],
+          _list(coreTypes.objectNonNullableRawType),
           inferredTypes,
           testLib);
-      expect(inferredTypes[0], coreTypes.objectLegacyRawType);
+      expect(inferredTypes[0], coreTypes.objectNonNullableRawType);
+    }
+    {
+      // Test an instantiation of [1, 2.0, null] with no context.  This should
+      // infer as List<?> during downwards inference.
+      List<DartType> inferredTypes = <DartType>[new UnknownType()];
+      TypeParameterType T = listClassThisType.typeArguments[0];
+      env.inferGenericFunctionOrType(listClassThisType, [T.parameter], null,
+          null, null, inferredTypes, testLib);
+      expect(inferredTypes[0], new UnknownType());
+      // And upwards inference should refine it to List<num?>.
+      env.inferGenericFunctionOrType(
+          listClassThisType,
+          [T.parameter],
+          [T, T, T],
+          [
+            coreTypes.intNonNullableRawType,
+            coreTypes.doubleNonNullableRawType,
+            coreTypes.nullType
+          ],
+          null,
+          inferredTypes,
+          testLib);
+      expect(inferredTypes[0], coreTypes.numNullableRawType);
+    }
+    {
+      // Test an instantiation of legacy [1, 2.0] with no context.
+      // This should infer as List<?> during downwards inference.
+      List<DartType> inferredTypes = <DartType>[new UnknownType()];
+      TypeParameterType T = listClassThisType.typeArguments[0];
+      env.inferGenericFunctionOrType(listClassThisType, [T.parameter], null,
+          null, null, inferredTypes, testLib);
+      expect(inferredTypes[0], new UnknownType());
+      // And upwards inference should refine it to List<num!>.
+      env.inferGenericFunctionOrType(
+          listClassThisType,
+          [T.parameter],
+          [T, T],
+          [coreTypes.intLegacyRawType, coreTypes.doubleLegacyRawType],
+          null,
+          inferredTypes,
+          testLib);
+      expect(inferredTypes[0], coreTypes.numNonNullableRawType);
     }
   }
 
@@ -743,8 +812,8 @@ class TypeSchemaEnvironmentTest {
 
     testUpper("<X extends dynamic>() -> void", "<Y extends Object?>() -> void",
         "<Z extends dynamic>() -> void");
-    testUpper("<X extends Null?>() -> void", "<Y extends Never?>() -> void",
-        "<Z extends Null?>() -> void");
+    testUpper("<X extends Null>() -> void", "<Y extends Never?>() -> void",
+        "<Z extends Null>() -> void");
     testUpper(
         "<X extends FutureOr<dynamic>?>() -> void",
         "<Y extends FutureOr<Object?>>() -> void",
@@ -795,11 +864,20 @@ class TypeSchemaEnvironmentTest {
     testUpper("List<B*>", "Iterable<A*>", "Iterable<A*>");
     testUpper("List<B*>", "Iterable<A?>", "Iterable<A?>");
     testUpper("List<B*>", "Iterable<A>", "Iterable<A>");
+    testUpper("List<B>*", "Iterable<A>*", "Iterable<A>*");
+    testUpper("List<B>*", "Iterable<A>?", "Iterable<A>?");
+    testUpper("List<B>*", "Iterable<A>", "Iterable<A>*");
+    testUpper("List<B>?", "Iterable<A>*", "Iterable<A>?");
+    testUpper("List<B>?", "Iterable<A>?", "Iterable<A>?");
+    testUpper("List<B>?", "Iterable<A>", "Iterable<A>?");
 
     // UP(T1, T2) = T2 if T1 <: T2
     //   Note that both types must be class types at this point
     testUpper("List<B?>", "Iterable<A*>", "Iterable<A*>");
     testUpper("List<B?>", "Iterable<A?>", "Iterable<A?>");
+    testUpper("List<B>?", "Iterable<A>*", "Iterable<A>?");
+    testUpper("List<B>?", "Iterable<A>?", "Iterable<A>?");
+    testUpper("List<B>?", "Iterable<A>", "Iterable<A>?");
     // UP(C0<T0, ..., Tn>, C1<S0, ..., Sk>)
     //     = least upper bound of two interfaces as in Dart 1.
     testUpper("List<B?>", "Iterable<A>", "Object");
@@ -809,22 +887,31 @@ class TypeSchemaEnvironmentTest {
     testUpper("List<B>", "Iterable<A*>", "Iterable<A*>");
     testUpper("List<B>", "Iterable<A?>", "Iterable<A?>");
     testUpper("List<B>", "Iterable<A>", "Iterable<A>");
+    testUpper("List<B>", "Iterable<A>*", "Iterable<A>*");
+    testUpper("List<B>", "Iterable<A>?", "Iterable<A>?");
 
     // UP(T1, T2) = T1 if T2 <: T1
     //   Note that both types must be class types at this point
     testUpper("Iterable<A*>", "List<B*>", "Iterable<A*>");
     testUpper("Iterable<A*>", "List<B?>", "Iterable<A*>");
     testUpper("Iterable<A*>", "List<B>", "Iterable<A*>");
+    testUpper("Iterable<A>*", "List<B>*", "Iterable<A>*");
+    testUpper("Iterable<A>*", "List<B>?", "Iterable<A>?");
+    testUpper("Iterable<A>*", "List<B>", "Iterable<A>*");
 
     // UP(T1, T2) = T1 if T2 <: T1
     //   Note that both types must be class types at this point
     testUpper("Iterable<A?>", "List<B*>", "Iterable<A?>");
     testUpper("Iterable<A?>", "List<B?>", "Iterable<A?>");
     testUpper("Iterable<A?>", "List<B>", "Iterable<A?>");
+    testUpper("Iterable<A>?", "List<B>*", "Iterable<A>?");
+    testUpper("Iterable<A>?", "List<B>?", "Iterable<A>?");
+    testUpper("Iterable<A>?", "List<B>", "Iterable<A>?");
 
     // UP(T1, T2) = T1 if T2 <: T1
     //   Note that both types must be class types at this point
     testUpper("Iterable<A>", "List<B*>", "Iterable<A>");
+    testUpper("Iterable<A>", "List<B>*", "Iterable<A>*");
     // UP(C0<T0, ..., Tn>, C1<S0, ..., Sk>)
     //     = least upper bound of two interfaces as in Dart 1.
     testUpper("Iterable<A>", "List<B?>", "Object");
@@ -1008,60 +1095,72 @@ class TypeSchemaEnvironmentTest {
     // TODO(dmitryas): Test for various nullabilities.
 
     // Solve(? <: T <: ?) => ?
-    expect(env.solveTypeConstraint(_makeConstraint()), new UnknownType());
+    expect(env.solveTypeConstraint(_makeConstraint(), bottomType),
+        new UnknownType());
 
     // Solve(? <: T <: ?, grounded) => dynamic
-    expect(env.solveTypeConstraint(_makeConstraint(), grounded: true),
+    expect(
+        env.solveTypeConstraint(_makeConstraint(), bottomType, grounded: true),
         new DynamicType());
 
     // Solve(A <: T <: ?) => A
     expect(
-        env.solveTypeConstraint(_makeConstraint(lower: toType("A<dynamic>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(lower: toType("A<dynamic>*")), bottomType),
         toType("A<dynamic>*"));
 
     // Solve(A <: T <: ?, grounded) => A
     expect(
-        env.solveTypeConstraint(_makeConstraint(lower: toType("A<dynamic>*")),
+        env.solveTypeConstraint(
+            _makeConstraint(lower: toType("A<dynamic>*")), bottomType,
             grounded: true),
         toType("A<dynamic>*"));
 
     // Solve(A<?>* <: T <: ?) => A<?>*
     expect(
-        env.solveTypeConstraint(_makeConstraint(lower: toType("A<unknown>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(lower: toType("A<unknown>*")), bottomType),
         toType("A<unknown>*"));
 
-    // Solve(A<?>* <: T <: ?, grounded) => A<Null>*
+    // Solve(A<?>* <: T <: ?, grounded) => A<Never>*
     expect(
-        env.solveTypeConstraint(_makeConstraint(lower: toType("A<unknown>*")),
+        env.solveTypeConstraint(
+            _makeConstraint(lower: toType("A<unknown>*")), bottomType,
             grounded: true),
-        toType("A<Null?>*"));
+        toType("A<Never>*"));
 
     // Solve(? <: T <: A*) => A*
     expect(
-        env.solveTypeConstraint(_makeConstraint(upper: toType("A<dynamic>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(upper: toType("A<dynamic>*")), bottomType),
         toType("A<dynamic>*"));
 
     // Solve(? <: T <: A*, grounded) => A*
     expect(
-        env.solveTypeConstraint(_makeConstraint(upper: toType("A<dynamic>*")),
+        env.solveTypeConstraint(
+            _makeConstraint(upper: toType("A<dynamic>*")), bottomType,
             grounded: true),
         toType("A<dynamic>*"));
 
     // Solve(? <: T <: A<?>*) => A<?>*
     expect(
-        env.solveTypeConstraint(_makeConstraint(upper: toType("A<unknown>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(upper: toType("A<unknown>*")), bottomType),
         toType("A<unknown>*"));
 
     // Solve(? <: T <: A<?>*, grounded) => A<dynamic>*
     expect(
-        env.solveTypeConstraint(_makeConstraint(upper: toType("A<unknown>*")),
+        env.solveTypeConstraint(
+            _makeConstraint(upper: toType("A<unknown>*")), bottomType,
             grounded: true),
         toType("A<dynamic>*"));
 
     // Solve(B* <: T <: A*) => B*
     expect(
-        env.solveTypeConstraint(_makeConstraint(
-            lower: toType("B<dynamic>*"), upper: toType("A<dynamic>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(
+                lower: toType("B<dynamic>*"), upper: toType("A<dynamic>*")),
+            bottomType),
         toType("B<dynamic>*"));
 
     // Solve(B* <: T <: A*, grounded) => B*
@@ -1069,13 +1168,16 @@ class TypeSchemaEnvironmentTest {
         env.solveTypeConstraint(
             _makeConstraint(
                 lower: toType("B<dynamic>*"), upper: toType("A<dynamic>*")),
+            bottomType,
             grounded: true),
         toType("B<dynamic>*"));
 
     // Solve(B<?>* <: T <: A*) => A*
     expect(
-        env.solveTypeConstraint(_makeConstraint(
-            lower: toType("B<unknown>*"), upper: toType("A<dynamic>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(
+                lower: toType("B<unknown>*"), upper: toType("A<dynamic>*")),
+            bottomType),
         toType("A<dynamic>*"));
 
     // Solve(B<?>* <: T <: A*, grounded) => A*
@@ -1083,13 +1185,16 @@ class TypeSchemaEnvironmentTest {
         env.solveTypeConstraint(
             _makeConstraint(
                 lower: toType("B<unknown>*"), upper: toType("A<dynamic>*")),
+            bottomType,
             grounded: true),
         toType("A<dynamic>*"));
 
     // Solve(B* <: T <: A<?>*) => B*
     expect(
-        env.solveTypeConstraint(_makeConstraint(
-            lower: toType("B<dynamic>*"), upper: toType("A<unknown>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(
+                lower: toType("B<dynamic>*"), upper: toType("A<unknown>*")),
+            bottomType),
         toType("B<dynamic>*"));
 
     // Solve(B* <: T <: A<?>*, grounded) => B*
@@ -1097,22 +1202,26 @@ class TypeSchemaEnvironmentTest {
         env.solveTypeConstraint(
             _makeConstraint(
                 lower: toType("B<dynamic>*"), upper: toType("A<unknown>*")),
+            bottomType,
             grounded: true),
         toType("B<dynamic>*"));
 
     // Solve(B<?>* <: T <: A<?>*) => B<?>*
     expect(
-        env.solveTypeConstraint(_makeConstraint(
-            lower: toType("B<unknown>*"), upper: toType("A<unknown>*"))),
+        env.solveTypeConstraint(
+            _makeConstraint(
+                lower: toType("B<unknown>*"), upper: toType("A<unknown>*")),
+            bottomType),
         toType("B<unknown>*"));
 
-    // Solve(B<?>* <: T <: A<?>*, grounded) => B<Null>*
+    // Solve(B<?>* <: T <: A<?>*, grounded) => B<Never>*
     expect(
         env.solveTypeConstraint(
             _makeConstraint(
                 lower: toType("B<unknown>*"), upper: toType("A<unknown>*")),
+            bottomType,
             grounded: true),
-        toType("B<Null?>*"));
+        toType("B<Never>*"));
   }
 
   void test_typeConstraint_default() {
@@ -1153,11 +1262,21 @@ class TypeSchemaEnvironmentTest {
   }
 
   void test_unknown_at_top() {
-    _initialize("class A;");
+    const String testSdk = """
+      class A;
+      class Pair<X, Y>;
+    """;
+    _initialize(testSdk);
 
     expect(
         env.isSubtypeOf(toType("A*"), new UnknownType(),
             SubtypeCheckMode.ignoringNullabilities),
+        isTrue);
+    expect(
+        env.isSubtypeOf(
+            toType("Pair<A*, Null>*"),
+            toType("Pair<unknown, unknown>*"),
+            SubtypeCheckMode.withNullabilities),
         isTrue);
   }
 
@@ -1175,13 +1294,26 @@ class TypeSchemaEnvironmentTest {
 
   void _initialize(String testSdk) {
     Uri uri = Uri.parse("dart:core");
-    kernelEnvironment = new KernelEnvironment(uri, uri);
+    typeParserEnvironment = new TypeSchemaTypeParserEnvironment(uri);
     Library library =
-        parseLibrary(uri, mockSdk + testSdk, environment: kernelEnvironment)
+        parseLibrary(uri, mockSdk + testSdk, environment: typeParserEnvironment)
           ..isNonNullableByDefault = true;
     component = new Component(libraries: <Library>[library]);
     coreTypes = new CoreTypes(component);
     env = new TypeSchemaEnvironment(
         coreTypes, new ClassHierarchy(component, coreTypes));
+  }
+}
+
+class TypeSchemaTypeParserEnvironment extends TypeParserEnvironment {
+  TypeSchemaTypeParserEnvironment(Uri uri) : super(uri, uri);
+
+  DartType getPredefinedNamedType(String name) {
+    if (name == "unknown") {
+      // Don't return a const object to ensure we test implementations that use
+      // identical.
+      return new UnknownType();
+    }
+    return null;
   }
 }

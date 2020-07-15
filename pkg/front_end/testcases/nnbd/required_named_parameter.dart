@@ -4,8 +4,12 @@
 
 // Should be a compile-time error / warning.
 foo({required int parameter = 42}) {}
+foo2({int parameter}) {}
+foo3([int parameter]) {}
 
 // Should be ok.
 bar({required int parameter}) {}
+bar2({int parameter = 42}) {}
+bar3([int parameter = 42]) {}
 
 main() {}

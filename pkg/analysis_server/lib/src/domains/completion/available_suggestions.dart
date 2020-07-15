@@ -71,18 +71,24 @@ void computeIncludedSetList(
   }
 }
 
+protocol.CompletionAvailableSuggestionsParams
+    createCompletionAvailableSuggestions(
+  List<Library> changed,
+  List<int> removed,
+) =>
+        protocol.CompletionAvailableSuggestionsParams(
+          changedLibraries: changed.map((library) {
+            return _protocolAvailableSuggestionSet(library);
+          }).toList(),
+          removedLibraries: removed,
+        );
+
 /// Convert the [LibraryChange] into the corresponding protocol notification.
 protocol.Notification createCompletionAvailableSuggestionsNotification(
   List<Library> changed,
   List<int> removed,
-) {
-  return protocol.CompletionAvailableSuggestionsParams(
-    changedLibraries: changed.map((library) {
-      return _protocolAvailableSuggestionSet(library);
-    }).toList(),
-    removedLibraries: removed,
-  ).toNotification();
-}
+) =>
+    createCompletionAvailableSuggestions(changed, removed).toNotification();
 
 /// Compute existing imports and elements that they provide.
 protocol.Notification createExistingImportsNotification(
@@ -183,14 +189,23 @@ String _getRelativeFileUri(ResolvedUnitResult unit, Uri what) {
 protocol.AvailableSuggestion _protocolAvailableSuggestion(
     Declaration declaration) {
   var label = declaration.name;
-  if (declaration.kind == DeclarationKind.CONSTRUCTOR) {
-    label = declaration.parent.name;
-    if (declaration.name.isNotEmpty) {
-      label += '.${declaration.name}';
+  if (declaration.parent != null) {
+    if (declaration.kind == DeclarationKind.CONSTRUCTOR) {
+      label = declaration.parent.name;
+      if (declaration.name.isNotEmpty) {
+        label += '.${declaration.name}';
+      }
+    } else if (declaration.kind == DeclarationKind.ENUM_CONSTANT) {
+      label = '${declaration.parent.name}.${declaration.name}';
+    } else if (declaration.kind == DeclarationKind.GETTER &&
+        declaration.isStatic) {
+      label = '${declaration.parent.name}.${declaration.name}';
+    } else if (declaration.kind == DeclarationKind.FIELD &&
+        declaration.isStatic) {
+      label = '${declaration.parent.name}.${declaration.name}';
+    } else {
+      return null;
     }
-  }
-  if (declaration.kind == DeclarationKind.ENUM_CONSTANT) {
-    label = '${declaration.parent.name}.${declaration.name}';
   }
 
   String declaringLibraryUri;
@@ -227,7 +242,9 @@ protocol.AvailableSuggestionSet _protocolAvailableSuggestionSet(
 
   void addItem(Declaration declaration) {
     var suggestion = _protocolAvailableSuggestion(declaration);
-    items.add(suggestion);
+    if (suggestion != null) {
+      items.add(suggestion);
+    }
     declaration.children.forEach(addItem);
   }
 
@@ -260,8 +277,9 @@ int _protocolElementFlags(Declaration declaration) {
   return protocol.Element.makeFlags(
     isAbstract: declaration.isAbstract,
     isConst: declaration.isConst,
-    isFinal: declaration.isFinal,
     isDeprecated: declaration.isDeprecated,
+    isFinal: declaration.isFinal,
+    isStatic: declaration.isStatic,
   );
 }
 
@@ -299,7 +317,7 @@ class DeclarationsTrackerData {
 
   /// When the completion domain subscribes for changes, we start redirecting
   /// changes to this listener.
-  void Function(LibraryChange) _listener = null;
+  void Function(LibraryChange) _listener;
 
   DeclarationsTrackerData(this._tracker) {
     _tracker.changes.listen((change) {

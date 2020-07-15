@@ -5,10 +5,8 @@
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/visitor.dart';
 
-/**
- * Return the [Element] that is either [root], or one of its direct or
- * indirect children, and has the given [nameOffset].
- */
+/// Return the [Element] that is either [root], or one of its direct or
+/// indirect children, and has the given [nameOffset].
 Element findElementByNameOffset(Element root, int nameOffset) {
   if (root == null) {
     return null;
@@ -22,43 +20,33 @@ Element findElementByNameOffset(Element root, int nameOffset) {
   return null;
 }
 
-/**
- * Uses [processor] to visit all of the children of [element].
- * If [processor] returns `true`, then children of a child are visited too.
- */
+/// Uses [processor] to visit all of the children of [element].
+/// If [processor] returns `true`, then children of a child are visited too.
 void visitChildren(Element element, BoolElementProcessor processor) {
   element.visitChildren(_ElementVisitorAdapter(processor));
 }
 
-/**
- * Uses [processor] to visit all of the top-level elements of [library].
- */
+/// Uses [processor] to visit all of the top-level elements of [library].
 void visitLibraryTopLevelElements(
     LibraryElement library, VoidElementProcessor processor) {
   library.visitChildren(_TopLevelElementsVisitor(processor));
 }
 
-/**
- * An [Element] processor function type.
- * If `true` is returned, children of [element] will be visited.
- */
+/// An [Element] processor function type.
+/// If `true` is returned, children of [element] will be visited.
 typedef BoolElementProcessor = bool Function(Element element);
 
-/**
- * An [Element] processor function type.
- */
+/// An [Element] processor function type.
 typedef VoidElementProcessor = void Function(Element element);
 
-/**
- * A visitor that finds the deep-most [Element] that contains the [nameOffset].
- */
-class _ElementByNameOffsetVisitor extends GeneralizingElementVisitor {
+/// A visitor that finds the deep-most [Element] that contains the [nameOffset].
+class _ElementByNameOffsetVisitor extends GeneralizingElementVisitor<void> {
   final int nameOffset;
 
   _ElementByNameOffsetVisitor(this.nameOffset);
 
   @override
-  visitElement(Element element) {
+  void visitElement(Element element) {
     if (element.nameOffset != -1 &&
         !element.isSynthetic &&
         element.nameOffset == nameOffset) {
@@ -68,27 +56,23 @@ class _ElementByNameOffsetVisitor extends GeneralizingElementVisitor {
   }
 }
 
-/**
- * A [GeneralizingElementVisitor] adapter for [ElementProcessor].
- */
-class _ElementVisitorAdapter extends GeneralizingElementVisitor {
+/// A [GeneralizingElementVisitor] adapter for [ElementProcessor].
+class _ElementVisitorAdapter extends GeneralizingElementVisitor<void> {
   final BoolElementProcessor processor;
 
   _ElementVisitorAdapter(this.processor);
 
   @override
   void visitElement(Element element) {
-    bool visitChildren = processor(element);
+    var visitChildren = processor(element);
     if (visitChildren == true) {
       element.visitChildren(this);
     }
   }
 }
 
-/**
- * A [GeneralizingElementVisitor] for visiting top-level elements.
- */
-class _TopLevelElementsVisitor extends GeneralizingElementVisitor {
+/// A [GeneralizingElementVisitor] for visiting top-level elements.
+class _TopLevelElementsVisitor extends GeneralizingElementVisitor<void> {
   final VoidElementProcessor processor;
 
   _TopLevelElementsVisitor(this.processor);

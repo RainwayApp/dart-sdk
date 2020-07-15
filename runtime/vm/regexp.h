@@ -7,9 +7,6 @@
 
 #include "platform/unicode.h"
 
-#include "vm/compiler/assembler/assembler.h"
-#include "vm/compiler/backend/flow_graph_compiler.h"
-#include "vm/compiler/backend/il.h"
 #include "vm/object.h"
 #include "vm/regexp_assembler.h"
 #include "vm/splay-tree.h"
@@ -120,9 +117,9 @@ class OutSet : public ZoneAllocated {
 
 // A mapping from integers, specified as ranges, to a set of integers.
 // Used for mapping character ranges to choices.
-class DispatchTable : public ValueObject {
+class ChoiceTable : public ValueObject {
  public:
-  explicit DispatchTable(Zone* zone) : tree_(zone) {}
+  explicit ChoiceTable(Zone* zone) : tree_(zone) {}
 
   class Entry {
    public:
@@ -183,7 +180,7 @@ class DispatchTable : public ValueObject {
 class UnicodeRangeSplitter : public ValueObject {
  public:
   UnicodeRangeSplitter(Zone* zone, ZoneGrowableArray<CharacterRange>* base);
-  void Call(uint32_t from, DispatchTable::Entry entry);
+  void Call(uint32_t from, ChoiceTable::Entry entry);
 
   ZoneGrowableArray<CharacterRange>* bmp() { return bmp_; }
   ZoneGrowableArray<CharacterRange>* lead_surrogates() {
@@ -203,7 +200,7 @@ class UnicodeRangeSplitter : public ValueObject {
   static const int kNonBmpCodePoints = 4;
 
   Zone* zone_;
-  DispatchTable table_;
+  ChoiceTable table_;
   ZoneGrowableArray<CharacterRange>* bmp_;
   ZoneGrowableArray<CharacterRange>* lead_surrogates_;
   ZoneGrowableArray<CharacterRange>* trail_surrogates_;
@@ -1513,9 +1510,9 @@ class RegExpEngine : public AllStatic {
                                            bool sticky,
                                            Zone* zone);
 
-  static RawRegExp* CreateRegExp(Thread* thread,
-                                 const String& pattern,
-                                 RegExpFlags flags);
+  static RegExpPtr CreateRegExp(Thread* thread,
+                                const String& pattern,
+                                RegExpFlags flags);
 
   static void DotPrint(const char* label, RegExpNode* node, bool ignore_case);
 };

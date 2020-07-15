@@ -47,8 +47,8 @@ class MockServerChannel implements ServerCommunicationChannel {
   }
 
   @override
-  void listen(void onRequest(Request request),
-      {Function onError, void onDone()}) {
+  void listen(void Function(Request request) onRequest,
+      {Function onError, void Function() onDone}) {
     requestController.stream
         .listen(onRequest, onError: onError, onDone: onDone);
   }
@@ -112,8 +112,8 @@ class MockServerChannel implements ServerCommunicationChannel {
       {bool throwOnError = true}) {
     // TODO(brianwilkerson) Attempt to remove the `throwOnError` parameter and
     // have the default behavior be the only behavior.
-    String id = request.id;
-    Future<Response> response =
+    var id = request.id;
+    var response =
         responseController.stream.firstWhere((response) => response.id == id);
     if (throwOnError) {
       errorCompleter = Completer<Response>();
@@ -134,7 +134,7 @@ class ServerError implements Exception {
 
   @override
   String toString() {
-    return "Server Error: $message";
+    return 'Server Error: $message';
   }
 }
 
@@ -148,6 +148,12 @@ class TestPluginManager implements PluginManager {
   Map<PluginInfo, Future<plugin.Response>> broadcastResults;
 
   @override
+  List<PluginInfo> plugins = [];
+
+  StreamController<void> pluginsChangedController =
+      StreamController.broadcast();
+
+  @override
   String get byteStorePath {
     fail('Unexpected invocation of byteStorePath');
   }
@@ -158,14 +164,12 @@ class TestPluginManager implements PluginManager {
   }
 
   @override
-  NotificationManager get notificationManager {
+  AbstractNotificationManager get notificationManager {
     fail('Unexpected invocation of notificationManager');
   }
 
   @override
-  List<PluginInfo> get plugins {
-    fail('Unexpected invocation of plugins');
-  }
+  Stream<void> get pluginsChanged => pluginsChangedController.stream;
 
   @override
   ResourceProvider get resourceProvider {

@@ -11,6 +11,7 @@ import '../builder/library_builder.dart';
 import '../builder/metadata_builder.dart';
 import '../builder/type_alias_builder.dart';
 import '../builder/type_builder.dart';
+import '../builder/type_variable_builder.dart';
 
 import '../problems.dart' show unimplemented;
 
@@ -19,11 +20,21 @@ import 'dill_library_builder.dart' show DillLibraryBuilder;
 class DillTypeAliasBuilder extends TypeAliasBuilder {
   DillTypeAliasBuilder(Typedef typedef, DillLibraryBuilder parent)
       : super(null, typedef.name, null, null, parent, typedef.fileOffset,
-            typedef);
+            typedef: typedef);
 
   List<MetadataBuilder> get metadata {
     return unimplemented("metadata", -1, null);
   }
+
+  List<TypeVariableBuilder> get typeVariables {
+    return unimplemented("typeVariables", -1, null);
+  }
+
+  int varianceAt(int index) {
+    return typedef.typeParameters[index].variance;
+  }
+
+  bool get fromDill => true;
 
   @override
   int get typeVariablesCount => typedef.typeParameters.length;
@@ -34,13 +45,14 @@ class DillTypeAliasBuilder extends TypeAliasBuilder {
   }
 
   @override
-  DartType buildThisType(LibraryBuilder library) {
+  DartType buildThisType() {
     return thisType ??= typedef.type;
   }
 
   @override
   List<DartType> buildTypeArguments(
-      LibraryBuilder library, List<TypeBuilder> arguments) {
+      LibraryBuilder library, List<TypeBuilder> arguments,
+      [bool notInstanceContext]) {
     // For performance reasons, [typeVariables] aren't restored from [target].
     // So, if [arguments] is null, the default types should be retrieved from
     // [cls.typeParameters].

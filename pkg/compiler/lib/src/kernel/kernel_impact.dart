@@ -58,7 +58,8 @@ class KernelImpactBuilder extends ImpactBuilderBase
       VariableScopeModel variableScopeModel,
       this._annotations,
       this._constantValuefier)
-      : this.impactBuilder = new ResolutionWorldImpactBuilder(currentMember),
+      : this.impactBuilder = new ResolutionWorldImpactBuilder(
+            elementMap.commonElements.dartTypes, currentMember),
         super(staticTypeContext, elementMap.classHierarchy, variableScopeModel);
 
   @override
@@ -95,7 +96,8 @@ class KernelImpactConverter extends KernelImpactRegistryMixin {
 
   KernelImpactConverter(this.elementMap, this.currentMember, this.reporter,
       this._options, this._constantValuefier, this.staticTypeContext)
-      : this.impactBuilder = new ResolutionWorldImpactBuilder(currentMember);
+      : this.impactBuilder = new ResolutionWorldImpactBuilder(
+            elementMap.commonElements.dartTypes, currentMember);
 
   @override
   ir.TypeEnvironment get typeEnvironment => elementMap.typeEnvironment;
@@ -124,17 +126,17 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
   ResolutionWorldImpactBuilder get impactBuilder;
   ir.TypeEnvironment get typeEnvironment;
   CommonElements get commonElements;
+  DartTypes get dartTypes => commonElements.dartTypes;
   NativeBasicData get _nativeBasicData;
   ConstantValuefier get _constantValuefier;
   ir.StaticTypeContext get staticTypeContext;
 
+  String typeToString(DartType type) =>
+      type.toStructuredText(dartTypes, _options);
+
   Object _computeReceiverConstraint(
       ir.DartType receiverType, ClassRelation relation) {
     if (receiverType is ir.InterfaceType) {
-      if (receiverType.classNode == typeEnvironment.futureOrClass) {
-        // CFE encodes FutureOr as an interface type!
-        return null;
-      }
       return new StrongModeConstraint(commonElements, _nativeBasicData,
           elementMap.getClass(receiverType.classNode), relation);
     }
@@ -171,9 +173,9 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
       List<ConstantValue> metadata =
           elementMap.elementEnvironment.getMemberMetadata(member);
       Iterable<String> createsAnnotations =
-          getCreatesAnnotations(reporter, commonElements, metadata);
+          getCreatesAnnotations(dartTypes, reporter, commonElements, metadata);
       Iterable<String> returnsAnnotations =
-          getReturnsAnnotations(reporter, commonElements, metadata);
+          getReturnsAnnotations(dartTypes, reporter, commonElements, metadata);
       impactBuilder.registerNativeData(elementMap.getNativeBehaviorForFieldLoad(
           field, createsAnnotations, returnsAnnotations,
           isJsInterop: isJsInterop));
@@ -192,9 +194,9 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
       List<ConstantValue> metadata =
           elementMap.elementEnvironment.getMemberMetadata(member);
       Iterable<String> createsAnnotations =
-          getCreatesAnnotations(reporter, commonElements, metadata);
+          getCreatesAnnotations(dartTypes, reporter, commonElements, metadata);
       Iterable<String> returnsAnnotations =
-          getReturnsAnnotations(reporter, commonElements, metadata);
+          getReturnsAnnotations(dartTypes, reporter, commonElements, metadata);
       impactBuilder.registerNativeData(elementMap.getNativeBehaviorForMethod(
           constructor, createsAnnotations, returnsAnnotations,
           isJsInterop: isJsInterop));
@@ -238,9 +240,9 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
       List<ConstantValue> metadata =
           elementMap.elementEnvironment.getMemberMetadata(member);
       Iterable<String> createsAnnotations =
-          getCreatesAnnotations(reporter, commonElements, metadata);
+          getCreatesAnnotations(dartTypes, reporter, commonElements, metadata);
       Iterable<String> returnsAnnotations =
-          getReturnsAnnotations(reporter, commonElements, metadata);
+          getReturnsAnnotations(dartTypes, reporter, commonElements, metadata);
       impactBuilder.registerNativeData(elementMap.getNativeBehaviorForMethod(
           procedure, createsAnnotations, returnsAnnotations,
           isJsInterop: isJsInterop));
@@ -323,9 +325,9 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
     ImportEntity deferredImport = elementMap.getImport(import);
     impactBuilder.registerStaticUse(isConst
         ? new StaticUse.constConstructorInvoke(constructor, callStructure,
-            elementMap.getDartType(type), deferredImport)
+            elementMap.getDartType(type).withoutNullability, deferredImport)
         : new StaticUse.typedConstructorInvoke(constructor, callStructure,
-            elementMap.getDartType(type), deferredImport));
+            elementMap.getDartType(type).withoutNullability, deferredImport));
     if (type.typeArguments.any((ir.DartType type) => type is! ir.DynamicType)) {
       impactBuilder.registerFeature(Feature.TYPE_VARIABLE_BOUNDS_CHECK);
     }
@@ -364,7 +366,7 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
         reporter.reportErrorMessage(
             CURRENT_ELEMENT_SPANNABLE,
             MessageKind.STRING_EXPECTED,
-            {'type': value.getType(elementMap.commonElements)});
+            {'type': typeToString(value.getType(elementMap.commonElements))});
         return;
       }
       StringConstantValue stringValue = value;
@@ -454,7 +456,7 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
         new StaticUse.staticInvoke(target, callStructure, typeArguments));
 
     if (typeArguments.length != 1) return;
-    DartType matchedType = typeArguments.first;
+    DartType matchedType = dartTypes.eraseLegacy(typeArguments.first);
 
     if (matchedType is! InterfaceType) return;
     InterfaceType interfaceType = matchedType;
@@ -663,15 +665,8 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
       switch (kind) {
         case RuntimeTypeUseKind.string:
           if (!_options.laxRuntimeTypeToString) {
-            if (receiverDartType == commonElements.objectType) {
-              reporter.reportHintMessage(computeSourceSpanFromTreeNode(node),
-                  MessageKind.RUNTIME_TYPE_TO_STRING_OBJECT);
-            } else {
-              reporter.reportHintMessage(
-                  computeSourceSpanFromTreeNode(node),
-                  MessageKind.RUNTIME_TYPE_TO_STRING_SUBTYPE,
-                  {'receiverType': '${receiverDartType}.'});
-            }
+            reporter.reportHintMessage(computeSourceSpanFromTreeNode(node),
+                MessageKind.RUNTIME_TYPE_TO_STRING);
           }
           break;
         case RuntimeTypeUseKind.equals:
@@ -787,12 +782,6 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
     ImportEntity deferredImport = elementMap.getImport(import);
     impactBuilder.registerTypeUse(
         new TypeUse.typeLiteral(elementMap.getDartType(type), deferredImport));
-    if (type is ir.FunctionType) {
-      assert(type.typedef != null);
-      // TODO(johnniwinther): Can we avoid the typedef type altogether?
-      // We need to ensure that the typedef is live.
-      elementMap.getTypedefType(type.typedef);
-    }
   }
 
   @override
@@ -831,12 +820,6 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
 
   @override
   void registerSwitchStatementNode(ir.SwitchStatement node) {
-    // TODO(32557): Remove this when issue 32557 is fixed.
-    ir.TreeNode firstCase;
-    DartType firstCaseType;
-    DiagnosticMessage error;
-    List<DiagnosticMessage> infos = <DiagnosticMessage>[];
-
     bool overridesEquals(InterfaceType type) {
       if (type == commonElements.symbolImplementationType) {
         // Treat symbol constants as if Symbol doesn't override `==`.
@@ -861,50 +844,23 @@ abstract class KernelImpactRegistryMixin implements ImpactRegistry {
         ConstantValue value =
             elementMap.getConstantValue(staticTypeContext, expression);
         DartType type = value.getType(elementMap.commonElements);
-        if (firstCaseType == null) {
-          firstCase = expression;
-          firstCaseType = type;
-
-          // We only report the bad type on the first class element. All others
-          // get a "type differs" error.
-          if (type == commonElements.doubleType) {
-            reporter.reportErrorMessage(
-                computeSourceSpanFromTreeNode(expression),
-                MessageKind.SWITCH_CASE_VALUE_OVERRIDES_EQUALS,
-                {'type': "double"});
-          } else if (type == commonElements.functionType) {
-            reporter.reportErrorMessage(computeSourceSpanFromTreeNode(node),
-                MessageKind.SWITCH_CASE_FORBIDDEN, {'type': "Function"});
-          } else if (value.isObject &&
-              type != commonElements.typeLiteralType &&
-              overridesEquals(type)) {
-            reporter.reportErrorMessage(
-                computeSourceSpanFromTreeNode(firstCase),
-                MessageKind.SWITCH_CASE_VALUE_OVERRIDES_EQUALS,
-                {'type': type});
-          }
-        } else {
-          if (type != firstCaseType) {
-            if (error == null) {
-              error = reporter.createMessage(
-                  computeSourceSpanFromTreeNode(node),
-                  MessageKind.SWITCH_CASE_TYPES_NOT_EQUAL,
-                  {'type': firstCaseType});
-              infos.add(reporter.createMessage(
-                  computeSourceSpanFromTreeNode(firstCase),
-                  MessageKind.SWITCH_CASE_TYPES_NOT_EQUAL_CASE,
-                  {'type': firstCaseType}));
-            }
-            infos.add(reporter.createMessage(
-                computeSourceSpanFromTreeNode(expression),
-                MessageKind.SWITCH_CASE_TYPES_NOT_EQUAL_CASE,
-                {'type': type}));
-          }
+        if (type == commonElements.doubleType) {
+          reporter.reportErrorMessage(
+              computeSourceSpanFromTreeNode(expression),
+              MessageKind.SWITCH_CASE_VALUE_OVERRIDES_EQUALS,
+              {'type': "double"});
+        } else if (type == commonElements.functionType) {
+          reporter.reportErrorMessage(computeSourceSpanFromTreeNode(node),
+              MessageKind.SWITCH_CASE_FORBIDDEN, {'type': "Function"});
+        } else if (value.isObject &&
+            type != commonElements.typeLiteralType &&
+            overridesEquals(type)) {
+          reporter.reportErrorMessage(
+              computeSourceSpanFromTreeNode(expression),
+              MessageKind.SWITCH_CASE_VALUE_OVERRIDES_EQUALS,
+              {'type': typeToString(type)});
         }
       }
-    }
-    if (error != null) {
-      reporter.reportError(error, infos);
     }
   }
 }

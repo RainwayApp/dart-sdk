@@ -26,8 +26,7 @@ import '../../js_backend/inferred_data.dart';
 import '../../js_backend/interceptor_data.dart';
 import '../../js_backend/namer.dart' show Namer, StringBackedName;
 import '../../js_backend/native_data.dart';
-import '../../js_backend/runtime_types.dart'
-    show RuntimeTypesChecks, RuntimeTypesEncoder;
+import '../../js_backend/runtime_types.dart' show RuntimeTypesChecks;
 import '../../js_backend/runtime_types_new.dart'
     show RecipeEncoder, RecipeEncoding;
 import '../../js_backend/runtime_types_new.dart' as newRti;
@@ -75,7 +74,6 @@ class ProgramBuilder {
   final RuntimeTypesNeed _rtiNeed;
   final InterceptorData _interceptorData;
   final RuntimeTypesChecks _rtiChecks;
-  final RuntimeTypesEncoder _rtiEncoder;
   final RecipeEncoder _rtiRecipeEncoder;
   final OneShotInterceptorData _oneShotInterceptorData;
   final CustomElementsCodegenAnalysis _customElementsCodegenAnalysis;
@@ -108,6 +106,7 @@ class ProgramBuilder {
   final Set<TypeVariableType> _lateNamedTypeVariablesNewRti = {};
 
   ClassHierarchy get _classHierarchy => _closedWorld.classHierarchy;
+  DartTypes get _dartTypes => _closedWorld.dartTypes;
 
   ProgramBuilder(
       this._options,
@@ -122,7 +121,6 @@ class ProgramBuilder {
       this._rtiNeed,
       this._interceptorData,
       this._rtiChecks,
-      this._rtiEncoder,
       this._rtiRecipeEncoder,
       this._oneShotInterceptorData,
       this._customElementsCodegenAnalysis,
@@ -164,6 +162,8 @@ class ProgramBuilder {
   final Map<ConstantValue, Constant> _constants = <ConstantValue, Constant>{};
 
   Set<Class> _unneededNativeClasses;
+
+  List<StubMethod> _jsInteropIsChecks = [];
 
   /// Classes that have been allocated during a profile run.
   ///
@@ -246,9 +246,7 @@ class ProgramBuilder {
 
     _markEagerClasses();
 
-    if (_options.useNewRti) {
-      associateNamedTypeVariablesNewRti();
-    }
+    associateNamedTypeVariablesNewRti();
 
     List<Holder> holders = _registry.holders.toList(growable: false);
 
@@ -278,10 +276,10 @@ class ProgramBuilder {
   void _initializeSoftDeferredMap() {
     var allocatedClassesPath = _options.experimentalAllocationsPath;
     if (allocatedClassesPath != null) {
-      // TODO(29574): the following blacklist is ad-hoc and potentially
+      // TODO(29574): the following denylist is ad-hoc and potentially
       // incomplete. We need to mark all classes as black listed, that are
       // used without code going through the class' constructor.
-      var blackList = [
+      var denylist = [
         'dart:_interceptors',
         'dart:html',
         'dart:typed_data_implementation',
@@ -330,7 +328,7 @@ class ProgramBuilder {
           var key = "${element.library.canonicalUri}:${element.name}";
           if (allocatedClassesKeys.contains(key) ||
               _nativeData.isJsInteropClass(element) ||
-              blackList.contains(element.library.canonicalUri.toString())) {
+              denylist.contains(element.library.canonicalUri.toString())) {
             collect(element);
           }
         }
@@ -441,16 +439,10 @@ class ProgramBuilder {
 
   List<StaticField> _buildStaticLazilyInitializedFields(
       LibrariesMap librariesMap) {
-    List<FieldEntity> lazyFields = [];
-    _codegenWorld.forEachStaticField((FieldEntity field) {
-      if (_closedWorld.fieldAnalysis.getFieldData(field).isLazy &&
-          _outputUnitData.outputUnitForMember(field) ==
-              librariesMap.outputUnit) {
-        lazyFields.add(field);
-      }
-    });
-    return _sorter
-        .sortMembers(lazyFields)
+    List<FieldEntity> lazyFields =
+        collector.outputLazyStaticFieldLists[librariesMap.outputUnit];
+    if (lazyFields == null) return const [];
+    return lazyFields
         .map(_buildLazyField)
         .where((field) => field != null) // Happens when the field was unused.
         .toList(growable: false);
@@ -502,6 +494,8 @@ class ProgramBuilder {
     // a method in the case where there exist multiple JavaScript classes
     // that conflict on whether the member is a getter or a method.
     Class interceptorClass = _classes[_commonElements.jsJavaScriptObjectClass];
+
+    interceptorClass?.isChecks?.addAll(_jsInteropIsChecks);
     Set<String> stubNames = {};
     librariesMap
         .forEach((LibraryEntity library, List<ClassEntity> classElements, _) {
@@ -653,12 +647,7 @@ class ProgramBuilder {
         _task.emitter, _commonElements, _namer, _codegenWorld, _closedWorld,
         enableMinification: _options.enableMinification);
     RuntimeTypeGenerator runtimeTypeGenerator = new RuntimeTypeGenerator(
-        _commonElements,
-        _outputUnitData,
-        _task,
-        _namer,
-        _rtiChecks,
-        _rtiEncoder);
+        _commonElements, _outputUnitData, _task, _namer, _rtiChecks);
 
     void visitInstanceMember(MemberEntity member) {
       if (!member.isAbstract && !member.isField) {
@@ -765,9 +754,7 @@ class ProgramBuilder {
       // Currently we generate duplicates if a class is implemented by multiple
       // js-interop classes.
       typeTests.forEachProperty(_sorter, (js.Name name, js.Node code) {
-        _classes[_commonElements.jsJavaScriptObjectClass]
-            .isChecks
-            .add(_buildStubMethod(name, code));
+        _jsInteropIsChecks.add(_buildStubMethod(name, code));
       });
     } else {
       for (Field field in instanceFields) {
@@ -893,7 +880,7 @@ class ProgramBuilder {
       int index = 0;
       _elementEnvironment.forEachParameter(method,
           (DartType type, String name, ConstantValue defaultValue) {
-        if (index >= parameterStructure.requiredParameters) {
+        if (index >= parameterStructure.requiredPositionalParameters) {
           optionalParameterDefaultValues.add(defaultValue);
         }
         index++;
@@ -960,7 +947,8 @@ class ProgramBuilder {
 
     FunctionEntity method = element;
     ParameterStructure parameterStructure = method.parameterStructure;
-    int requiredParameterCount = parameterStructure.requiredParameters;
+    int requiredParameterCount =
+        parameterStructure.requiredPositionalParameters;
     var /* List | Map */ optionalParameterDefaultValues;
     int applyIndex = 0;
     if (canBeApplied) {
@@ -986,20 +974,7 @@ class ProgramBuilder {
 
   js.Expression _generateFunctionType(ClassEntity /*?*/ enclosingClass,
           FunctionType type, OutputUnit outputUnit) =>
-      _options.useNewRti
-          ? _generateFunctionTypeNewRti(enclosingClass, type, outputUnit)
-          : _generateFunctionTypeLegacy(enclosingClass, type, outputUnit);
-
-  js.Expression _generateFunctionTypeLegacy(ClassEntity /*?*/ enclosingClass,
-      FunctionType type, OutputUnit outputUnit) {
-    if (type.containsTypeVariables) {
-      js.Expression thisAccess = js.js(r'this.$receiver');
-      return _rtiEncoder.getSignatureEncoding(
-          _namer, _task.emitter, type, thisAccess);
-    } else {
-      return _task.metadataCollector.reifyType(type, outputUnit);
-    }
-  }
+      _generateFunctionTypeNewRti(enclosingClass, type, outputUnit);
 
   js.Expression _generateFunctionTypeNewRti(ClassEntity /*?*/ enclosingClass,
       FunctionType type, OutputUnit outputUnit) {
@@ -1009,9 +984,11 @@ class ProgramBuilder {
       if (!_rtiNeed.classNeedsTypeArguments(enclosingClass)) {
         // Erase type arguments.
         List<DartType> typeArguments = enclosingType.typeArguments;
-        type = type.subst(
-            List<DartType>.filled(typeArguments.length, ErasedType()),
-            typeArguments);
+        type = _dartTypes.subst(
+            List<DartType>.filled(
+                typeArguments.length, _dartTypes.erasedType()),
+            typeArguments,
+            type);
       }
     }
 
@@ -1031,12 +1008,10 @@ class ProgramBuilder {
       FunctionEntity element, bool canTearOff, bool canBeApplied) {
     if (!_methodNeedsStubs(element)) return const <ParameterStubMethod>[];
 
-    ParameterStubGenerator generator = new ParameterStubGenerator(
+    ParameterStubGenerator generator = ParameterStubGenerator(
         _task.emitter,
         _task.nativeEmitter,
         _namer,
-        _rtiEncoder,
-        _options.useNewRti ? _rtiRecipeEncoder : null,
         _nativeData,
         _interceptorData,
         _codegenWorld,
@@ -1246,7 +1221,8 @@ class ProgramBuilder {
 
     FunctionEntity method = element;
     ParameterStructure parameterStructure = method.parameterStructure;
-    int requiredParameterCount = parameterStructure.requiredParameters;
+    int requiredParameterCount =
+        parameterStructure.requiredPositionalParameters;
     var /* List | Map */ optionalParameterDefaultValues;
     int applyIndex = 0;
     if (canBeApplied) {

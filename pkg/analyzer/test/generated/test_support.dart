@@ -11,63 +11,6 @@ import 'package:analyzer/src/generated/parser.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:test/test.dart';
 
-/// A description of an error that is expected to be reported.
-class ExpectedError {
-  /// An empty array of error descriptors used when no errors are expected.
-  static List<ExpectedError> NO_ERRORS = <ExpectedError>[];
-
-  /// The error code associated with the error.
-  final ErrorCode code;
-
-  /// The offset of the beginning of the error's region.
-  final int offset;
-
-  /// The offset of the beginning of the error's region.
-  final int length;
-
-  /// The message text of the error or `null` if the message should not be checked.
-  final String message;
-
-  /// The list of context messages that are expected to be associated with the
-  /// error.
-  final List<ExpectedContextMessage> expectedContextMessages;
-
-  /// Initialize a newly created error description.
-  ExpectedError(this.code, this.offset, this.length,
-      {this.message,
-      this.expectedContextMessages = const <ExpectedContextMessage>[]});
-
-  /// Return `true` if the [error] matches this description of what it's
-  /// expected to be.
-  bool matches(AnalysisError error) {
-    if (error.offset != offset ||
-        error.length != length ||
-        error.errorCode != code) {
-      return false;
-    }
-    if (message != null && error.message != message) {
-      return false;
-    }
-    List<DiagnosticMessage> contextMessages = error.contextMessages.toList();
-    contextMessages.sort((first, second) {
-      int result = first.filePath.compareTo(second.filePath);
-      if (result != 0) {
-        return result;
-      }
-      return second.offset - first.offset;
-    });
-    if (contextMessages.length != expectedContextMessages.length) {
-      return false;
-    }
-    for (int i = 0; i < expectedContextMessages.length; i++) {
-      if (!expectedContextMessages[i].matches(contextMessages[i])) {
-        return false;
-      }
-    }
-    return true;
-  }
-}
-
 /// A description of a message that is expected to be reported with an error.
 class ExpectedContextMessage {
   /// The path of the file with which the message is associated.
@@ -91,6 +34,72 @@ class ExpectedContextMessage {
         message.offset == offset &&
         message.length == length &&
         (text == null || message.message == text);
+  }
+}
+
+/// A description of an error that is expected to be reported.
+class ExpectedError {
+  /// An empty array of error descriptors used when no errors are expected.
+  static List<ExpectedError> NO_ERRORS = <ExpectedError>[];
+
+  /// The error code associated with the error.
+  final ErrorCode code;
+
+  /// The offset of the beginning of the error's region.
+  final int offset;
+
+  /// The offset of the beginning of the error's region.
+  final int length;
+
+  /// The message text of the error or `null` if the message should not be checked.
+  final String message;
+
+  /// A pattern that should be contained in the error message or `null` if the message
+  /// contents should not be checked.
+  final Pattern messageContains;
+
+  /// The list of context messages that are expected to be associated with the
+  /// error.
+  final List<ExpectedContextMessage> expectedContextMessages;
+
+  /// Initialize a newly created error description.
+  ExpectedError(this.code, this.offset, this.length,
+      {this.message,
+      this.messageContains,
+      this.expectedContextMessages = const <ExpectedContextMessage>[]});
+
+  /// Return `true` if the [error] matches this description of what it's
+  /// expected to be.
+  bool matches(AnalysisError error) {
+    if (error.offset != offset ||
+        error.length != length ||
+        error.errorCode != code) {
+      return false;
+    }
+    if (message != null && error.message != message) {
+      return false;
+    }
+    if (messageContains != null &&
+        error.message?.contains(messageContains) != true) {
+      return false;
+    }
+    List<DiagnosticMessage> contextMessages = error.contextMessages.toList();
+    contextMessages.sort((first, second) {
+      int result = first.filePath.compareTo(second.filePath);
+      if (result != 0) {
+        return result;
+      }
+      return second.offset - first.offset;
+    });
+    if (contextMessages.length != expectedContextMessages.length) {
+      return false;
+    }
+    for (int i = 0; i < expectedContextMessages.length; i++) {
+      if (!expectedContextMessages[i].matches(contextMessages[i])) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 
@@ -385,7 +394,9 @@ class TestInstrumentor extends NoopInstrumentationService {
   }
 
   @override
-  void logException(dynamic exception, [StackTrace stackTrace]) {
+  void logException(dynamic exception,
+      [StackTrace stackTrace,
+      List<InstrumentationServiceAttachment> attachments]) {
     log.add("error: $exception $stackTrace");
   }
 

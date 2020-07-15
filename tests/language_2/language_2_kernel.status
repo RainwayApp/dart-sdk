@@ -12,15 +12,13 @@ vm/regress_27671_test: SkipByDesign # Relies on string comparison of exception m
 number/web_int_literals_test/*: SkipByDesign # Test applies only to JavaScript targets
 
 [ $compiler == fasta ]
-async/await_syntax_test/e5: Crash # Assertion error: continuation.dart: Failed assertion: 'node.expression == null || node.expression is NullLiteral': is not true.
-async/await_syntax_test/e6: Crash # Assertion error: continuation.dart: Failed assertion: 'node.expression == null || node.expression is NullLiteral': is not true.
 number/web_int_literals_test/*: SkipByDesign # Test applies only to JavaScript targets
+
+[ ($hot_reload || $hot_reload_rollback) && $mode == debug ]
+regress/regress41983_test: Pass, Slow
 
 [ $fasta ]
 nnbd/*: Skip
-superinterface_variance/abstract_class_error_test/27: Crash # Issue dart-lang/language#113
-superinterface_variance/concrete_class_error_test/27: Crash # Issue dart-lang/language#113
-superinterface_variance/mixin_error_test/27: Crash # Issue dart-lang/language#113
 superinterface_variance/mixin_error_test/37: Crash # Issue dart-lang/language#113
 superinterface_variance/mixin_error_test/38: Crash # Issue dart-lang/language#113
 superinterface_variance/mixin_error_test/40: Crash # Issue dart-lang/language#113
@@ -52,7 +50,7 @@ vm/regress_28325_test: SkipByDesign # Looks for filename in stack trace
 unsorted/inference_enum_list_test: Skip # Issue 35885
 
 [ $compiler == dartkp && $mode == debug && $runtime == dart_precompiled ]
-vm/precompiled_static_initializer_test: Slow
+vm/precompiled_static_initializer_test: Slow, Pass
 
 # ==== dartkp + dart_precompiled status lines ====
 [ $compiler == dartkp && $runtime == dart_precompiled ]
@@ -108,14 +106,10 @@ assert/initializer_const_error2_test/cc10: Crash
 assert/initializer_const_error2_test/cc11: Crash
 
 [ $compiler == dartkp && $system == windows ]
-unsorted/disassemble_test: Slow
+unsorted/disassemble_test: Slow, Pass
 
 [ $mode == debug && $runtime == vm && ($compiler == app_jitk || $compiler == dartk || $compiler == dartkb) ]
 optimize/deopt_inlined_function_lazy_test: Skip
-
-[ $mode == debug && $hot_reload && ($compiler == dartk || $compiler == dartkb) ]
-async_star/async_star2_test/01: Crash
-async_star/async_star2_test/05: Crash
 
 [ $mode == debug && ($compiler == dartk || $compiler == dartkb) && ($hot_reload || $hot_reload_rollback) ]
 enum/duplicate_test/02: Crash # Issue 34606
@@ -139,13 +133,7 @@ vm/regress_29145_test: Skip # Issue 29145
 web_int_literals_test/*: SkipByDesign # Test applies only to JavaScript targets
 
 [ $hot_reload_rollback && ($compiler == dartk || $compiler == dartkb) ]
-symbol/conflict_test: Slow
+symbol/conflict_test: Slow, Pass
 
 [ ($compiler == dartk || $compiler == dartkb) && ($hot_reload || $hot_reload_rollback) ]
-async_star/async_star2_test/01: Skip # Timeout
-async_star/async_star2_test/02: Skip # Timeout
-async_star/async_star2_test/03: Skip # Timeout
-async_star/async_star2_test/04: Skip # Timeout
-async_star/async_star2_test/05: Skip # Timeout
-async_star/async_star2_test/none: Skip # Timeout
 type_constants_test/none: Skip # Deferred libraries and hot reload.

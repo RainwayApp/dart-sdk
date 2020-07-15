@@ -25,16 +25,17 @@ import 'package:analysis_server/protocol/protocol.dart';
 import 'package:analysis_server/protocol/protocol_constants.dart';
 import 'package:analysis_server/protocol/protocol_generated.dart';
 import 'package:analysis_server/src/analysis_server.dart';
+import 'package:analysis_server/src/server/crash_reporting_attachments.dart';
 import 'package:analysis_server/src/utilities/mocks.dart';
 import 'package:analyzer/file_system/file_system.dart';
 import 'package:analyzer/file_system/physical_file_system.dart';
 import 'package:analyzer/instrumentation/instrumentation.dart';
-import 'package:analyzer/src/dart/sdk/sdk.dart';
 import 'package:analyzer/src/generated/sdk.dart';
+import 'package:cli_util/cli_util.dart';
 import 'package:path/path.dart' as path;
 import 'package:test/test.dart';
 
-main(List<String> args) async {
+Future<void> main(List<String> args) async {
   if (args.length != 2) {
     throw StateError(
         'Exactly two arguments are required: the path to a JSON configuration '
@@ -68,12 +69,15 @@ class MigrationBase {
     //
     // Create server
     //
-    AnalysisServerOptions options = AnalysisServerOptions();
-    String sdkPath = FolderBasedDartSdk.defaultSdkDirectory(
-      PhysicalResourceProvider.INSTANCE,
-    ).path;
-    return AnalysisServer(serverChannel, resourceProvider, options,
-        DartSdkManager(sdkPath, true), InstrumentationService.NULL_SERVICE);
+    var options = AnalysisServerOptions();
+    var sdkPath = getSdkPath();
+    return AnalysisServer(
+        serverChannel,
+        resourceProvider,
+        options,
+        DartSdkManager(sdkPath),
+        CrashReportingAttachmentsBuilder.empty,
+        InstrumentationService.NULL_SERVICE);
   }
 
   void processNotification(Notification notification) {
@@ -100,8 +104,7 @@ class MigrationBase {
     server = createAnalysisServer();
     server.pluginManager = TestPluginManager();
     // listen for notifications
-    Stream<Notification> notificationStream =
-        serverChannel.notificationController.stream;
+    var notificationStream = serverChannel.notificationController.stream;
     notificationStream.listen((Notification notification) {
       processNotification(notification);
     });
@@ -127,7 +130,7 @@ class MigrationBase {
 
 class MigrationTest extends MigrationBase {
   Future<void> run(String packageRoot, int port) async {
-    List<String> packageRoots = [packageRoot];
+    var packageRoots = <String>[packageRoot];
     await sendAnalysisSetAnalysisRoots(packageRoots);
     await sendEditDartfix(packageRoots, port);
   }

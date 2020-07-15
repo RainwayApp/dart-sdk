@@ -6,9 +6,10 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/test_utilities/find_node.dart';
+import 'package:nnbd_migration/fix_reason_target.dart';
 import 'package:nnbd_migration/instrumentation.dart';
 import 'package:nnbd_migration/nnbd_migration.dart';
-import 'package:nnbd_migration/nullability_state.dart';
+import 'package:nnbd_migration/src/edit_plan.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -22,9 +23,19 @@ main() {
 }
 
 class _InstrumentationClient implements NullabilityMigrationInstrumentation {
-  final _InstrumentationTest test;
+  final _InstrumentationTestBase test;
 
   _InstrumentationClient(this.test);
+
+  @override
+  void changes(Source source, Map<int, List<AtomicEdit>> changes) {
+    expect(test.changes, isNull);
+    test.changes = {
+      for (var entry in changes.entries)
+        if (entry.value.any((edit) => !edit.isInformative))
+          entry.key: entry.value
+    };
+  }
 
   @override
   void explicitTypeNullability(
@@ -49,15 +60,15 @@ class _InstrumentationClient implements NullabilityMigrationInstrumentation {
   }
 
   @override
-  void fix(SingleNullabilityFix fix, Iterable<FixReasonInfo> reasons) {
-    test.fixes[fix] = reasons.toList();
-  }
+  void finished() {}
 
   @override
   void graphEdge(EdgeInfo edge, EdgeOriginInfo originInfo) {
-    expect(test.edgeOrigin, isNot(contains(edge)));
-    test.edges.add(edge);
-    test.edgeOrigin[edge] = originInfo;
+    if (edge.destinationNode != test.always) {
+      expect(test.edgeOrigin, isNot(contains(edge)));
+      test.edges.add(edge);
+      test.edgeOrigin[edge] = originInfo;
+    }
   }
 
   @override
@@ -91,13 +102,15 @@ class _InstrumentationClient implements NullabilityMigrationInstrumentation {
   }
 
   @override
-  void propagationStep(PropagationInfo info) {
-    test.propagationSteps.add(info);
+  void prepareForUpdate() {
+    test.changes = null;
   }
 }
 
 @reflectiveTest
-class _InstrumentationTest extends AbstractContextTest {
+class _InstrumentationTest extends _InstrumentationTestBase {}
+
+abstract class _InstrumentationTestBase extends AbstractContextTest {
   NullabilityNodeInfo always;
 
   final Map<TypeAnnotation, NullabilityNodeInfo> explicitTypeNullability = {};
@@ -109,7 +122,7 @@ class _InstrumentationTest extends AbstractContextTest {
 
   final List<EdgeInfo> edges = [];
 
-  Map<SingleNullabilityFix, List<FixReasonInfo>> fixes = {};
+  Map<int, List<AtomicEdit>> changes = null;
 
   final Map<AstNode, DecoratedTypeInfo> implicitReturnType = {};
 
@@ -119,20 +132,21 @@ class _InstrumentationTest extends AbstractContextTest {
 
   NullabilityNodeInfo never;
 
-  final List<PropagationInfo> propagationSteps = [];
-
   final Map<EdgeInfo, EdgeOriginInfo> edgeOrigin = {};
 
   FindNode findNode;
 
   Source source;
 
-  Future<void> analyze(String content) async {
+  Future<void> analyze(String content,
+      {bool removeViaComments = false, bool warnOnWeakCode = true}) async {
     var sourcePath = convertPath('/home/test/lib/test.dart');
     newFile(sourcePath, content: content);
     var listener = new TestMigrationListener();
-    var migration = NullabilityMigration(listener,
-        instrumentation: _InstrumentationClient(this));
+    var migration = NullabilityMigration(listener, getLineInfo,
+        instrumentation: _InstrumentationClient(this),
+        removeViaComments: removeViaComments,
+        warnOnWeakCode: warnOnWeakCode);
     var result = await session.getResolvedUnit(sourcePath);
     source = result.unit.declaredElement.source;
     findNode = FindNode(content, result.unit);
@@ -140,6 +154,13 @@ class _InstrumentationTest extends AbstractContextTest {
     migration.processInput(result);
     migration.finalizeInput(result);
     migration.finish();
+  }
+
+  void assertEdit(AtomicEdit edit,
+      {dynamic description = anything, dynamic fixReasons = anything}) {
+    var info = edit.info;
+    expect(info.description, description);
+    expect(info.fixReasons, fixReasons);
   }
 
   Future<void> test_explicitTypeNullability() async {
@@ -163,7 +184,7 @@ main() {
     expect(
         externalDecoratedType[findNode.simple('print').staticElement]
             .type
-            .toString(),
+            .getDisplayString(withNullability: false),
         'void Function(Object)');
   }
 
@@ -177,7 +198,7 @@ f(Point<int> x) {}
     expect(
         externalDecoratedTypeParameterBound[pointElementTypeParameter]
             .type
-            .toString(),
+            .getDisplayString(withNullability: false),
         'num');
   }
 
@@ -201,6 +222,171 @@ f(List<int> x) {}
     expect(origin.node, null);
   }
 
+  Future<void> test_fix_reason_add_required_function() async {
+    var content = '_f({int/*!*/ i) {}';
+    await analyze(content);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var intPos = content.indexOf('int');
+    var commentPos = content.indexOf('/*');
+    expect(changes.keys, unorderedEquals([intPos, commentPos]));
+    assertEdit(changes[intPos].single,
+        description: NullabilityFixDescription.addRequired(null, '_f', 'i'),
+        fixReasons: {
+          FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+        });
+  }
+
+  Future<void> test_fix_reason_add_required_method() async {
+    var content = 'class C { _f({int/*!*/ i) {} }';
+    await analyze(content);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var intPos = content.indexOf('int');
+    var commentPos = content.indexOf('/*');
+    expect(changes.keys, unorderedEquals([intPos, commentPos]));
+    assertEdit(changes[intPos].single,
+        description: NullabilityFixDescription.addRequired('C', '_f', 'i'),
+        fixReasons: {
+          FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+        });
+  }
+
+  Future<void> test_fix_reason_discard_condition() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i != null) {
+    return i;
+  }
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var ifPos = content.indexOf('if');
+    var afterReturnPos = content.indexOf('i;') + 2;
+    expect(changes.keys, unorderedEquals([commentPos, ifPos, afterReturnPos]));
+    var expectedFixReasons = {
+      FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+    };
+    assertEdit(changes[ifPos].single,
+        description: NullabilityFixDescription.discardCondition,
+        fixReasons: expectedFixReasons);
+    assertEdit(changes[afterReturnPos].single,
+        description: NullabilityFixDescription.discardCondition,
+        fixReasons: expectedFixReasons);
+  }
+
+  Future<void> test_fix_reason_discard_condition_no_block() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i != null) return i;
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var ifPos = content.indexOf('if');
+    expect(changes.keys, unorderedEquals([commentPos, ifPos]));
+    assertEdit(changes[ifPos].single,
+        description: NullabilityFixDescription.discardCondition,
+        fixReasons: {
+          FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+        });
+  }
+
+  Future<void> test_fix_reason_discard_else() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i != null) {
+    return i;
+  } else {
+    return 'null';
+  }
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var ifPos = content.indexOf('if');
+    var afterReturnPos = content.indexOf('i;') + 2;
+    expect(changes.keys, unorderedEquals([commentPos, ifPos, afterReturnPos]));
+    var expectedFixReasons = {
+      FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+    };
+    assertEdit(changes[ifPos].single,
+        description: NullabilityFixDescription.discardCondition,
+        fixReasons: expectedFixReasons);
+    assertEdit(changes[afterReturnPos].single,
+        description: NullabilityFixDescription.discardElse,
+        fixReasons: expectedFixReasons);
+  }
+
+  Future<void> test_fix_reason_discard_else_empty_then() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i != null) {} else {
+    return 'null';
+  }
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var bodyPos = content.indexOf('i) {') + 4;
+    expect(changes.keys, unorderedEquals([commentPos, bodyPos]));
+    assertEdit(changes[bodyPos].single,
+        description: NullabilityFixDescription.discardIf,
+        fixReasons: {
+          FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+        });
+  }
+
+  Future<void> test_fix_reason_discard_then() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i == null) {
+    return 'null';
+  } else {
+    return i;
+  }
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var ifPos = content.indexOf('if');
+    var afterReturnPos = content.indexOf('i;') + 2;
+    expect(changes.keys, unorderedEquals([commentPos, ifPos, afterReturnPos]));
+    var expectedFixReasons = {
+      FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+    };
+    assertEdit(changes[ifPos].single,
+        description: NullabilityFixDescription.discardThen,
+        fixReasons: expectedFixReasons);
+    assertEdit(changes[afterReturnPos].single,
+        description: NullabilityFixDescription.discardThen,
+        fixReasons: expectedFixReasons);
+  }
+
+  Future<void> test_fix_reason_discard_then_no_else() async {
+    var content = '''
+_f(int/*!*/ i) {
+  if (i == null) {
+    return 'null';
+  }
+}
+''';
+    await analyze(content, warnOnWeakCode: false);
+    var intAnnotation = findNode.typeAnnotation('int');
+    var commentPos = content.indexOf('/*');
+    var bodyPos = content.indexOf('i) {') + 4;
+    expect(changes.keys, unorderedEquals([commentPos, bodyPos]));
+    assertEdit(changes[bodyPos].single,
+        description: NullabilityFixDescription.discardIf,
+        fixReasons: {
+          FixReasonTarget.root: same(explicitTypeNullability[intAnnotation])
+        });
+  }
+
   Future<void> test_fix_reason_edge() async {
     await analyze('''
 void f(int x) {
@@ -216,12 +402,14 @@ main() {
 }
 ''');
     var yUsage = findNode.simple('y);');
-    var entry = fixes.entries
-        .where((e) => e.key.locations.single.offset == yUsage.end)
-        .single;
-    var reasons = entry.value;
+    var edit = changes[yUsage.end].single;
+    expect(edit.isInsertion, true);
+    expect(edit.replacement, '!');
+    var info = edit.info;
+    expect(info.description, NullabilityFixDescription.checkExpression);
+    var reasons = info.fixReasons;
     expect(reasons, hasLength(1));
-    var edge = reasons[0] as EdgeInfo;
+    var edge = reasons[FixReasonTarget.root] as EdgeInfo;
     expect(edge.sourceNode,
         same(explicitTypeNullability[findNode.typeAnnotation('int y')]));
     expect(edge.destinationNode,
@@ -234,13 +422,90 @@ main() {
     await analyze('''
 int x = null;
 ''');
-    var entries = fixes.entries.toList();
-    expect(entries, hasLength(1));
     var intAnnotation = findNode.typeAnnotation('int');
-    expect(entries.single.key.locations.single.offset, intAnnotation.end);
-    var reasons = entries.single.value;
+    var entries = changes.entries.toList();
+    expect(entries, hasLength(1));
+    expect(entries.single.key, intAnnotation.end);
+    var edit = entries.single.value.single;
+    expect(edit.isInsertion, true);
+    expect(edit.replacement, '?');
+    var info = edit.info;
+    expect(info.description, NullabilityFixDescription.makeTypeNullable('int'));
+    var reasons = info.fixReasons;
     expect(reasons, hasLength(1));
-    expect(reasons.single, same(explicitTypeNullability[intAnnotation]));
+    expect(reasons[FixReasonTarget.root],
+        same(explicitTypeNullability[intAnnotation]));
+  }
+
+  Future<void> test_fix_reason_remove_question_from_question_dot() async {
+    var content = '_f(int/*!*/ i) => i?.isEven;';
+    await analyze(content, warnOnWeakCode: false);
+    var commentPos = content.indexOf('/*');
+    var questionDotPos = content.indexOf('?.');
+    expect(changes.keys, unorderedEquals([commentPos, questionDotPos]));
+    assertEdit(changes[questionDotPos].single,
+        description: NullabilityFixDescription.removeNullAwareness,
+        fixReasons: isEmpty);
+  }
+
+  Future<void>
+      test_fix_reason_remove_question_from_question_dot_method() async {
+    var content = '_f(int/*!*/ i) => i?.abs();';
+    await analyze(content, warnOnWeakCode: false);
+    var commentPos = content.indexOf('/*');
+    var questionDotPos = content.indexOf('?.');
+    expect(changes.keys, unorderedEquals([commentPos, questionDotPos]));
+    assertEdit(changes[questionDotPos].single,
+        description: NullabilityFixDescription.removeNullAwareness,
+        fixReasons: isEmpty);
+  }
+
+  Future<void> test_fix_reason_remove_unnecessary_cast() async {
+    await analyze('''
+_f(Object x) {
+  if (x is! int) return;
+  print((x as int) + 1);
+}
+''');
+    var xRef = findNode.simple('x as');
+    var asExpression = xRef.parent as Expression;
+    expect(changes, hasLength(3));
+    // Change #1: drop the `(` before the cast
+    var dropLeadingParen = changes[asExpression.offset - 1].single;
+    expect(dropLeadingParen.isDeletion, true);
+    expect(dropLeadingParen.length, 1);
+    expect(dropLeadingParen.info, null);
+    // Change #2: drop the text ` as int`
+    var dropAsInt = changes[xRef.end].single;
+    expect(dropAsInt.isDeletion, true);
+    expect(dropAsInt.length, 7);
+    expect(dropAsInt.info.description, NullabilityFixDescription.removeAs);
+    expect(dropAsInt.info.fixReasons, isEmpty);
+    // Change #3: drop the `)` after the cast
+    var dropTrailingParen = changes[asExpression.end].single;
+    expect(dropTrailingParen.isDeletion, true);
+    expect(dropTrailingParen.length, 1);
+    expect(dropTrailingParen.info, null);
+  }
+
+  Future<void> test_fix_reason_rewrite_required() async {
+    addMetaPackage();
+    await analyze('''
+import 'package:meta/meta.dart';
+_f({@required int i}) {}
+''');
+    var intAnnotation = findNode.typeAnnotation('int');
+    expect(changes, isNotEmpty);
+    for (var change in changes.values) {
+      expect(change, isNotEmpty);
+      for (var edit in change) {
+        var info = edit.info;
+        expect(info.description,
+            NullabilityFixDescription.addRequired(null, '_f', 'i'));
+        expect(info.fixReasons[FixReasonTarget.root],
+            same(explicitTypeNullability[intAnnotation]));
+      }
+    }
   }
 
   Future<void> test_graphEdge() async {
@@ -375,9 +640,7 @@ void h(int k) {}
         .key;
     // Both assertEdge and unconditionalUsageEdge are upstream triggered because
     // either of them would have been sufficient to cause i to be marked as
-    // non-nullable, even though only one of them was actually reported to have
-    // done so via propagationStep.
-    expect(propagationSteps.where((s) => s.node == iNode), hasLength(1));
+    // non-nullable.
     expect(assertEdge.isUpstreamTriggered, true);
     expect(unconditionalUsageEdge.isUpstreamTriggered, true);
     // conditionalUsageEdge is not upstream triggered because it is a soft edge,
@@ -439,32 +702,6 @@ int f(int x, bool b) {
     expect(matchingEdges, hasLength(1));
     expect(matchingEdges.single.isUnion, false);
     expect(matchingEdges.single.isHard, false);
-  }
-
-  Future<void> test_graphEdge_union() async {
-    await analyze('''
-class C {
-  int i;
-  C(this.i); /*constructor*/
-}
-''');
-    var fieldNode = explicitTypeNullability[findNode.typeAnnotation('int')];
-    var formalParamNode =
-        implicitType[findNode.fieldFormalParameter('i); /*constructor*/')].node;
-    var matchingEdges = edges
-        .where((e) =>
-            e.sourceNode == fieldNode && e.destinationNode == formalParamNode)
-        .toList();
-    expect(matchingEdges, hasLength(1));
-    expect(matchingEdges.single.isUnion, true);
-    expect(matchingEdges.single.isHard, true);
-    matchingEdges = edges
-        .where((e) =>
-            e.sourceNode == formalParamNode && e.destinationNode == fieldNode)
-        .toList();
-    expect(matchingEdges, hasLength(1));
-    expect(matchingEdges.single.isUnion, true);
-    expect(matchingEdges.single.isHard, true);
   }
 
   Future<void> test_immutableNode_always() async {
@@ -767,8 +1004,8 @@ abstract class Derived extends Base {
             .node;
     expect(
         edges.where((e) =>
-            e.sourceNode == derivedParamArgNode &&
-            e.destinationNode == baseParamArgNode),
+            e.sourceNode == baseParamArgNode &&
+            e.destinationNode == derivedParamArgNode),
         hasLength(1));
   }
 
@@ -948,38 +1185,12 @@ List<Object> f(List l) => l;
         hasLength(1));
   }
 
-  Future<void> test_propagationStep_downstream() async {
-    await analyze('''
-int x = null;
-''');
-    var xNode = explicitTypeNullability[findNode.typeAnnotation('int')];
-    var step = propagationSteps.where((s) => s.node == xNode).single;
-    expect(step.newState, NullabilityState.ordinaryNullable);
-    expect(step.reason, StateChangeReason.downstream);
-    expect(_isPointedToByAlways(step.edge.sourceNode), true);
-    expect(step.edge.destinationNode, xNode);
-  }
-
-  Future<void> test_propagationStep_upstream() async {
-    await analyze('''
-void f(int x) {
-  assert(x != null);
-}
-''');
-    var xNode = explicitTypeNullability[findNode.typeAnnotation('int')];
-    var step = propagationSteps.where((s) => s.node == xNode).single;
-    expect(step.newState, NullabilityState.nonNullable);
-    expect(step.reason, StateChangeReason.upstream);
-    expect(step.edge.sourceNode, xNode);
-    expect(step.edge.destinationNode, never);
-  }
-
   Future<void> test_substitutionNode() async {
     await analyze('''
 class C<T> {
   void f(T t) {}
 }
-voig g(C<int> x, int y) {
+void g(C<int> x, int y) {
   x.f(y);
 }
 ''');

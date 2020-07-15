@@ -2,7 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// @dart = 2.6
+// @dart = 2.5
 
 library libraries;
 
@@ -91,16 +91,17 @@ const Map<String, LibraryInfo> libraries = const {
       categories: "Client,Server",
       maturity: Maturity.STABLE,
       dart2jsPatchPath: "_internal/js_runtime/lib/isolate_patch.dart"),
-  "js": const LibraryInfo("js/dart2js/js_dart2js.dart",
+  "js": const LibraryInfo("js/js.dart",
       categories: "Client",
       maturity: Maturity.STABLE,
-      platforms: DART2JS_PLATFORM),
+      platforms: DART2JS_PLATFORM,
+      dart2jsPatchPath: "_internal/js_runtime/lib/js_patch.dart"),
   "_js": const LibraryInfo("js/_js.dart",
       categories: "Client",
       dart2jsPatchPath: "js/_js_client.dart",
       documented: false,
       platforms: DART2JS_PLATFORM),
-  "js_util": const LibraryInfo("js_util/dart2js/js_util_dart2js.dart",
+  "js_util": const LibraryInfo("js_util/js_util.dart",
       categories: "Client",
       maturity: Maturity.STABLE,
       platforms: DART2JS_PLATFORM),
@@ -128,8 +129,7 @@ const Map<String, LibraryInfo> libraries = const {
       documented: false,
       platforms: DART2JS_PLATFORM),
   "cli": const LibraryInfo("cli/cli.dart",
-      categories: "Server",
-      dart2jsPatchPath: "_internal/js_runtime/lib/cli_patch.dart"),
+      categories: "Server", platforms: VM_PLATFORM),
   "svg": const LibraryInfo("svg/dart2js/svg_dart2js.dart",
       categories: "Client",
       maturity: Maturity.WEB_STABLE,
@@ -189,6 +189,8 @@ const Map<String, LibraryInfo> libraries = const {
       documented: false,
       platforms: DART2JS_PLATFORM),
   "_metadata": const LibraryInfo("html/html_common/metadata.dart",
+      categories: "", documented: false, platforms: DART2JS_PLATFORM),
+  "_js_annotations": const LibraryInfo("js/_js_annotations.dart",
       categories: "", documented: false, platforms: DART2JS_PLATFORM),
 };
 

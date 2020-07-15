@@ -52,13 +52,16 @@ abstract class TypeBuilder {
   AbstractValue trustTypeMask(DartType type) {
     if (type == null) return null;
     type = builder.localsHandler.substInContext(type);
-    type = type.unaliased;
-    if (type is DynamicType) return null;
+    if (_closedWorld.dartTypes.isTopType(type)) return null;
+    bool includeNull =
+        _closedWorld.dartTypes.useLegacySubtyping || type is NullableType;
+    type = type.withoutNullability;
     if (type is! InterfaceType) return null;
-    if (type == _closedWorld.commonElements.objectType) return null;
     // The type element is either a class or the void element.
     ClassEntity element = (type as InterfaceType).element;
-    return _abstractValueDomain.createNullableSubtype(element);
+    return includeNull
+        ? _abstractValueDomain.createNullableSubtype(element)
+        : _abstractValueDomain.createNonNullSubtype(element);
   }
 
   /// Create an instruction to simply trust the provided type.
@@ -74,17 +77,12 @@ abstract class TypeBuilder {
   HInstruction _checkType(HInstruction original, DartType type) {
     assert(type != null);
     type = builder.localsHandler.substInContext(type);
-    HInstruction other =
-        buildTypeConversion(original, type, HTypeConversion.TYPE_CHECK);
+    HInstruction other = buildAsCheck(original, type, isTypeError: true);
     // TODO(johnniwinther): This operation on `registry` may be inconsistent.
     // If it is needed then it seems likely that similar invocations of
-    // `buildTypeConversion` in `SsaBuilder.visitAs` should also be followed by
-    // a similar operation on `registry`; otherwise, this one might not be
-    // needed.
+    // `buildAsCheck` in `SsaBuilder.visitAs` should also be followed by a
+    // similar operation on `registry`; otherwise, this one might not be needed.
     builder.registry?.registerTypeUse(new TypeUse.isCheck(type));
-    if (other is HTypeConversion && other.isRedundant(builder.closedWorld)) {
-      return original;
-    }
     if (other is HAsCheck && other.isRedundant(builder.closedWorld)) {
       return original;
     }
@@ -104,8 +102,17 @@ abstract class TypeBuilder {
     return checkInstruction;
   }
 
-  HInstruction trustTypeOfParameter(HInstruction original, DartType type) {
+  HInstruction trustTypeOfParameter(
+      MemberEntity memberContext, HInstruction original, DartType type) {
     if (type == null) return original;
+
+    /// Dart semantics check against null outside the method definition,
+    /// however dart2js moves the null check to the callee for performance
+    /// reasons. As a result the body cannot trust or check that the type is not
+    /// nullable.
+    if (builder.options.useNullSafety && memberContext.name == '==') {
+      type = _closedWorld.dartTypes.nullableType(type);
+    }
     HInstruction trusted = _trustType(original, type);
     if (trusted == original) return original;
     if (trusted is HTypeKnown && trusted.isRedundant(builder.closedWorld)) {
@@ -121,6 +128,14 @@ abstract class TypeBuilder {
     HInstruction checkedOrTrusted = original;
     CheckPolicy parameterCheckPolicy = builder.closedWorld.annotationsData
         .getParameterCheckPolicy(memberContext);
+
+    /// Dart semantics check against null outside the method definition,
+    /// however dart2js moves the null check to the callee for performance
+    /// reasons. As a result the body cannot trust or check that the type is not
+    /// nullable.
+    if (builder.options.useNullSafety && memberContext.name == '==') {
+      type = _closedWorld.dartTypes.nullableType(type);
+    }
     if (parameterCheckPolicy.isTrusted) {
       checkedOrTrusted = _trustType(original, type);
     } else if (parameterCheckPolicy.isEmitted) {
@@ -161,132 +176,16 @@ abstract class TypeBuilder {
 
   ClassTypeVariableAccess computeTypeVariableAccess(MemberEntity member);
 
-  /// Helper to create an instruction that gets the value of a type variable.
-  HInstruction addTypeVariableReference(
-      TypeVariableType type, MemberEntity member,
-      {SourceInformation sourceInformation}) {
-    Local typeVariableLocal =
-        builder.localsHandler.getTypeVariableAsLocal(type);
-
-    /// Read [typeVariable] as a property of on `this`.
-    HInstruction readAsProperty() {
-      return readTypeVariable(type, member,
-          sourceInformation: sourceInformation);
-    }
-
-    /// Read [typeVariable] as a parameter.
-    HInstruction readAsParameter() {
-      return builder.localsHandler
-          .readLocal(typeVariableLocal, sourceInformation: sourceInformation);
-    }
-
-    ClassTypeVariableAccess typeVariableAccess;
-    if (type.element.typeDeclaration is ClassEntity) {
-      typeVariableAccess = computeTypeVariableAccess(member);
-    } else {
-      typeVariableAccess = ClassTypeVariableAccess.parameter;
-    }
-    switch (typeVariableAccess) {
-      case ClassTypeVariableAccess.parameter:
-        return readAsParameter();
-      case ClassTypeVariableAccess.instanceField:
-        if (member != builder.targetElement) {
-          // When [member] is a field, we can either be generating a checked
-          // setter or inlining its initializer in a constructor. An initializer
-          // is never built standalone, so in that case [target] is not the
-          // [member] itself.
-          return readAsParameter();
-        }
-        return readAsProperty();
-      case ClassTypeVariableAccess.property:
-        return readAsProperty();
-      case ClassTypeVariableAccess.none:
-        builder.reporter.internalError(
-            type.element, 'Unexpected type variable in static context.');
-    }
-    builder.reporter.internalError(
-        type.element, 'Unexpected type variable access: $typeVariableAccess.');
-    return null;
-  }
-
-  /// Generate code to extract the type argument from the object.
-  HInstruction readTypeVariable(TypeVariableType variable, MemberEntity member,
-      {SourceInformation sourceInformation}) {
-    assert(member.isInstanceMember);
-    assert(variable.element.typeDeclaration is ClassEntity);
-    HInstruction target =
-        builder.localsHandler.readThis(sourceInformation: sourceInformation);
-    HInstruction interceptor =
-        new HInterceptor(target, _abstractValueDomain.nonNullType)
-          ..sourceInformation = sourceInformation;
-    builder.add(interceptor);
-    builder.push(new HTypeInfoReadVariable.intercepted(
-        variable, interceptor, target, _abstractValueDomain.dynamicType)
-      ..sourceInformation = sourceInformation);
-    return builder.pop();
-  }
-
-  HInstruction buildTypeArgumentRepresentations(
-      DartType type, MemberEntity sourceElement,
-      [SourceInformation sourceInformation]) {
-    assert(type is! TypeVariableType);
-    // Compute the representation of the type arguments, including access
-    // to the runtime type information for type variables as instructions.
-    assert(type is InterfaceType);
-    InterfaceType interface = type;
-    List<HInstruction> inputs = <HInstruction>[];
-    for (DartType argument in interface.typeArguments) {
-      inputs.add(analyzeTypeArgument(argument, sourceElement,
-          sourceInformation: sourceInformation));
-    }
-    HInstruction representation = new HTypeInfoExpression(
-        TypeInfoExpressionKind.INSTANCE,
-        _closedWorld.elementEnvironment.getThisType(interface.element),
-        inputs,
-        _abstractValueDomain.dynamicType)
-      ..sourceInformation = sourceInformation;
-    return representation;
-  }
-
   HInstruction analyzeTypeArgument(
       DartType argument, MemberEntity sourceElement,
       {SourceInformation sourceInformation}) {
-    if (builder.options.useNewRti) {
-      return analyzeTypeArgumentNewRti(argument, sourceElement,
-          sourceInformation: sourceInformation);
-    }
-    argument = argument.unaliased;
-    if (argument is DynamicType) {
-      // Represent [dynamic] as [null].
-      return builder.graph.addConstantNull(_closedWorld);
-    }
-
-    if (argument is TypeVariableType) {
-      return addTypeVariableReference(argument, sourceElement,
-          sourceInformation: sourceInformation);
-    }
-
-    List<HInstruction> inputs = <HInstruction>[];
-    argument.forEachTypeVariable((TypeVariableType variable) {
-      // TODO(johnniwinther): Also make this conditional on whether we have
-      // calculated we need that particular method signature.
-      inputs.add(analyzeTypeArgument(variable, sourceElement));
-    });
-    HInstruction result = new HTypeInfoExpression(
-        TypeInfoExpressionKind.COMPLETE,
-        argument,
-        inputs,
-        _abstractValueDomain.dynamicType)
-      ..sourceInformation = sourceInformation;
-    builder.add(result);
-    return result;
+    return analyzeTypeArgumentNewRti(argument, sourceElement,
+        sourceInformation: sourceInformation);
   }
 
   HInstruction analyzeTypeArgumentNewRti(
       DartType argument, MemberEntity sourceElement,
       {SourceInformation sourceInformation}) {
-    argument = argument.unaliased;
-
     if (!argument.containsTypeVariables) {
       HInstruction rti =
           HLoadType.type(argument, _abstractValueDomain.dynamicType)
@@ -418,52 +317,6 @@ abstract class TypeBuilder {
     return _EnvironmentExpressionAndStructure(environment, structure);
   }
 
-  /// Build a [HTypeConversion] for converting [original] to type [type].
-  ///
-  /// Invariant: [type] must be valid in the context.
-  /// See [LocalsHandler.substInContext].
-  HInstruction buildTypeConversion(
-      HInstruction original, DartType type, int kind,
-      {SourceInformation sourceInformation}) {
-    if (builder.options.useNewRti) {
-      return buildAsCheck(original, type,
-          isTypeError: kind == HTypeConversion.TYPE_CHECK,
-          sourceInformation: sourceInformation);
-    }
-
-    if (type == null) return original;
-    type = type.unaliased;
-    if (type is InterfaceType && !type.treatAsRaw) {
-      InterfaceType interfaceType = type;
-      AbstractValue subtype =
-          _abstractValueDomain.createNullableSubtype(interfaceType.element);
-      HInstruction representations = buildTypeArgumentRepresentations(
-          type, builder.sourceElement, sourceInformation);
-      builder.add(representations);
-      return new HTypeConversion.withTypeRepresentation(
-          type, kind, subtype, original, representations)
-        ..sourceInformation = sourceInformation;
-    } else if (type is TypeVariableType) {
-      AbstractValue subtype = original.instructionType;
-      HInstruction typeVariable =
-          addTypeVariableReference(type, builder.sourceElement);
-      return new HTypeConversion.withTypeRepresentation(
-          type, kind, subtype, original, typeVariable)
-        ..sourceInformation = sourceInformation;
-    } else if (type is FunctionType || type is FutureOrType) {
-      HInstruction reifiedType =
-          analyzeTypeArgument(type, builder.sourceElement);
-      // TypeMasks don't encode function types or FutureOr types.
-      AbstractValue refinedMask = original.instructionType;
-      return new HTypeConversion.withTypeRepresentation(
-          type, kind, refinedMask, original, reifiedType)
-        ..sourceInformation = sourceInformation;
-    } else {
-      return original.convertType(_closedWorld, type, kind)
-        ..sourceInformation = sourceInformation;
-    }
-  }
-
   /// Build a [HAsCheck] for converting [original] to type [type].
   ///
   /// Invariant: [type] must be valid in the context.
@@ -471,11 +324,7 @@ abstract class TypeBuilder {
   HInstruction buildAsCheck(HInstruction original, DartType type,
       {bool isTypeError, SourceInformation sourceInformation}) {
     if (type == null) return original;
-    type = type.unaliased;
-
-    if (type is DynamicType) return original;
-    if (type is VoidType) return original;
-    if (type == _closedWorld.commonElements.objectType) return original;
+    if (_closedWorld.dartTypes.isTopType(type)) return original;
 
     HInstruction reifiedType = analyzeTypeArgumentNewRti(
         type, builder.sourceElement,

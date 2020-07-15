@@ -14,8 +14,6 @@ import '../js/js.dart' show js;
 import '../js_backend/namer.dart' show Namer;
 import '../js_backend/native_data.dart';
 import '../js_backend/interceptor_data.dart';
-import '../js_backend/runtime_types.dart';
-import '../js_backend/runtime_types_new.dart' show RecipeEncoder;
 import '../js_backend/type_reference.dart' show TypeReference;
 import '../js_model/type_recipe.dart' show TypeExpressionRecipe;
 import '../universe/call_structure.dart' show CallStructure;
@@ -35,8 +33,6 @@ class ParameterStubGenerator {
   final Emitter _emitter;
   final NativeEmitter _nativeEmitter;
   final Namer _namer;
-  final RuntimeTypesEncoder _rtiEncoder;
-  final RecipeEncoder _rtiRecipeEncoder; // `null` if not useNewRti.
   final NativeData _nativeData;
   final InterceptorData _interceptorData;
   final CodegenWorld _codegenWorld;
@@ -47,14 +43,13 @@ class ParameterStubGenerator {
       this._emitter,
       this._nativeEmitter,
       this._namer,
-      this._rtiEncoder,
-      this._rtiRecipeEncoder,
       this._nativeData,
       this._interceptorData,
       this._codegenWorld,
       this._closedWorld,
       this._sourceInformationStrategy);
 
+  DartTypes get _dartTypes => _closedWorld.dartTypes;
   JElementEnvironment get _elementEnvironment =>
       _closedWorld.elementEnvironment;
 
@@ -179,18 +174,9 @@ class ParameterStubGenerator {
         if (selector.typeArgumentCount == 0) {
           DartType defaultType = _closedWorld.elementEnvironment
               .getTypeVariableDefaultType(typeVariable.element);
-          if (_rtiRecipeEncoder != null) {
-            defaultType = _eraseTypeVariablesToAny(defaultType);
-            targetArguments[count++] =
-                TypeReference(TypeExpressionRecipe(defaultType));
-          } else {
-            targetArguments[count++] = _rtiEncoder.getTypeRepresentation(
-                _emitter, defaultType, (_) => _emitter.constantReference(
-                    // TODO(33422): Support type variables in default
-                    // types. Temporarily using the "any" type (encoded as -2) to
-                    // avoid failing on bounds checks.
-                    new IntConstantValue(new BigInt.from(-2))));
-          }
+          defaultType = _eraseTypeVariablesToAny(defaultType);
+          targetArguments[count++] =
+              TypeReference(TypeExpressionRecipe(defaultType));
         } else {
           String jsName = '\$${typeVariable.element.name}';
           stubParameters[parameterIndex++] = new jsAst.Parameter(jsName);
@@ -249,8 +235,8 @@ class ParameterStubGenerator {
     Set<TypeVariableType> variables = Set();
     type.forEachTypeVariable(variables.add);
     assert(variables.isNotEmpty);
-    return type.subst(
-        List.filled(variables.length, AnyType()), variables.toList());
+    return _dartTypes.subst(List.filled(variables.length, _dartTypes.anyType()),
+        variables.toList(), type);
   }
 
   // We fill the lists depending on possible/invoked selectors. For example,

@@ -14,6 +14,8 @@ import '../api_prototype/experimental_flags.dart' show ExperimentalFlag;
 
 import '../api_prototype/file_system.dart' show FileSystem;
 
+import '../base/nnbd_mode.dart' show NnbdMode;
+
 import '../base/processed_options.dart' show ProcessedOptions;
 
 import '../fasta/compiler_context.dart' show CompilerContext;
@@ -31,19 +33,19 @@ import 'util.dart' show equalMaps, equalSets;
 /// as necessary based on [workerInputDigests].
 ///
 /// Notes:
-/// * [outputLoadedInputSummaries] should be given as an empty list of the same
-///   size as the [inputSummaries]. The input summaries are loaded (or taken
+/// * [outputLoadedAdditionalDills] should be given as an empty list of the same
+///   size as the [additionalDills]. The input summaries are loaded (or taken
 ///   from cache) and placed in this list in order, i.e. the `i`-th entry in
-///   [outputLoadedInputSummaries] after this call corresponds to the component
-///   loaded from the `i`-th entry in [inputSummaries].
+///   [outputLoadedAdditionalDills] after this call corresponds to the component
+///   loaded from the `i`-th entry in [additionalDills].
 Future<InitializedCompilerState> initializeIncrementalCompiler(
     InitializedCompilerState oldState,
     Set<String> tags,
-    List<Component> outputLoadedInputSummaries,
+    List<Component> outputLoadedAdditionalDills,
     Uri sdkSummary,
     Uri packagesFile,
     Uri librariesSpecificationUri,
-    List<Uri> inputSummaries,
+    List<Uri> additionalDills,
     Map<Uri, List<int>> workerInputDigests,
     Target target,
     {bool compileSdk: false,
@@ -53,7 +55,9 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
     Map<String, String> environmentDefines: const {},
     bool outlineOnly,
     bool omitPlatform: false,
-    bool trackNeededDillLibraries: false}) async {
+    bool trackNeededDillLibraries: false,
+    bool verbose: false,
+    NnbdMode nnbdMode: NnbdMode.Weak}) async {
   bool isRetry = false;
   while (true) {
     try {
@@ -77,6 +81,7 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
           oldState.incrementalCompiler == null ||
           oldState.options.compileSdk != compileSdk ||
           oldState.incrementalCompiler.outlineOnly != outlineOnly ||
+          oldState.options.nnbdMode != nnbdMode ||
           !equalMaps(oldState.options.experimentalFlags, experimentalFlags) ||
           !equalMaps(oldState.options.environmentDefines, environmentDefines) ||
           !equalSets(oldState.tags, tags) ||
@@ -98,7 +103,9 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
           ..fileSystem = fileSystem
           ..omitPlatform = omitPlatform
           ..environmentDefines = environmentDefines
-          ..experimentalFlags = experimentalFlags;
+          ..experimentalFlags = experimentalFlags
+          ..verbose = verbose
+          ..nnbdMode = nnbdMode;
 
         processedOpts = new ProcessedOptions(options: options);
         cachedSdkInput = new WorkerInputComponent(
@@ -129,8 +136,8 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
         // although it's not entirely obvious why.
         // It likely has to do with several outlines containing the same
         // libraries. Once that stops (and we check for it) we can probably
-        // remove this, and instead only do it when about to reuse an outline
-        // in the 'inputSummaries.add(component);' line further down.
+        // remove this, and instead only do it when about to reuse a component
+        // further down.
         for (WorkerInputComponent cachedInput in workerInputCache.values) {
           cachedInput.component.adoptChildren();
         }
@@ -154,13 +161,13 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
 
       // Notice that the ordering of the input summaries matter, so we need to
       // keep them in order.
-      if (outputLoadedInputSummaries.length != inputSummaries.length) {
+      if (outputLoadedAdditionalDills.length != additionalDills.length) {
         throw new ArgumentError("Invalid length.");
       }
-      Set<Uri> inputSummariesSet = new Set<Uri>();
-      for (int i = 0; i < inputSummaries.length; i++) {
-        Uri summaryUri = inputSummaries[i];
-        inputSummariesSet.add(summaryUri);
+      Set<Uri> additionalDillsSet = new Set<Uri>();
+      for (int i = 0; i < additionalDills.length; i++) {
+        Uri summaryUri = additionalDills[i];
+        additionalDillsSet.add(summaryUri);
         WorkerInputComponent cachedInput = workerInputCache[summaryUri];
         List<int> digest = workerInputDigests[summaryUri];
         if (digest == null) {
@@ -187,30 +194,30 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
             }
           }
           component.computeCanonicalNames(); // this isn't needed, is it?
-          outputLoadedInputSummaries[i] = component;
+          outputLoadedAdditionalDills[i] = component;
         }
       }
 
       for (int i = 0; i < loadFromDillIndexes.length; i++) {
         int index = loadFromDillIndexes[i];
-        Uri summaryUri = inputSummaries[index];
-        List<int> digest = workerInputDigests[summaryUri];
+        Uri additionalDillUri = additionalDills[index];
+        List<int> digest = workerInputDigests[additionalDillUri];
         if (digest == null) {
-          throw new StateError("Expected to get digest for $summaryUri");
+          throw new StateError("Expected to get digest for $additionalDillUri");
         }
 
         List<int> bytes =
-            await fileSystem.entityForUri(summaryUri).readAsBytes();
+            await fileSystem.entityForUri(additionalDillUri).readAsBytes();
         WorkerInputComponent cachedInput = new WorkerInputComponent(
             digest,
             await processedOpts.loadComponent(bytes, nameRoot,
                 alwaysCreateNewNamedNodes: true));
-        workerInputCache[summaryUri] = cachedInput;
-        outputLoadedInputSummaries[index] = cachedInput.component;
+        workerInputCache[additionalDillUri] = cachedInput;
+        outputLoadedAdditionalDills[index] = cachedInput.component;
         for (Library lib in cachedInput.component.libraries) {
           if (workerInputCacheLibs.containsKey(lib.importUri)) {
             Uri fromSummary = workerInputCacheLibs[lib.importUri];
-            if (inputSummariesSet.contains(fromSummary)) {
+            if (additionalDillsSet.contains(fromSummary)) {
               throw new StateError(
                   "Asked to load several summaries that contain the same "
                   "library.");
@@ -223,17 +230,17 @@ Future<InitializedCompilerState> initializeIncrementalCompiler(
               }
             }
           } else {
-            workerInputCacheLibs[lib.importUri] = summaryUri;
+            workerInputCacheLibs[lib.importUri] = additionalDillUri;
           }
 
           if (trackNeededDillLibraries) {
-            libraryToInputDill[lib.importUri] = summaryUri;
+            libraryToInputDill[lib.importUri] = additionalDillUri;
           }
         }
       }
 
       incrementalCompiler
-          .setModulesToLoadOnNextComputeDelta(outputLoadedInputSummaries);
+          .setModulesToLoadOnNextComputeDelta(outputLoadedAdditionalDills);
 
       return new InitializedCompilerState(options, processedOpts,
           workerInputCache: workerInputCache,

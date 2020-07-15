@@ -4,7 +4,7 @@
 //
 // Dart test program for testing dart:ffi extra checks
 //
-// SharedObjects=ffi_test_dynamic_library
+// SharedObjects=ffi_test_dynamic_library ffi_test_functions
 
 import 'dart:ffi';
 
@@ -44,6 +44,7 @@ void main() {
   testNativeFunctionSignatureInvalidParam();
   testNativeFunctionSignatureInvalidOptionalNamed();
   testNativeFunctionSignatureInvalidOptionalPositional();
+  testHandleVariance();
 }
 
 typedef Int8UnOp = Int8 Function(Int8);
@@ -51,7 +52,7 @@ typedef IntUnOp = int Function(int);
 
 void testGetGeneric() {
   int generic(Pointer p) {
-    int result;
+    int result = -1;
     result = p.value; //# 20: compile-time error
     return result;
   }
@@ -64,10 +65,10 @@ void testGetGeneric() {
 }
 
 void testGetGeneric2() {
-  T generic<T extends Object>() {
+  T? generic<T extends Object>() {
     Pointer<Int8> p = allocate();
     p.value = 123;
-    T result;
+    T? result;
     result = p.value; //# 21: compile-time error
     free(p);
     return result;
@@ -161,19 +162,19 @@ void testSetTypeMismatch() {
 }
 
 void testAsFunctionGeneric() {
-  T generic<T extends Function>() {
+  T generic<T extends Function>(T defaultFunction) {
     Pointer<NativeFunction<Int8UnOp>> p = Pointer.fromAddress(1337);
-    Function f;
+    T f = defaultFunction;
     f = p.asFunction<T>(); //# 11: compile-time error
     return f;
   }
 
-  generic<IntUnOp>();
+  generic<IntUnOp>((int a) => a + 1);
 }
 
 void testAsFunctionGeneric2() {
   generic(Pointer<NativeFunction> p) {
-    Function f;
+    Function f = () => "dummy";
     f = p.asFunction<IntUnOp>(); //# 12: compile-time error
     return f;
   }
@@ -203,7 +204,7 @@ int myTimesFour(int i) => i * 4;
 
 void testFromFunctionGeneric() {
   Pointer<NativeFunction> generic<T extends Function>(T f) {
-    Pointer<NativeFunction<NativeDoubleUnOp>> result;
+    Pointer<NativeFunction<NativeDoubleUnOp>> result = nullptr;
     result = Pointer.fromFunction(f); //# 70: compile-time error
     return result;
   }
@@ -213,7 +214,7 @@ void testFromFunctionGeneric() {
 
 void testFromFunctionGeneric2() {
   Pointer<NativeFunction<T>> generic<T extends Function>() {
-    Pointer<NativeFunction<T>> result;
+    Pointer<NativeFunction<T>> result = nullptr;
     result = Pointer.fromFunction(myTimesThree); //# 71: compile-time error
     return result;
   }
@@ -240,10 +241,8 @@ class X {
   double tearoff(double d) => d / 27.0;
 }
 
-DoubleUnOp fld = null;
-
 void testFromFunctionTearOff() {
-  fld = X().tearoff;
+  DoubleUnOp fld = X().tearoff;
   Pointer<NativeFunction<NativeDoubleUnOp>> p;
   p = Pointer.fromFunction(fld); //# 75: compile-time error
 }
@@ -256,7 +255,7 @@ void testFromFunctionAbstract() {
 void testLookupFunctionGeneric() {
   Function generic<T extends Function>() {
     DynamicLibrary l = dlopenPlatformSpecific("ffi_test_dynamic_library");
-    Function result;
+    Function result = () => "dummy";
     result = l.lookupFunction<T, DoubleUnOp>("cos"); //# 15: compile-time error
     return result;
   }
@@ -267,7 +266,7 @@ void testLookupFunctionGeneric() {
 void testLookupFunctionGeneric2() {
   Function generic<T extends Function>() {
     DynamicLibrary l = dlopenPlatformSpecific("ffi_test_dynamic_library");
-    Function result;
+    Function result = () => "dummy";
     result = //# 16: compile-time error
         l.lookupFunction<NativeDoubleUnOp, T>("cos"); //# 16: compile-time error
     return result;
@@ -311,9 +310,9 @@ void testNativeFunctionSignatureInvalidOptionalPositional() {
 // error on missing field annotation
 class TestStruct extends Struct {
   @Double()
-  double x;
+  external double x;
 
-  double y; //# 50: compile-time error
+  external double y; //# 50: compile-time error
 }
 
 // Cannot extend structs.
@@ -323,25 +322,25 @@ class TestStruct3 extends TestStruct {} //# 52: compile-time error
 class TestStruct4 extends Struct {
   @Double()
   @Double() //# 53: compile-time error
-  double z;
+  external double z;
 }
 
 // error on annotation not matching up
 class TestStruct5 extends Struct {
   @Int64() //# 54: compile-time error
-  double z; //# 54: compile-time error
+  external double z; //# 54: compile-time error
 }
 
 // error on annotation not matching up
 class TestStruct6 extends Struct {
   @Void() //# 55: compile-time error
-  double z; //# 55: compile-time error
+  external double z; //# 55: compile-time error
 }
 
 // error on annotation not matching up
 class TestStruct7 extends Struct {
   @NativeType() //# 56: compile-time error
-  double z; //# 56: compile-time error
+  external double z; //# 56: compile-time error
 }
 
 // error on field initializer on field
@@ -352,8 +351,8 @@ class TestStruct8 extends Struct {
 
 // error on field initializer in constructor
 class TestStruct9 extends Struct {
-  @Double()
-  double z;
+  @Double() //# 58: compile-time error
+  double z; //# 58: compile-time error
 
   TestStruct9() : z = 0.0 {} //# 58: compile-time error
 }
@@ -366,7 +365,7 @@ class TestStruct11<T> extends //# 60: compile-time error
 // annotation).
 class TestStruct12 extends Struct {
   @Pointer //# 61: compile-time error
-  TestStruct9 struct; //# 61: compile-time error
+  external TestStruct9 struct; //# 61: compile-time error
 }
 
 class DummyAnnotation {
@@ -377,7 +376,7 @@ class DummyAnnotation {
 class TestStruct13 extends Struct {
   @DummyAnnotation()
   @Double()
-  double z;
+  external double z;
 }
 
 // Cannot extend native types.
@@ -449,3 +448,31 @@ class INativeFunction //# 813: compile-time error
 class IPointer implements Pointer {} //# 814: compile-time error
 
 class IStruct implements Struct {} //# 815: compile-time error
+
+class MyClass {
+  int x;
+  MyClass(this.x);
+}
+
+final testLibrary = dlopenPlatformSpecific("ffi_test_functions");
+
+void testHandleVariance() {
+  // Taking a more specific argument is okay.
+  testLibrary.lookupFunction<Handle Function(Handle), Object Function(MyClass)>(
+      "PassObjectToC");
+
+  // Requiring a more specific return type is not, this requires a cast from
+  // the user.
+  testLibrary.lookupFunction< //# 1000: compile-time error
+      Handle Function(Handle), //# 1000: compile-time error
+      MyClass Function(Object)>("PassObjectToC"); //# 1000: compile-time error
+}
+
+class TestStruct1001 extends Struct {
+  Handle handle; //# 1001: compile-time error
+}
+
+class TestStruct1002 extends Struct {
+  @Handle() //# 1002: compile-time error
+  Object handle; //# 1002: compile-time error
+}

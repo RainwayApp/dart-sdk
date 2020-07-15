@@ -6,7 +6,7 @@ import 'package:test/test.dart';
 
 import '../../../tool/lsp_spec/typescript_parser.dart' as ast;
 
-main() {
+void main() {
   group('dartType mapping', () {
     test('handles basic types', () {
       expect(_simple('string').dartType, equals('String'));
@@ -28,10 +28,10 @@ main() {
   });
 }
 
+ast.ArrayType _array(String name) => ast.ArrayType(_simple(name));
+
 ast.Type _simple(String name) =>
     ast.Type(ast.Token(ast.TokenType.IDENTIFIER, name), []);
-
-ast.ArrayType _array(String name) => ast.ArrayType(_simple(name));
 
 ast.UnionType _union(List<String> names) =>
     ast.UnionType(names.map(_simple).toList());

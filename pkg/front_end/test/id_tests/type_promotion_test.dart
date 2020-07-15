@@ -17,7 +17,6 @@ main(List<String> args) async {
           'data'));
   await runTests<DartType>(dataDir,
       args: args,
-      supportedMarkers: cfeAnalyzerMarkers,
       createUriForFileName: createUriForFileName,
       onFailure: onFailure,
       runTest: runTestFor(
@@ -34,7 +33,10 @@ class TypePromotionDataComputer extends DataComputer<DartType> {
   /// Function that computes a data mapping for [member].
   ///
   /// Fills [actualMap] with the data.
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<DartType>> actualMap,
       {bool verbose}) {
     member.accept(new TypePromotionDataExtractor(compilerResult, actualMap));
@@ -59,8 +61,8 @@ class _TypePromotionDataInterpreter implements DataInterpreter<DartType> {
   const _TypePromotionDataInterpreter();
 
   @override
-  String getText(DartType actualData) =>
-      typeToText(actualData, TypeRepresentation.nonNullableByDefault);
+  String getText(DartType actualData, [String indentation]) =>
+      typeToText(actualData, TypeRepresentation.analyzerNonNullableByDefault);
 
   @override
   String isAsExpected(DartType actualData, String expectedData) {

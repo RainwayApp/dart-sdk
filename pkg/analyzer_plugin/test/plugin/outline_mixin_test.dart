@@ -41,15 +41,14 @@ class OutlineMixinTest with ResourceProviderMixin {
     plugin.start(channel);
   }
 
-  test_sendOutlineNotification() async {
+  Future<void> test_sendOutlineNotification() async {
     await plugin.handleAnalysisSetContextRoots(
         AnalysisSetContextRootsParams([contextRoot1]));
 
-    Completer<void> notificationReceived = Completer<void>();
+    var notificationReceived = Completer<void>();
     channel.listen(null, onNotification: (Notification notification) {
       expect(notification, isNotNull);
-      AnalysisOutlineParams params =
-          AnalysisOutlineParams.fromNotification(notification);
+      var params = AnalysisOutlineParams.fromNotification(notification);
       expect(params.file, filePath1);
       expect(params.outline, hasLength(3));
       notificationReceived.complete();
@@ -66,7 +65,7 @@ class _TestOutlineContributor implements OutlineContributor {
 
   @override
   void computeOutline(OutlineRequest request, OutlineCollector collector) {
-    for (int i = 0; i < elementCount; i++) {
+    for (var i = 0; i < elementCount; i++) {
       collector.startElement(Element(ElementKind.METHOD, 'm$i', 0), 20 * i, 20);
       collector.endElement();
     }

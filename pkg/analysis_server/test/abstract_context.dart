@@ -20,14 +20,13 @@ import 'package:analyzer/src/generated/source_io.dart';
 import 'package:analyzer/src/test_utilities/mock_sdk.dart';
 import 'package:analyzer/src/test_utilities/resource_provider_mixin.dart';
 import 'package:linter/src/rules.dart';
+import 'package:meta/meta.dart';
 
 import 'src/utilities/mock_packages.dart';
 
-/**
- * Finds an [Element] with the given [name].
- */
+/// Finds an [Element] with the given [name].
 Element findChildElement(Element root, String name, [ElementKind kind]) {
-  Element result = null;
+  Element result;
   root.accept(_ElementVisitorFunctionWrapper((Element element) {
     if (element.name != name) {
       return;
@@ -40,9 +39,7 @@ Element findChildElement(Element root, String name, [ElementKind kind]) {
   return result;
 }
 
-/**
- * A function to be called for every [Element].
- */
+/// A function to be called for every [Element].
 typedef _ElementVisitorFunction = void Function(Element element);
 
 class AbstractContextTest with ResourceProviderMixin {
@@ -77,7 +74,7 @@ class AbstractContextTest with ResourceProviderMixin {
   }
 
   void addMetaPackage() {
-    Folder libFolder = MockPackages.instance.addMeta(resourceProvider);
+    var libFolder = MockPackages.instance.addMeta(resourceProvider);
     addTestPackageDependency('meta', libFolder.parent.path);
   }
 
@@ -91,8 +88,8 @@ class AbstractContextTest with ResourceProviderMixin {
   }
 
   Source addSource(String path, String content, [Uri uri]) {
-    File file = newFile(path, content: content);
-    Source source = file.createSource(uri);
+    var file = newFile(path, content: content);
+    var source = file.createSource(uri);
     driver.addFile(file.path);
     driver.changeFile(file.path);
     return source;
@@ -117,7 +114,7 @@ class AbstractContextTest with ResourceProviderMixin {
   }
 
   void addVectorMathPackage() {
-    Folder libFolder = MockPackages.instance.addVectorMath(resourceProvider);
+    var libFolder = MockPackages.instance.addVectorMath(resourceProvider);
     addTestPackageDependency('vector_math', libFolder.parent.path);
   }
 
@@ -135,22 +132,33 @@ class AbstractContextTest with ResourceProviderMixin {
   }
 
   /// Create an analysis options file based on the given arguments.
-  void createAnalysisOptionsFile(
-      {List<String> experiments, List<String> lints}) {
-    StringBuffer buffer = StringBuffer();
+  void createAnalysisOptionsFile({
+    List<String> experiments,
+    bool implicitCasts,
+    List<String> lints,
+  }) {
+    var buffer = StringBuffer();
+
+    if (experiments != null || implicitCasts != null) {
+      buffer.writeln('analyzer:');
+    }
 
     if (experiments != null) {
-      buffer.writeln('analyzer:');
       buffer.writeln('  enable-experiment:');
-      for (String experiment in experiments) {
+      for (var experiment in experiments) {
         buffer.writeln('    - $experiment');
       }
+    }
+
+    if (implicitCasts != null) {
+      buffer.writeln('  strong-mode:');
+      buffer.writeln('    implicit-casts: $implicitCasts');
     }
 
     if (lints != null) {
       buffer.writeln('linter:');
       buffer.writeln('  rules:');
-      for (String lint in lints) {
+      for (var lint in lints) {
         buffer.writeln('    - $lint');
       }
     }
@@ -182,6 +190,7 @@ class AbstractContextTest with ResourceProviderMixin {
     return resolveResult.unit;
   }
 
+  @mustCallSuper
   void setUp() {
     registerLintRules();
 
@@ -191,8 +200,8 @@ class AbstractContextTest with ResourceProviderMixin {
     MockSdk(resourceProvider: resourceProvider);
 
     newFolder('/home/test');
-    newFile('/home/test/.packages', content: r'''
-test:file:///home/test/lib
+    newFile('/home/test/.packages', content: '''
+test:${toUriStr('/home/test/lib')}
 ''');
 
     createAnalysisContexts();
@@ -211,15 +220,14 @@ test:file:///home/test/lib
   }
 }
 
-/**
- * Wraps the given [_ElementVisitorFunction] into an instance of
- * [engine.GeneralizingElementVisitor].
- */
-class _ElementVisitorFunctionWrapper extends GeneralizingElementVisitor {
+/// Wraps the given [_ElementVisitorFunction] into an instance of
+/// [engine.GeneralizingElementVisitor].
+class _ElementVisitorFunctionWrapper extends GeneralizingElementVisitor<void> {
   final _ElementVisitorFunction function;
   _ElementVisitorFunctionWrapper(this.function);
+
   @override
-  visitElement(Element element) {
+  void visitElement(Element element) {
     function(element);
     super.visitElement(element);
   }

@@ -534,10 +534,17 @@ class ForwardingListener implements Listener {
   }
 
   @override
-  void endClassFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
-    listener?.endClassFields(staticToken, covariantToken, lateToken,
-        varFinalOrConst, count, beginToken, endToken);
+  void endClassFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
+    listener?.endClassFields(externalToken, staticToken, covariantToken,
+        lateToken, varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -629,8 +636,8 @@ class ForwardingListener implements Listener {
 
   @override
   void endExtensionDeclaration(
-      Token extensionKeyword, Token onKeyword, Token token) {
-    listener?.endExtensionDeclaration(extensionKeyword, onKeyword, token);
+      Token extensionKeyword, Token onKeyword, Token endToken) {
+    listener?.endExtensionDeclaration(extensionKeyword, onKeyword, endToken);
   }
 
   @override
@@ -641,6 +648,7 @@ class ForwardingListener implements Listener {
 
   @override
   void endExtensionFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -648,8 +656,8 @@ class ForwardingListener implements Listener {
       int count,
       Token beginToken,
       Token endToken) {
-    listener?.endExtensionFields(staticToken, covariantToken, lateToken,
-        varFinalOrConst, count, beginToken, endToken);
+    listener?.endExtensionFields(externalToken, staticToken, covariantToken,
+        lateToken, varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -801,6 +809,13 @@ class ForwardingListener implements Listener {
   }
 
   @override
+  void endInvalidYieldStatement(Token beginToken, Token starToken,
+      Token endToken, MessageCode errorCode) {
+    listener?.endInvalidYieldStatement(
+        beginToken, starToken, endToken, errorCode);
+  }
+
+  @override
   void endLabeledStatement(int labelCount) {
     listener?.endLabeledStatement(labelCount);
   }
@@ -859,10 +874,17 @@ class ForwardingListener implements Listener {
   }
 
   @override
-  void endMixinFields(Token staticToken, Token covariantToken, Token lateToken,
-      Token varFinalOrConst, int count, Token beginToken, Token endToken) {
-    listener?.endMixinFields(staticToken, covariantToken, lateToken,
-        varFinalOrConst, count, beginToken, endToken);
+  void endMixinFields(
+      Token externalToken,
+      Token staticToken,
+      Token covariantToken,
+      Token lateToken,
+      Token varFinalOrConst,
+      int count,
+      Token beginToken,
+      Token endToken) {
+    listener?.endMixinFields(externalToken, staticToken, covariantToken,
+        lateToken, varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -962,6 +984,7 @@ class ForwardingListener implements Listener {
 
   @override
   void endTopLevelFields(
+      Token externalToken,
       Token staticToken,
       Token covariantToken,
       Token lateToken,
@@ -969,8 +992,8 @@ class ForwardingListener implements Listener {
       int count,
       Token beginToken,
       Token endToken) {
-    listener?.endTopLevelFields(staticToken, covariantToken, lateToken,
-        varFinalOrConst, count, beginToken, endToken);
+    listener?.endTopLevelFields(externalToken, staticToken, covariantToken,
+        lateToken, varFinalOrConst, count, beginToken, endToken);
   }
 
   @override
@@ -1027,6 +1050,16 @@ class ForwardingListener implements Listener {
   @override
   void endYieldStatement(Token yieldToken, Token starToken, Token endToken) {
     listener?.endYieldStatement(yieldToken, starToken, endToken);
+  }
+
+  @override
+  void beginAsOperatorType(Token operator) {
+    listener?.beginAsOperatorType(operator);
+  }
+
+  @override
+  void endAsOperatorType(Token operator) {
+    listener?.endAsOperatorType(operator);
   }
 
   @override
@@ -1214,8 +1247,9 @@ class ForwardingListener implements Listener {
 
   @override
   void handleIndexedExpression(
-      Token openSquareBracket, Token closeSquareBracket) {
-    listener?.handleIndexedExpression(openSquareBracket, closeSquareBracket);
+      Token question, Token openSquareBracket, Token closeSquareBracket) {
+    listener?.handleIndexedExpression(
+        question, openSquareBracket, closeSquareBracket);
   }
 
   @override
@@ -1265,6 +1299,16 @@ class ForwardingListener implements Listener {
   @override
   void handleInvalidTypeReference(Token token) {
     listener?.handleInvalidTypeReference(token);
+  }
+
+  @override
+  void beginIsOperatorType(Token operator) {
+    listener?.beginIsOperatorType(operator);
+  }
+
+  @override
+  void endIsOperatorType(Token operator) {
+    listener?.endIsOperatorType(operator);
   }
 
   @override
@@ -1491,8 +1535,8 @@ class ForwardingListener implements Listener {
   }
 
   @override
-  void handleStringJuxtaposition(int literalCount) {
-    listener?.handleStringJuxtaposition(literalCount);
+  void handleStringJuxtaposition(Token startToken, int literalCount) {
+    listener?.handleStringJuxtaposition(startToken, literalCount);
   }
 
   @override
@@ -1562,27 +1606,27 @@ class ForwardingListener implements Listener {
   }
 
   @override
+  void handleVoidKeywordWithTypeArguments(Token token) {
+    listener?.handleVoidKeywordWithTypeArguments(token);
+  }
+
+  @override
   void logEvent(String name) {
     listener?.logEvent(name);
   }
 
   @override
-  void reportErrorIfNullableType(Token questionMark) {
-    listener?.reportErrorIfNullableType(questionMark);
-  }
-
-  @override
-  void reportNonNullableModifierError(Token modifierToken) {
-    listener?.reportNonNullableModifierError(modifierToken);
-  }
-
-  @override
-  void reportNonNullAssertExpressionNotEnabled(Token bang) {
-    listener?.reportNonNullAssertExpressionNotEnabled(bang);
-  }
-
-  @override
   void reportVarianceModifierNotEnabled(Token variance) {
     listener?.reportVarianceModifierNotEnabled(variance);
+  }
+}
+
+class NullListener extends ForwardingListener {
+  bool hasErrors = false;
+
+  @override
+  void handleRecoverableError(
+      Message message, Token startToken, Token endToken) {
+    hasErrors = true;
   }
 }

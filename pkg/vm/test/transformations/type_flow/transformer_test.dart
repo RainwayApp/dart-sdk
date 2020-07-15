@@ -18,17 +18,35 @@ import '../../common_test_utils.dart';
 
 final String pkgVmDir = Platform.script.resolve('../../..').toFilePath();
 
-runTestCase(Uri source) async {
-  final target = new TestingVmTarget(new TargetFlags());
-  Component component =
-      await compileTestCaseToKernelProgram(source, target: target);
+runTestCase(
+    Uri source, List<String> experimentalFlags, bool enableNullSafety) async {
+  final target =
+      new TestingVmTarget(new TargetFlags(enableNullSafety: enableNullSafety));
+  Component component = await compileTestCaseToKernelProgram(source,
+      target: target, experimentalFlags: experimentalFlags);
 
   final coreTypes = new CoreTypes(component);
 
   component = transformComponent(target, coreTypes, component,
-      new ConstantPragmaAnnotationParser(coreTypes));
+      matcher: new ConstantPragmaAnnotationParser(coreTypes),
+      treeShakeProtobufs: true);
 
-  final actual = kernelLibraryToString(component.mainMethod.enclosingLibrary);
+  String actual = kernelLibraryToString(component.mainMethod.enclosingLibrary);
+
+  // Tests in /protobuf_handler consist of multiple libraries.
+  // Include libraries with protobuf generated messages into the result.
+  if (source.toString().contains('/protobuf_handler/')) {
+    for (var lib in component.libraries) {
+      if (lib.importUri
+          .toString()
+          .contains('/protobuf_handler/lib/generated/')) {
+        lib.name ??= lib.importUri.pathSegments.last;
+        actual += kernelLibraryToString(lib);
+      }
+    }
+    // Remove library paths.
+    actual = actual.replaceAll(Uri.file(pkgVmDir).toString(), 'file:pkg/vm');
+  }
 
   compareResultWithExpectationsFile(source, actual);
 
@@ -40,12 +58,18 @@ main() {
     final testCasesDir = new Directory(
         pkgVmDir + '/testcases/transformations/type_flow/transformer');
 
-    for (var entry in testCasesDir
-        .listSync(recursive: true, followLinks: false)
-        .reversed) {
-      if (entry.path.endsWith(".dart")) {
-        test(entry.path, () => runTestCase(entry.uri));
+    for (var entry
+        in testCasesDir.listSync(recursive: true, followLinks: false)) {
+      final path = entry.path;
+      if (path.endsWith('.dart') && !path.endsWith('.pb.dart')) {
+        final bool enableNullSafety = path.endsWith('_nnbd_strong.dart');
+        final bool enableNNBD = enableNullSafety || path.endsWith('_nnbd.dart');
+        final List<String> experimentalFlags = [
+          if (enableNNBD) 'non-nullable',
+        ];
+        test(path,
+            () => runTestCase(entry.uri, experimentalFlags, enableNullSafety));
       }
     }
-  });
+  }, timeout: Timeout.none);
 }

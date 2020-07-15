@@ -194,7 +194,6 @@ const char* MethodRecognizer::KindToCString(Kind kind) {
   return "?";
 }
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
 void MethodRecognizer::InitializeState() {
   GrowableArray<Library*> libs(3);
   Libraries(&libs);
@@ -205,11 +204,18 @@ void MethodRecognizer::InitializeState() {
     func = Library::GetFunction(libs, recognized_methods[i].class_name,
                                 recognized_methods[i].function_name);
     if (!func.IsNull()) {
-      CHECK_FINGERPRINT3(func, recognized_methods[i].class_name,
-                         recognized_methods[i].function_name,
-                         recognized_methods[i].enum_name,
-                         recognized_methods[i].fp);
+      ASSERT(func.CheckSourceFingerprint(recognized_methods[i].fp));
       func.set_recognized_kind(kind);
+      switch (kind) {
+#define RECOGNIZE_METHOD(class_name, function_name, enum_name, fp)             \
+  case MethodRecognizer::k##enum_name:                                         \
+    func.reset_unboxed_parameters_and_return();                                \
+    break;
+        ALL_INTRINSICS_LIST(RECOGNIZE_METHOD)
+#undef RECOGNIZE_METHOD
+        default:
+          break;
+      }
     } else if (!FLAG_precompiled_mode) {
       FATAL2("Missing %s::%s\n", recognized_methods[i].class_name,
              recognized_methods[i].function_name);
@@ -219,7 +225,7 @@ void MethodRecognizer::InitializeState() {
 #define SET_FUNCTION_BIT(class_name, function_name, dest, fp, setter, value)   \
   func = Library::GetFunction(libs, #class_name, #function_name);              \
   if (!func.IsNull()) {                                                        \
-    CHECK_FINGERPRINT3(func, class_name, function_name, dest, fp);             \
+    ASSERT(func.CheckSourceFingerprint(fp));                                   \
     func.setter(value);                                                        \
   } else if (!FLAG_precompiled_mode) {                                         \
     OS::PrintErr("Missing %s::%s\n", #class_name, #function_name);             \
@@ -242,22 +248,14 @@ void MethodRecognizer::Libraries(GrowableArray<Library*>* libs) {
   libs->Add(&Library::ZoneHandle(Library::CollectionLibrary()));
   libs->Add(&Library::ZoneHandle(Library::MathLibrary()));
   libs->Add(&Library::ZoneHandle(Library::TypedDataLibrary()));
+  libs->Add(&Library::ZoneHandle(Library::ConvertLibrary()));
   libs->Add(&Library::ZoneHandle(Library::InternalLibrary()));
   libs->Add(&Library::ZoneHandle(Library::DeveloperLibrary()));
   libs->Add(&Library::ZoneHandle(Library::AsyncLibrary()));
   libs->Add(&Library::ZoneHandle(Library::FfiLibrary()));
 }
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
-Token::Kind MethodTokenRecognizer::RecognizeTokenKind(const String& name_) {
-  Thread* thread = Thread::Current();
-  REUSABLE_STRING_HANDLESCOPE(thread);
-  String& name = thread->StringHandle();
-  name = name_.raw();
-  ASSERT(name.IsSymbol());
-  if (Function::IsDynamicInvocationForwarderName(name)) {
-    name = Function::DemangleDynamicInvocationForwarderName(name);
-  }
+static Token::Kind RecognizeTokenKindHelper(const String& name) {
   if (name.raw() == Symbols::Plus().raw()) {
     return Token::kADD;
   } else if (name.raw() == Symbols::Minus().raw()) {
@@ -304,6 +302,18 @@ Token::Kind MethodTokenRecognizer::RecognizeTokenKind(const String& name_) {
   return Token::kILLEGAL;
 }
 
+Token::Kind MethodTokenRecognizer::RecognizeTokenKind(const String& name) {
+  ASSERT(name.IsSymbol());
+  if (Function::IsDynamicInvocationForwarderName(name)) {
+    Thread* thread = Thread::Current();
+    const auto& demangled_name = String::Handle(
+        thread->zone(), Function::DemangleDynamicInvocationForwarderName(name));
+    return RecognizeTokenKindHelper(demangled_name);
+  } else {
+    return RecognizeTokenKindHelper(name);
+  }
+}
+
 #define RECOGNIZE_FACTORY(symbol, class_name, constructor_name, cid, fp)       \
   {Symbols::k##symbol##Id, cid, fp, #symbol ", " #cid},  // NOLINT
 
@@ -348,10 +358,14 @@ intptr_t FactoryRecognizer::GetResultCidOfListFactory(Zone* zone,
     return kDynamicCid;
   }
 
-  if ((owner.Name() == Symbols::List().raw()) &&
-      (function.name() == Symbols::ListFactory().raw())) {
-    ASSERT(argument_count == 1 || argument_count == 2);
-    return (argument_count == 1) ? kGrowableObjectArrayCid : kArrayCid;
+  if (owner.Name() == Symbols::List().raw()) {
+    if (function.name() == Symbols::ListFactory().raw()) {
+      ASSERT(argument_count == 1 || argument_count == 2);
+      return (argument_count == 1) ? kGrowableObjectArrayCid : kArrayCid;
+    } else if (function.name() == Symbols::ListFilledFactory().raw()) {
+      ASSERT(argument_count == 3 || argument_count == 4);
+      return (argument_count == 3) ? kArrayCid : kDynamicCid;
+    }
   }
 
   return ResultCid(function);

@@ -18,6 +18,8 @@ main() {
 @reflectiveTest
 class DeprecatedMemberUseFromSamePackageTest extends DriverResolutionTest {
   test_basicWorkspace() async {
+    configureWorkspace(root: '/workspace');
+
     newFile('/workspace/lib/deprecated_library.dart', content: r'''
 @deprecated
 library deprecated_library;
@@ -33,6 +35,8 @@ f(A a) {}
   }
 
   test_bazelWorkspace() async {
+    configureWorkspace(root: '/workspace');
+
     newFile('/workspace/WORKSPACE');
     newFile('/workspace/project/BUILD');
     newFolder('/workspace/bazel-genfiles');
@@ -123,6 +127,8 @@ f(A a) {
   }
 
   test_gnWorkspace() async {
+    configureWorkspace(root: '/workspace');
+
     newFolder('/workspace/.jiri_root');
     newFile('/workspace/project/pubspec.yaml');
     newFile('/workspace/project/BUILD.gn');
@@ -283,20 +289,6 @@ f(A a) {
     ]);
   }
 
-  test_instanceCreation_defaultConstructor() async {
-    await assertErrorsInCode(r'''
-class A {
-  @deprecated
-  A(int i) {}
-}
-f() {
-  return new A(1);
-}
-''', [
-      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 55, 8),
-    ]);
-  }
-
   test_instanceCreation_namedConstructor() async {
     await assertErrorsInCode(r'''
 class A {
@@ -307,7 +299,21 @@ f() {
   return new A.named(1);
 }
 ''', [
-      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 61, 14),
+      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 65, 7),
+    ]);
+  }
+
+  test_instanceCreation_unnamedConstructor() async {
+    await assertErrorsInCode(r'''
+class A {
+  @deprecated
+  A(int i) {}
+}
+f() {
+  return new A(1);
+}
+''', [
+      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 59, 1),
     ]);
   }
 
@@ -353,6 +359,8 @@ f(A a, A b) {
   }
 
   test_packageBuildWorkspace() async {
+    configureWorkspace(root: '/workspace');
+
     newFolder('/workspace/.dart_tool/build/generated/project/lib');
     newFileWithBytes('/workspace/pubspec.yaml', 'name: project'.codeUnits);
     newFileWithBytes('/workspace/.packages', 'project:lib/'.codeUnits);
@@ -449,20 +457,6 @@ f(A a) {
     ]);
   }
 
-  test_superConstructor_defaultConstructor() async {
-    await assertErrorsInCode(r'''
-class A {
-  @deprecated
-  A() {}
-}
-class B extends A {
-  B() : super() {}
-}
-''', [
-      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 63, 7),
-    ]);
-  }
-
   test_superConstructor_namedConstructor() async {
     await assertErrorsInCode(r'''
 class A {
@@ -474,6 +468,20 @@ class B extends A {
 }
 ''', [
       error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 69, 13),
+    ]);
+  }
+
+  test_superConstructor_unnamedConstructor() async {
+    await assertErrorsInCode(r'''
+class A {
+  @deprecated
+  A() {}
+}
+class B extends A {
+  B() : super() {}
+}
+''', [
+      error(HintCode.DEPRECATED_MEMBER_USE_FROM_SAME_PACKAGE, 63, 7),
     ]);
   }
 }

@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:smith/smith.dart';
+import 'package:test_runner/src/test_configurations.dart';
+import 'package:path/path.dart' as path;
 
 import 'configuration.dart';
 import 'path.dart';
@@ -25,7 +27,7 @@ const _defaultTestSelectors = [
   'service',
   'kernel',
   'observatory_ui',
-  'ffi'
+  'ffi_2'
 ];
 
 /// Specifies a single command line option.
@@ -91,26 +93,27 @@ enum _OptionValueType { bool, int, string }
 class OptionsParser {
   static final List<_Option> _options = [
     _Option('mode', 'Mode in which to run the tests.',
-        abbr: 'm', values: ['all']..addAll(Mode.names)),
-    _Option('sanitizer', 'Sanitizer in which to run the tests.',
-        defaultsTo: Sanitizer.none.name,
-        values: ['all']..addAll(Sanitizer.names)),
+        abbr: 'm', values: ['all', ...Mode.names]),
     _Option(
         'compiler',
         '''How the Dart code should be compiled or statically processed.
+none:                 Do not compile the Dart code.
+dart2js:              Compile to JavaScript using dart2js.
+dart2analyzer:        Perform static analysis on Dart code using the analyzer.
+compare_analyzer_cfe: Compare analyzer and common front end representations.
+dartdevc:             Compile to JavaScript using dart2js.
+dartdevk:             Compile to JavaScript using dartdevk.
+app_jitk:             Compile the Dart code into Kernel and then into an app
+                      snapshot.
+dartk:                Compile the Dart code into Kernel before running test.
+dartkb:               Compile the Dart code into Kernel with bytecode before
+                      running test.
+dartkp:               Compile the Dart code into Kernel and then Kernel into
+                      AOT snapshot before running the test.
+spec_parser:          Parse Dart code using the specification parser.
 
-none:          Do not compile the Dart code.
-precompiler:   Compile into AOT snapshot before running the test.
-dart2js:       Compile to JavaScript using dart2js.
-dart2analyzer: Perform static analysis on Dart code using the analyzer.
-compareAnalyzerCfe: Compare analyzer and common front end representations.
-app_jit:       Compile the Dart code into an app snapshot.
-app_jitk:      Compile the Dart code into Kernel and then into an app snapshot.
-dartk:         Compile the Dart code into Kernel before running test.
-dartkb:        Compile the Dart code into Kernel with bytecode before running test.
-dartkp:        Compile the Dart code into Kernel and then Kernel into AOT
-               snapshot before running the test.
-spec_parser:   Parse Dart code using the specification parser.''',
+fasta:                Compile using CFE for errors, but do not run.
+''',
         abbr: 'c',
         values: Compiler.names),
     _Option(
@@ -147,7 +150,7 @@ ia32, x64
 arm, armv6, arm64,
 simarm, simarmv6, simarm64, arm_x64''',
         abbr: 'a',
-        values: ['all']..addAll(Architecture.names),
+        values: ['all', ...Architecture.names],
         defaultsTo: Architecture.x64.name,
         hide: true),
     _Option('system', 'The operating system to run tests on.',
@@ -155,6 +158,8 @@ simarm, simarmv6, simarm64, arm_x64''',
         values: System.names,
         defaultsTo: Platform.operatingSystem,
         hide: true),
+    _Option('sanitizer', 'Sanitizer in which to run the tests.',
+        defaultsTo: Sanitizer.none.name, values: ['all', ...Sanitizer.names]),
     _Option(
         'named_configuration',
         '''The named test configuration that supplies the values for all
@@ -187,6 +192,8 @@ test options, specifying how tests should be run.''',
     _Option.bool('use_elf',
         'Directly generate an ELF shared libraries for precompilation.',
         hide: true),
+    _Option.bool('use_qemu', 'Use qemu to test arm32 on x64 host machines.',
+        hide: true),
     _Option.bool('keep_generated_files', 'Keep any generated files.',
         abbr: 'k'),
     _Option.int('timeout', 'Timeout in seconds.', abbr: 't'),
@@ -195,7 +202,7 @@ test options, specifying how tests should be run.''',
         '''Progress indication mode.
 
 Allowed values are:
-compact, color, line, verbose, silent, status, buildbot, diff''',
+compact, color, line, verbose, silent, status, buildbot''',
         abbr: 'p',
         values: Progress.names,
         defaultsTo: Progress.compact.name,
@@ -203,6 +210,8 @@ compact, color, line, verbose, silent, status, buildbot, diff''',
     _Option('step_name', 'Step name for use by -pbuildbot.', hide: true),
     _Option.bool('report',
         'Print a summary report of the number of tests, by expectation.',
+        hide: true),
+    _Option.bool('report_failures', 'Print a summary of the tests that failed.',
         hide: true),
     _Option.int('tasks', 'The number of parallel tasks to run.',
         abbr: 'j', defaultsTo: Platform.numberOfProcessors),
@@ -344,7 +353,7 @@ compiler.''',
 
   /// For printing out reproducing command lines, we don't want to add these
   /// options.
-  static final _blacklistedOptions = {
+  static final _denylistedOptions = {
     'build_directory',
     'chrome',
     'clean_exit',
@@ -359,6 +368,7 @@ compiler.''',
     'progress',
     'repeat',
     'report',
+    'report_failures',
     'safari',
     'shard',
     'shards',
@@ -450,12 +460,18 @@ compiler.''',
         // option. Use it as a test selector pattern.
         var patterns = configuration.putIfAbsent("selectors", () => <String>[]);
 
-        // Allow the selector to include "tests" at the beginning so that users
-        // can tab complete on the command line. Likewise, if they tab complete
-        // to a single test, ignore the ".dart".
-        if (arg.startsWith("tests/") || arg.startsWith("tests\\")) {
-          arg = arg.substring(6);
+        // Allow passing in the full relative path to a test or directory and
+        // infer the selector from it. This lets users use tab completion on
+        // the command line.
+        for (var suiteDirectory in testSuiteDirectories) {
+          var path = suiteDirectory.toString();
+          if (arg.startsWith("$path/") || arg.startsWith("$path\\")) {
+            arg = arg.substring(path.lastIndexOf("/") + 1);
+            break;
+          }
         }
+
+        // If they tab complete to a single test, ignore the ".dart".
         if (arg.endsWith(".dart")) arg = arg.substring(0, arg.length - 5);
 
         patterns.add(arg);
@@ -569,7 +585,7 @@ compiler.''',
     for (var option in _options) {
       var name = option.name;
       if (!data.containsKey(name) ||
-          _blacklistedOptions.contains(name) ||
+          _denylistedOptions.contains(name) ||
           (usingNamedConfiguration &&
               _namedConfigurationOptions.contains(name))) {
         continue;
@@ -599,9 +615,8 @@ compiler.''',
     // Only one value in the configuration map is mutable:
     if (selectors.containsKey('observatory_ui')) {
       if (selectors.length == 1) {
-        configuration['packages'] = Repository.uri
-            .resolve('runtime/observatory/.packages')
-            .toFilePath();
+        configuration['packages'] =
+            Repository.uri.resolve('.packages').toFilePath();
       } else {
         // Make a new configuration whose selectors map only contains
         // observatory_ui, and remove observatory_ui from the original
@@ -614,9 +629,8 @@ compiler.''',
         selectors.remove('observatory_ui');
 
         // Set the packages flag.
-        observatoryConfiguration['packages'] = Repository.uri
-            .resolve('runtime/observatory/.packages')
-            .toFilePath();
+        observatoryConfiguration['packages'] =
+            Repository.uri.resolve('.packages').toFilePath();
 
         return [
           ..._expandConfigurations(configuration, selectors),
@@ -649,7 +663,11 @@ compiler.''',
     var dart2jsOptions = listOption("dart2js_options");
     var vmOptions = listOption("vm_options");
     var sharedOptions = listOption("shared_options");
-    var experiments = listOption("enable-experiment");
+
+    var experimentNames = data["enable-experiment"] as String;
+    var experiments = [
+      if (experimentNames != null) ...experimentNames.split(",")
+    ];
 
     // JSON reporting implies listing and reporting.
     if (data['report_in_json'] as bool) {
@@ -665,16 +683,14 @@ compiler.''',
     }
 
     var runtimeNames = data["runtime"] as String;
-    var runtimes = <Runtime>[];
-    if (runtimeNames != null) {
-      runtimes.addAll(runtimeNames.split(",").map(Runtime.find));
-    }
+    var runtimes = [
+      if (runtimeNames != null) ...runtimeNames.split(",").map(Runtime.find)
+    ];
 
     var compilerNames = data["compiler"] as String;
-    var compilers = <Compiler>[];
-    if (compilerNames != null) {
-      compilers.addAll(compilerNames.split(",").map(Compiler.find));
-    }
+    var compilers = [
+      if (compilerNames != null) ...compilerNames.split(",").map(Compiler.find)
+    ];
 
     // Pick default compilers or runtimes if only one or the other is provided.
     if (runtimes.isEmpty) {
@@ -711,6 +727,7 @@ compiler.''',
           silentFailures: data["silent_failures"] as bool,
           printTiming: data["time"] as bool,
           printReport: data["report"] as bool,
+          reportFailures: data["report_failures"] as bool,
           reportInJson: data["report_in_json"] as bool,
           resetBrowser: data["reset_browser_configuration"] as bool,
           skipCompilation: data["skip_compilation"] as bool,
@@ -736,7 +753,6 @@ compiler.''',
           localIP: data["local_ip"] as String,
           sharedOptions: sharedOptions,
           packages: data["packages"] as String,
-          packageRoot: data["package_root"] as String,
           suiteDirectory: data["suite_dir"] as String,
           outputDirectory: data["output_directory"] as String,
           reproducingArguments:
@@ -807,7 +823,6 @@ compiler.''',
                   useAnalyzerCfe: data["use_cfe"] as bool,
                   useAnalyzerFastaParser:
                       data["analyzer_use_fasta_parser"] as bool,
-                  useBlobs: data["use_blobs"] as bool,
                   useElf: data["use_elf"] as bool,
                   useSdk: data["use_sdk"] as bool,
                   useHotReload: data["hot_reload"] as bool,
@@ -819,7 +834,8 @@ compiler.''',
                   dart2jsOptions: dart2jsOptions,
                   experiments: experiments,
                   babel: data['babel'] as String,
-                  builderTag: data["builder_tag"] as String);
+                  builderTag: data["builder_tag"] as String,
+                  useQemu: data["use_qemu"] as bool);
               addConfiguration(configuration);
             }
           }
@@ -984,3 +1000,25 @@ class OptionParseException implements Exception {
 void _fail(String message) {
   throw OptionParseException(message);
 }
+
+// Returns a map of environment variables to be used with sanitizers.
+final Map<String, String> sanitizerEnvironmentVariables = (() {
+  final environment = <String, String>{};
+  final testMatrixFile = "tools/bots/test_matrix.json";
+  final config = json.decode(File(testMatrixFile).readAsStringSync());
+  config['sanitizer_options'].forEach((String key, dynamic value) {
+    environment[key] = value as String;
+  });
+  var symbolizerPath =
+      config['sanitizer_symbolizer'][Platform.operatingSystem] as String;
+  if (symbolizerPath != null) {
+    symbolizerPath = path.join(Directory.current.path, symbolizerPath);
+    environment['ASAN_SYMBOLIZER_PATH'] = symbolizerPath;
+    environment['LSAN_SYMBOLIZER_PATH'] = symbolizerPath;
+    environment['MSAN_SYMBOLIZER_PATH'] = symbolizerPath;
+    environment['TSAN_SYMBOLIZER_PATH'] = symbolizerPath;
+    environment['UBSAN_SYMBOLIZER_PATH'] = symbolizerPath;
+  }
+
+  return environment;
+})();

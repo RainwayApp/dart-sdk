@@ -1,4 +1,4 @@
-library;
+library /*isNonNullableByDefault*/;
 //
 // Problems in library:
 //
@@ -6,7 +6,7 @@ library;
 //  - 'Class' is from 'pkg/front_end/testcases/nnbd/nullable_access.dart'.
 // Try accessing using ?. instead.
 //   throws(() => c.nonNullableField);
-//                  ^
+//                  ^^^^^^^^^^^^^^^^
 //
 import self as self;
 import "dart:core" as core;
@@ -24,7 +24,7 @@ class Class extends core::Object {
   method nonNullableMethod() → self::A
     return this.{self::Class::nonNullableField};
 }
-class A extends core::Object {
+class A extends core::Object /*hasConstConstructor*/  {
   const constructor •() → self::A
     : super core::Object::•()
     ;
@@ -37,9 +37,9 @@ static method main() → dynamic {
  - 'Class' is from 'pkg/front_end/testcases/nnbd/nullable_access.dart'.
 Try accessing using ?. instead.
   throws(() => c.nonNullableField);
-                 ^" in c.{self::Class::nonNullableField});
-  self::expect(null, let final self::Class? #t2 = c in #t2.{core::Object::==}(null) ?{self::A} null : #t2{self::Class}.{self::Class::nonNullableField});
-  self::expect(null, let final self::Class? #t3 = c in #t3.{core::Object::==}(null) ?{self::A} null : #t3{self::Class}.{self::Class::nonNullableField}.{self::A::nonNullableProperty});
+                 ^^^^^^^^^^^^^^^^" in c.{self::Class::nonNullableField});
+  self::expect(null, let final self::Class? #t2 = c in #t2.{core::Object::==}(null) ?{self::A?} null : #t2{self::Class}.{self::Class::nonNullableField});
+  self::expect(null, let final self::Class? #t3 = c in #t3.{core::Object::==}(null) ?{self::A?} null : #t3{self::Class}.{self::Class::nonNullableField}.{self::A::nonNullableProperty});
 }
 static method expect(dynamic expected, dynamic actual) → dynamic {
   if(!expected.{core::Object::==}(actual))
@@ -49,7 +49,7 @@ static method throws(() → void f) → dynamic {
   try {
     f.call();
   }
-  on dynamic catch(final dynamic e) {
+  on core::Object catch(final core::Object e) {
     return;
   }
   throw "Expected throws.";

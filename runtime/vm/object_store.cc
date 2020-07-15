@@ -10,17 +10,103 @@
 #include "vm/object.h"
 #include "vm/raw_object.h"
 #include "vm/resolver.h"
+#include "vm/stub_code.h"
 #include "vm/symbols.h"
 #include "vm/visitor.h"
 
 namespace dart {
 
-ObjectStore::ObjectStore() {
+IsolateObjectStore::IsolateObjectStore(ObjectStore* object_store)
+    : object_store_(object_store) {}
+
+IsolateObjectStore::~IsolateObjectStore() {}
+
+void IsolateObjectStore::VisitObjectPointers(ObjectPointerVisitor* visitor) {
+  ASSERT(visitor != NULL);
+  visitor->set_gc_root_type("isolate_object store");
+  visitor->VisitPointers(from(), to());
+  visitor->clear_gc_root_type();
+}
+
+void IsolateObjectStore::Init() {
 #define INIT_FIELD(Type, name) name##_ = Type::null();
-  OBJECT_STORE_FIELD_LIST(INIT_FIELD, INIT_FIELD)
+  ISOLATE_OBJECT_STORE_FIELD_LIST(INIT_FIELD, INIT_FIELD)
 #undef INIT_FIELD
 
-  for (RawObject** current = from(); current <= to(); current++) {
+  for (ObjectPtr* current = from(); current <= to(); current++) {
+    ASSERT(*current == Object::null());
+  }
+}
+
+#ifndef PRODUCT
+void IsolateObjectStore::PrintToJSONObject(JSONObject* jsobj) {
+  jsobj->AddProperty("type", "_IsolateObjectStore");
+
+  {
+    JSONObject fields(jsobj, "fields");
+    Object& value = Object::Handle();
+#define PRINT_OBJECT_STORE_FIELD(type, name)                                   \
+  value = name##_;                                                             \
+  fields.AddProperty(#name "_", value);
+    ISOLATE_OBJECT_STORE_FIELD_LIST(PRINT_OBJECT_STORE_FIELD,
+                                    PRINT_OBJECT_STORE_FIELD);
+#undef PRINT_OBJECT_STORE_FIELD
+  }
+}
+#endif  // !PRODUCT
+
+static UnhandledExceptionPtr CreatePreallocatedUnandledException(
+    Zone* zone,
+    const Object& out_of_memory) {
+  // Allocate pre-allocated unhandled exception object initialized with the
+  // pre-allocated OutOfMemoryError.
+  const UnhandledException& unhandled_exception =
+      UnhandledException::Handle(UnhandledException::New(
+          Instance::Cast(out_of_memory), StackTrace::Handle(zone)));
+  return unhandled_exception.raw();
+}
+
+static StackTracePtr CreatePreallocatedStackTrace(Zone* zone) {
+  const Array& code_array = Array::Handle(
+      zone, Array::New(StackTrace::kPreallocatedStackdepth, Heap::kOld));
+  const Array& pc_offset_array = Array::Handle(
+      zone, Array::New(StackTrace::kPreallocatedStackdepth, Heap::kOld));
+  const StackTrace& stack_trace =
+      StackTrace::Handle(zone, StackTrace::New(code_array, pc_offset_array));
+  // Expansion of inlined functions requires additional memory at run time,
+  // avoid it.
+  stack_trace.set_expand_inlined(false);
+  return stack_trace.raw();
+}
+
+ErrorPtr IsolateObjectStore::PreallocateObjects() {
+  Thread* thread = Thread::Current();
+  Isolate* isolate = thread->isolate();
+  Zone* zone = thread->zone();
+  ASSERT(isolate != NULL && isolate->isolate_object_store() == this);
+  ASSERT(preallocated_stack_trace() == StackTrace::null());
+  resume_capabilities_ = GrowableObjectArray::New();
+  exit_listeners_ = GrowableObjectArray::New();
+  error_listeners_ = GrowableObjectArray::New();
+
+  // Allocate pre-allocated unhandled exception object initialized with the
+  // pre-allocated OutOfMemoryError.
+  const Object& out_of_memory =
+      Object::Handle(zone, object_store_->out_of_memory());
+  set_preallocated_unhandled_exception(UnhandledException::Handle(
+      CreatePreallocatedUnandledException(zone, out_of_memory)));
+  set_preallocated_stack_trace(
+      StackTrace::Handle(CreatePreallocatedStackTrace(zone)));
+
+  return Error::null();
+}
+
+ObjectStore::ObjectStore() {
+#define INIT_FIELD(Type, name) name##_ = Type::null();
+  OBJECT_STORE_FIELD_LIST(INIT_FIELD, INIT_FIELD, INIT_FIELD, INIT_FIELD)
+#undef INIT_FIELD
+
+  for (ObjectPtr* current = from(); current <= to(); current++) {
     ASSERT(*current == Object::null());
   }
 }
@@ -34,17 +120,14 @@ void ObjectStore::VisitObjectPointers(ObjectPointerVisitor* visitor) {
   visitor->clear_gc_root_type();
 }
 
-void ObjectStore::Init(Isolate* isolate) {
-  ASSERT(isolate->object_store() == NULL);
-  ObjectStore* store = new ObjectStore();
-  isolate->set_object_store(store);
+void ObjectStore::InitStubs() {
+#define DO(member, name) set_##member(StubCode::name());
+  OBJECT_STORE_STUB_CODE_LIST(DO)
+#undef DO
 }
 
 #ifndef PRODUCT
 void ObjectStore::PrintToJSONObject(JSONObject* jsobj) {
-  if (!FLAG_support_service) {
-    return;
-  }
   jsobj->AddProperty("type", "_ObjectStore");
 
   {
@@ -53,37 +136,38 @@ void ObjectStore::PrintToJSONObject(JSONObject* jsobj) {
 #define PRINT_OBJECT_STORE_FIELD(type, name)                                   \
   value = name##_;                                                             \
   fields.AddProperty(#name "_", value);
-    OBJECT_STORE_FIELD_LIST(PRINT_OBJECT_STORE_FIELD, PRINT_OBJECT_STORE_FIELD);
+    OBJECT_STORE_FIELD_LIST(PRINT_OBJECT_STORE_FIELD, PRINT_OBJECT_STORE_FIELD,
+                            PRINT_OBJECT_STORE_FIELD, PRINT_OBJECT_STORE_FIELD);
 #undef PRINT_OBJECT_STORE_FIELD
   }
 }
 #endif  // !PRODUCT
 
-static RawInstance* AllocateObjectByClassName(const Library& library,
-                                              const String& class_name) {
+static InstancePtr AllocateObjectByClassName(const Library& library,
+                                             const String& class_name) {
   const Class& cls = Class::Handle(library.LookupClassAllowPrivate(class_name));
   ASSERT(!cls.IsNull());
   return Instance::New(cls);
 }
 
-RawError* ObjectStore::PreallocateObjects() {
+ErrorPtr ObjectStore::PreallocateObjects() {
   Thread* thread = Thread::Current();
+  IsolateGroup* isolate_group = thread->isolate_group();
   Isolate* isolate = thread->isolate();
-  Zone* zone = thread->zone();
-  ASSERT(isolate != NULL && isolate->object_store() == this);
+  // Either we are the object store on isolate group, or isolate group has no
+  // object store and we are the object store on the isolate.
+  ASSERT(isolate_group != NULL && (isolate_group->object_store() == this ||
+                                   (isolate_group->object_store() == nullptr &&
+                                    isolate->object_store() == this)));
+
   if (this->stack_overflow() != Instance::null()) {
     ASSERT(this->out_of_memory() != Instance::null());
-    ASSERT(this->preallocated_stack_trace() != StackTrace::null());
     return Error::null();
   }
   ASSERT(this->stack_overflow() == Instance::null());
   ASSERT(this->out_of_memory() == Instance::null());
-  ASSERT(this->preallocated_stack_trace() == StackTrace::null());
 
   this->closure_functions_ = GrowableObjectArray::New();
-  this->resume_capabilities_ = GrowableObjectArray::New();
-  this->exit_listeners_ = GrowableObjectArray::New();
-  this->error_listeners_ = GrowableObjectArray::New();
 
   Object& result = Object::Handle();
   const Library& library = Library::Handle(Library::CoreLibrary());
@@ -100,28 +184,10 @@ RawError* ObjectStore::PreallocateObjects() {
   }
   set_out_of_memory(Instance::Cast(result));
 
-  // Allocate pre-allocated unhandled exception object initialized with the
-  // pre-allocated OutOfMemoryError.
-  const UnhandledException& unhandled_exception =
-      UnhandledException::Handle(UnhandledException::New(
-          Instance::Cast(result), StackTrace::Handle(zone)));
-  set_preallocated_unhandled_exception(unhandled_exception);
-
-  const Array& code_array = Array::Handle(
-      zone, Array::New(StackTrace::kPreallocatedStackdepth, Heap::kOld));
-  const Array& pc_offset_array = Array::Handle(
-      zone, Array::New(StackTrace::kPreallocatedStackdepth, Heap::kOld));
-  const StackTrace& stack_trace =
-      StackTrace::Handle(zone, StackTrace::New(code_array, pc_offset_array));
-  // Expansion of inlined functions requires additional memory at run time,
-  // avoid it.
-  stack_trace.set_expand_inlined(false);
-  set_preallocated_stack_trace(stack_trace);
-
   return Error::null();
 }
 
-RawFunction* ObjectStore::PrivateObjectLookup(const String& name) {
+FunctionPtr ObjectStore::PrivateObjectLookup(const String& name) {
   const Library& core_lib = Library::Handle(core_library());
   const String& mangled = String::ZoneHandle(core_lib.PrivateName(name));
   const Class& cls = Class::Handle(object_class());
@@ -266,6 +332,62 @@ void ObjectStore::InitKnownObjects() {
       Function::CreateDynamicInvocationForwarderName(Symbols::Star());
   Resolver::ResolveDynamicAnyArgs(zone, smi_class, function_name);
 #endif
+}
+
+void ObjectStore::LazyInitCoreTypes() {
+  if (non_nullable_list_rare_type_ == Type::null()) {
+    ASSERT(non_nullable_map_rare_type_ == Type::null());
+    Thread* thread = Thread::Current();
+    Zone* zone = thread->zone();
+    const Library& core_lib = Library::Handle(zone, Library::CoreLibrary());
+    Class& cls = Class::Handle(zone, core_lib.LookupClass(Symbols::List()));
+    ASSERT(!cls.IsNull());
+    Type& type = Type::Handle(zone);
+    type ^= cls.RareType();
+    set_non_nullable_list_rare_type(type);
+    cls = core_lib.LookupClass(Symbols::Map());
+    ASSERT(!cls.IsNull());
+    type ^= cls.RareType();
+    set_non_nullable_map_rare_type(type);
+  }
+}
+
+void ObjectStore::LazyInitFutureTypes() {
+  if (non_nullable_future_rare_type_ == Type::null()) {
+    ASSERT(non_nullable_future_never_type_ == Type::null() &&
+           nullable_future_null_type_ == Type::null());
+    Thread* thread = Thread::Current();
+    Zone* zone = thread->zone();
+    Class& cls = Class::Handle(zone, future_class());
+    if (cls.IsNull()) {
+      const Library& async_lib = Library::Handle(zone, async_library());
+      ASSERT(!async_lib.IsNull());
+      cls = async_lib.LookupClass(Symbols::Future());
+      ASSERT(!cls.IsNull());
+    }
+    TypeArguments& type_args = TypeArguments::Handle(zone);
+    Type& type = Type::Handle(zone);
+    type = never_type();
+    ASSERT(!type.IsNull());
+    type_args = TypeArguments::New(1);
+    type_args.SetTypeAt(0, type);
+    type = Type::New(cls, type_args, TokenPosition::kNoSource,
+                     Nullability::kNonNullable);
+    type.SetIsFinalized();
+    type ^= type.Canonicalize();
+    set_non_nullable_future_never_type(type);
+    type = null_type();
+    ASSERT(!type.IsNull());
+    type_args = TypeArguments::New(1);
+    type_args.SetTypeAt(0, type);
+    type = Type::New(cls, type_args, TokenPosition::kNoSource,
+                     Nullability::kNullable);
+    type.SetIsFinalized();
+    type ^= type.Canonicalize();
+    set_nullable_future_null_type(type);
+    type ^= cls.RareType();
+    set_non_nullable_future_rare_type(type);
+  }
 }
 
 }  // namespace dart

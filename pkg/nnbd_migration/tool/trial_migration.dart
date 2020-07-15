@@ -19,7 +19,6 @@ import 'package:args/args.dart';
 import 'package:nnbd_migration/nnbd_migration.dart';
 import 'package:path/path.dart' as path;
 
-import 'src/multi_future_tracker.dart';
 import 'src/package.dart';
 
 main(List<String> args) async {
@@ -28,7 +27,6 @@ main(List<String> args) async {
   Sdk sdk = Sdk(parsedArgs['sdk'] as String);
 
   warnOnNoAssertions();
-  warnOnNoSdkNnbd(sdk);
 
   Playground playground =
       Playground(defaultPlaygroundPath, parsedArgs['clean'] as bool);
@@ -40,17 +38,10 @@ main(List<String> args) async {
       ManualPackage(package),
   ];
 
-  // Limit the number of simultaneous git/pub commands.
-  MultiFutureTracker futureTracker =
-      MultiFutureTracker(Platform.numberOfProcessors);
-
-  for (String package in parsedArgs['git_packages'] as Iterable<String>) {
-    await futureTracker.addFutureFromClosure(() async => packages.add(
-        await GitPackage.gitPackageFactory(
-            package, playground, parsedArgs['update'] as bool)));
-  }
-
-  await futureTracker.wait();
+  var packageNames = parsedArgs['git_packages'] as Iterable<String>;
+  await Future.wait(packageNames.map((n) async => packages.add(
+      await GitPackage.gitPackageFactory(
+          n, playground, parsedArgs['update'] as bool))));
 
   String categoryOfInterest =
       parsedArgs.rest.isEmpty ? null : parsedArgs.rest.single;
@@ -58,12 +49,13 @@ main(List<String> args) async {
   var listener = _Listener(categoryOfInterest,
       printExceptionNodeOnly: parsedArgs['exception_node_only'] as bool);
   assert(listener.numExceptions == 0);
+  var overallStartTime = DateTime.now();
   for (var package in packages) {
     print('Migrating $package');
+    var startTime = DateTime.now();
     listener.currentPackage = package.name;
-    var testUri = thisSdkUri.resolve(package.packagePath);
     var contextCollection = AnalysisContextCollectionImpl(
-        includedPaths: [testUri.toFilePath()], sdkPath: sdk.sdkPath);
+        includedPaths: package.migrationPaths, sdkPath: sdk.sdkPath);
 
     var files = <String>{};
     var previousExceptionCount = listener.numExceptions;
@@ -71,23 +63,26 @@ main(List<String> args) async {
       var localFiles =
           context.contextRoot.analyzedFiles().where((s) => s.endsWith('.dart'));
       files.addAll(localFiles);
-      var migration = NullabilityMigration(listener, permissive: true);
+      var session = context.currentSession;
+      LineInfo getLineInfo(String path) => session.getFile(path).lineInfo;
+      var migration =
+          NullabilityMigration(listener, getLineInfo, permissive: true);
       for (var file in localFiles) {
-        var resolvedUnit = await context.currentSession.getResolvedUnit(file);
+        var resolvedUnit = await session.getResolvedUnit(file);
         if (!resolvedUnit.errors.any((e) => e.severity == Severity.error)) {
           migration.prepareInput(resolvedUnit);
         } else {
-          print('Skipping $file, it has errors.');
+          print('  Skipping $file; it has errors.');
         }
       }
       for (var file in localFiles) {
-        var resolvedUnit = await context.currentSession.getResolvedUnit(file);
+        var resolvedUnit = await session.getResolvedUnit(file);
         if (!resolvedUnit.errors.any((e) => e.severity == Severity.error)) {
           migration.processInput(resolvedUnit);
         }
       }
       for (var file in localFiles) {
-        var resolvedUnit = await context.currentSession.getResolvedUnit(file);
+        var resolvedUnit = await session.getResolvedUnit(file);
         if (!resolvedUnit.errors.any((e) => e.severity == Severity.error)) {
           migration.finalizeInput(resolvedUnit);
         }
@@ -95,29 +90,39 @@ main(List<String> args) async {
       migration.finish();
     }
 
+    var endTime = DateTime.now();
+    print('  Migrated $package in ${endTime.difference(startTime).inSeconds} '
+        'seconds');
     print('  ${files.length} files found');
     var exceptionCount = listener.numExceptions - previousExceptionCount;
     print('  $exceptionCount exceptions in this package');
   }
+
+  var overallDuration = DateTime.now().difference(overallStartTime);
+  print('${packages.length} packages migrated in ${overallDuration.inSeconds} '
+      'seconds');
   print('${listener.numTypesMadeNullable} types made nullable');
   print('${listener.numNullChecksAdded} null checks added');
+  print('${listener.numVariablesMarkedLate} variables marked late');
+  print('${listener.numInsertedCasts} casts inserted');
+  print('${listener.numInsertedParenthesis} parenthesis groupings inserted');
   print('${listener.numMetaImportsAdded} meta imports added');
   print('${listener.numRequiredAnnotationsAdded} required annotations added');
   print('${listener.numDeadCodeSegmentsFound} dead code segments found');
+  print('and ${listener.numOtherEdits} other edits not categorized');
   print('${listener.numExceptions} exceptions in '
       '${listener.groupedExceptions.length} categories');
+
+  var sortedExceptions = [
+    for (var entry in listener.groupedExceptions.entries)
+      ExceptionCategory(entry.key, entry.value)
+  ]..sort((category1, category2) => category2.count.compareTo(category1.count));
+  var exceptionalPackages =
+      sortedExceptions.expand((category) => category.packageNames).toSet();
+  print('Packages with exceptions: $exceptionalPackages');
   print('Exception categories:');
-  var sortedExceptions = listener.groupedExceptions.entries
-      .map((entry) => MapEntry(
-          entry.key,
-          entry.value.entries.toList()
-            ..sort((e1, e2) => e2.value.compareTo(e1.value))))
-      .toList()
-        ..sort((e1, e2) => e2.value.length.compareTo(e1.value.length));
-  for (var entry in sortedExceptions) {
-    final packages =
-        entry.value.map((entry) => "${entry.key} x${entry.value}").join(', ');
-    print('  ${entry.key} ($packages)');
+  for (var category in sortedExceptions) {
+    print('  $category');
   }
 
   if (categoryOfInterest == null) {
@@ -212,15 +217,23 @@ void warnOnNoAssertions() {
   printWarning("You didn't --enable-asserts!");
 }
 
-void warnOnNoSdkNnbd(Sdk sdk) {
-  try {
-    if (sdk.isNnbdSdk) return;
-  } catch (e) {
-    printWarning('Unable to determine whether this SDK supports NNBD');
-    return;
-  }
-  printWarning(
-      'SDK at ${sdk.sdkPath} not compiled with --nnbd, use --sdk option');
+class ExceptionCategory {
+  final String topOfStack;
+  final List<MapEntry<String, int>> exceptionCountPerPackage;
+
+  ExceptionCategory(this.topOfStack, Map<String, int> exceptions)
+      : this.exceptionCountPerPackage = exceptions.entries.toList()
+          ..sort((e1, e2) => e2.value.compareTo(e1.value));
+
+  int get count => exceptionCountPerPackage.length;
+
+  List<String> get packageNames =>
+      [for (var entry in exceptionCountPerPackage) entry.key];
+
+  Iterable<String> get packageNamesAndCounts =>
+      exceptionCountPerPackage.map((entry) => '${entry.key} x${entry.value}');
+
+  String toString() => '$topOfStack (${packageNamesAndCounts.join(', ')})';
 }
 
 class _Listener implements NullabilityMigrationListener {
@@ -240,6 +253,12 @@ class _Listener implements NullabilityMigrationListener {
 
   int numTypesMadeNullable = 0;
 
+  int numVariablesMarkedLate = 0;
+
+  int numInsertedCasts = 0;
+
+  int numInsertedParenthesis = 0;
+
   int numNullChecksAdded = 0;
 
   int numMetaImportsAdded = 0;
@@ -248,36 +267,55 @@ class _Listener implements NullabilityMigrationListener {
 
   int numDeadCodeSegmentsFound = 0;
 
+  int numOtherEdits = 0;
+
   String currentPackage;
 
   _Listener(this.categoryOfInterest, {this.printExceptionNodeOnly = false});
 
   @override
-  void addEdit(SingleNullabilityFix fix, SourceEdit edit) {
+  void addEdit(Source source, SourceEdit edit) {
+    if (edit.replacement == '') {
+      return;
+    }
+
+    if (edit.replacement.contains('!')) {
+      ++numNullChecksAdded;
+    }
+
+    if (edit.replacement.contains('(')) {
+      ++numInsertedParenthesis;
+    }
+
     if (edit.replacement == '?' && edit.length == 0) {
       ++numTypesMadeNullable;
-    } else if (edit.replacement == '!' && edit.length == 0) {
-      ++numNullChecksAdded;
     } else if (edit.replacement == "import 'package:meta/meta.dart';\n" &&
         edit.length == 0) {
       ++numMetaImportsAdded;
     } else if (edit.replacement == 'required ' && edit.length == 0) {
       ++numRequiredAnnotationsAdded;
+    } else if (edit.replacement == 'late ' && edit.length == 0) {
+      ++numVariablesMarkedLate;
+    } else if (edit.replacement.startsWith(' as ') && edit.length == 0) {
+      ++numInsertedCasts;
     } else if ((edit.replacement == '/* ' ||
             edit.replacement == ' /*' ||
             edit.replacement == '; /*') &&
         edit.length == 0) {
       ++numDeadCodeSegmentsFound;
-    } else if ((edit.replacement == '*/ ' || edit.replacement == ' */') &&
+    } else if ((edit.replacement == '*/ ' ||
+            edit.replacement == ' */' ||
+            edit.replacement == ')' ||
+            edit.replacement == '!' ||
+            edit.replacement == '(') &&
         edit.length == 0) {
-      // Already counted
     } else {
-      print('addEdit($fix, $edit)');
+      numOtherEdits++;
     }
   }
 
   @override
-  void addFix(SingleNullabilityFix fix) {}
+  void addSuggestion(String descriptions, Location location) {}
 
   @override
   void reportException(

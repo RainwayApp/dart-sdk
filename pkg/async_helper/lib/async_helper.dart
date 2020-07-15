@@ -6,8 +6,7 @@
 /// If a test is asynchronous, it needs to notify the testing driver
 /// about this (otherwise tests may get reported as passing [after main()
 /// finished] even if the asynchronous operations fail).
-/// Tests which can't use the unittest framework should use the helper functions
-/// in this library.
+///
 /// This library provides four methods
 ///  - asyncStart(): Needs to be called before an asynchronous operation is
 ///                  scheduled.
@@ -108,7 +107,10 @@ void asyncExpectThrows<T>(Future<void> f(),
     [bool check(T error) = _pass, String reason = ""]) {
   var type = "";
   if (T != dynamic && T != Object) type = "<$T>";
-  var header = "asyncExpectThrows$type(${reason ?? ''}):";
+  // Handle null being passed in from legacy code while also avoiding producing
+  // an unnecessary null check warning here.
+  if ((reason as dynamic) == null) reason = "";
+  var header = "asyncExpectThrows$type(${reason}):";
 
   // TODO(rnystrom): It might useful to validate that T is not bound to
   // ExpectException since that won't work.
@@ -125,7 +127,7 @@ void asyncExpectThrows<T>(Future<void> f(),
   }
 
   asyncStart();
-  result.then((_) {
+  result.then<Null>((_) {
     throw ExpectException("$header Did not throw.");
   }).catchError((error, stack) {
     // A test failure doesn't count as throwing.

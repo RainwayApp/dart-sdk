@@ -1,8 +1,12 @@
+// Copyright (c) 2015, the Dart project authors. Please see the AUTHORS file
+// for details. All rights reserved. Use of this source code is governed by a
+// BSD-style license that can be found in the LICENSE file.
+
 import 'dart:io';
 
+import 'package:analyzer/dart/sdk/build_sdk_summary.dart';
 import 'package:analyzer/file_system/physical_file_system.dart';
-import 'package:analyzer/src/dart/sdk/sdk.dart';
-import 'package:analyzer/src/summary/summary_file_builder.dart';
+import 'package:cli_util/cli_util.dart';
 
 void main(List<String> args) {
   String command;
@@ -24,9 +28,7 @@ void main(List<String> args) {
   //
   // Validate the SDK path.
   //
-  sdkPath ??=
-      FolderBasedDartSdk.defaultSdkDirectory(PhysicalResourceProvider.INSTANCE)
-          .path;
+  sdkPath ??= getSdkPath();
   if (!FileSystemEntity.isDirectorySync('$sdkPath/lib')) {
     print("'$sdkPath/lib' does not exist.");
     _printUsage();
@@ -36,7 +38,7 @@ void main(List<String> args) {
   //
   // Handle commands.
   //
-  if (command == 'build-strong') {
+  if (command == 'build' || command == 'build-strong') {
     _buildSummary(sdkPath, outFilePath);
   } else {
     _printUsage();
@@ -44,25 +46,24 @@ void main(List<String> args) {
   }
 }
 
-/**
- * The name of the SDK summaries builder application.
- */
+/// The name of the SDK summaries builder application.
 const BINARY_NAME = "build_sdk_summaries";
 
 void _buildSummary(String sdkPath, String outPath) {
-  print('Generating strong mode summary.');
+  print('Generating summary.');
   Stopwatch sw = Stopwatch()..start();
-  List<int> bytes = SummaryBuilder.forSdk(sdkPath).build();
+  List<int> bytes = buildSdkSummary(
+    resourceProvider: PhysicalResourceProvider.INSTANCE,
+    sdkPath: sdkPath,
+  );
   File(outPath).writeAsBytesSync(bytes, mode: FileMode.writeOnly);
   print('\tDone in ${sw.elapsedMilliseconds} ms.');
 }
 
-/**
- * Print information about how to use the SDK summaries builder.
- */
+/// Print information about how to use the SDK summaries builder.
 void _printUsage() {
   print('Usage: $BINARY_NAME command arguments');
   print('Where command can be one of the following:');
-  print('  build-strong output_file [sdk_path]');
-  print('    Generate strong mode summary file.');
+  print('  build output_file [sdk_path]');
+  print('    Generate summary file.');
 }

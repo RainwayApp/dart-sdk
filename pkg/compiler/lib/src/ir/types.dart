@@ -5,14 +5,21 @@
 import '../common_elements.dart';
 import '../elements/entities.dart';
 import '../elements/types.dart';
+import '../options.dart';
 import '../ordered_typeset.dart';
 import 'element_map.dart';
 
 /// Support for subtype checks of kernel based [DartType]s.
 class KernelDartTypes extends DartTypes {
   final IrToElementMap elementMap;
+  final CompilerOptions _options;
 
-  KernelDartTypes(this.elementMap);
+  KernelDartTypes(this.elementMap, this._options);
+
+  @override
+  bool get useNullSafety => _options.useNullSafety;
+  @override
+  bool get useLegacySubtyping => _options.useLegacySubtyping;
 
   @override
   InterfaceType getThisType(ClassEntity cls) {
@@ -61,9 +68,8 @@ class KernelDartTypes extends DartTypes {
     for (int index = 0; index < typeArguments.length; index++) {
       DartType typeArgument = typeArguments[index];
       TypeVariableType typeVariable = typeVariables[index];
-      DartType bound = elementMap
-          .getTypeVariableBound(typeVariable.element)
-          .subst(typeArguments, typeVariables);
+      DartType bound = subst(typeArguments, typeVariables,
+          elementMap.getTypeVariableBound(typeVariable.element));
       checkTypeVariableBound(context, typeArgument, typeVariable, bound);
     }
   }

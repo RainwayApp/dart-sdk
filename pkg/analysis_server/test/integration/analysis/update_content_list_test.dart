@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../support/integration_tests.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(UpdateContentTest);
   });
@@ -16,14 +16,14 @@ main() {
 
 @reflectiveTest
 class UpdateContentTest extends AbstractAnalysisServerIntegrationTest {
-  test_updateContent_list() {
-    String pathname = sourcePath('test.dart');
-    String goodText = r'''
+  Future<void> test_updateContent_list() {
+    var pathname = sourcePath('test.dart');
+    var goodText = r'''
 main() {
   print("Hello");
   print("World!");
 }''';
-    String badText = goodText.replaceAll('"', '');
+    var badText = goodText.replaceAll('"', '');
     // Create a dummy file
     writeFile(pathname, '// dummy text');
     standardAnalysisSetup();
@@ -37,7 +37,7 @@ main() {
       // order in which they appear in the file.  If these edits are applied in
       // the wrong order, some of the quotation marks will be in the wrong
       // places, and there will still be errors.
-      List<SourceEdit> edits = '"'
+      var edits = '"'
           .allMatches(goodText)
           .map((Match match) => SourceEdit(match.start, 0, '"'))
           .toList();

@@ -8,8 +8,6 @@ import 'package:analyzer/src/context/context.dart';
 import 'package:analyzer/src/generated/engine.dart';
 import 'package:analyzer/src/generated/sdk.dart';
 import 'package:analyzer/src/generated/source.dart';
-import 'package:analyzer/src/summary/idl.dart' show PackageBundle;
-import 'package:analyzer/src/summary/summary_file_builder.dart';
 import 'package:meta/meta.dart';
 
 const String sdkRoot = '/sdk';
@@ -25,29 +23,46 @@ import 'dart:math';
 
 part 'stream.dart';
 
-class Future<T> {
-  factory Future(computation()) => null;
-  factory Future.delayed(Duration duration, [T computation()]) => null;
-  factory Future.microtask(FutureOr<T> computation()) => null;
-  factory Future.value([FutureOr<T> result]) => null;
+abstract class Future<T> {
+  factory Future(FutureOr<T> computation()) {
+    throw 0;
+  }
 
-  Future<R> then<R>(FutureOr<R> onValue(T value)) => null;
+  factory Future.delayed(Duration duration, [FutureOr<T> computation()?]) {
+    throw 0;
+  }
+
+  factory Future.microtask(FutureOr<T> computation()) {
+    throw 0;
+  }
+
+  factory Future.value([FutureOr<T>? result]) {
+    throw 0;
+  }
+
+  Future<R> then<R>(FutureOr<R> onValue(T value));
+
   Future<T> whenComplete(action());
 
-  static Future<List<T>> wait<T>(Iterable<Future<T>> futures) => null;
+  static Future<List<T>> wait<T>(Iterable<Future<T>> futures) => throw 0;
 }
 
-class FutureOr<T> {}
+abstract class FutureOr<T> {}
 
 abstract class Completer<T> {
-  factory Completer() => null;
-  factory Completer.sync() => null;
+  factory Completer() {
+    throw 0;
+  }
+
+  factory Completer.sync() {
+    throw 0;
+  }
 
   Future<T> get future;
   bool get isCompleted;
 
-  void complete([value]);
-  void completeError(Object error, [StackTrace stackTrace]);
+  void complete([FutureOr<T>? value]);
+  void completeError(Object error, [StackTrace? stackTrace]);
 }
 
 abstract class Timer {
@@ -63,14 +78,14 @@ part of dart.async;
 
 abstract class Stream<T> {
   Stream();
-  factory Stream.fromIterable(Iterable<T> data) => null;
+  factory Stream.fromIterable(Iterable<T> data) {
+    throw 0;
+  }
 
   Future<T> get first;
 
-  StreamSubscription<T> listen(void onData(T event),
-                               { Function onError,
-                                 void onDone(),
-                                 bool cancelOnError});
+  StreamSubscription<T> listen(void onData(T event)?,
+      {Function? onError, void onDone()?, bool? cancelOnError});
 }
 
 abstract class StreamIterator<T> {}
@@ -78,12 +93,12 @@ abstract class StreamIterator<T> {}
 abstract class StreamSubscription<T> {
   bool get isPaused;
 
-  Future<E> asFuture<E>([E futureValue]);
+  Future<E> asFuture<E>([E? futureValue]);
   Future cancel();
-  void onData(void handleData(T data));
-  void onError(Function handleError);
-  void onDone(void handleDone());
-  void pause([Future resumeSignal]);
+  void onData(void handleData(T data)?);
+  void onError(Function? handleError);
+  void onDone(void handleDone()?);
+  void pause([Future<void>? resumeSignal]);
   void resume();
 }
 
@@ -113,56 +128,79 @@ library dart.collection;
 
 abstract class HashMap<K, V> implements Map<K, V> {
   external factory HashMap(
-      {bool equals(K key1, K key2),
-      int hashCode(K key),
-      bool isValidKey(potentialKey)});
+      {bool Function(K, K)? equals,
+      int Function(K)? hashCode,
+      bool Function(dynamic)? isValidKey});
 
   external factory HashMap.identity();
 
-  factory HashMap.from(Map other) => null;
+  factory HashMap.from(Map<dynamic, dynamic> other) {
+    throw 0;
+  }
 
-  factory HashMap.of(Map<K, V> other) => null;
+  factory HashMap.of(Map<K, V> other) {
+    throw 0;
+  }
 
   factory HashMap.fromIterable(Iterable iterable,
-      {K key(element), V value(element)}) => null;
+      {K Function(dynamic element)? key, V Function(dynamic element)? value}) {
+    throw 0;
+  }
 
-  factory HashMap.fromIterables(Iterable<K> keys, Iterable<V> values) => null;
+  factory HashMap.fromIterables(Iterable<K> keys, Iterable<V> values) {
+    throw 0;
+  }
 
-  factory HashMap.fromEntries(Iterable<MapEntry<K, V>> entries) => null;
+  factory HashMap.fromEntries(Iterable<MapEntry<K, V>> entries) {
+    throw 0;
+  }
 }
 
 abstract class LinkedHashMap<K, V> implements Map<K, V> {
   external factory LinkedHashMap(
-      {bool equals(K key1, K key2),
-      int hashCode(K key),
-      bool isValidKey(potentialKey)});
+      {bool Function(K, K)? equals,
+      int Function(K)? hashCode,
+      bool Function(dynamic)? isValidKey});
 
   external factory LinkedHashMap.identity();
 
-  factory LinkedHashMap.from(Map other) => null;
+  factory LinkedHashMap.from(Map<dynamic, dynamic> other) {
+    throw 0;
+  }
 
-  factory LinkedHashMap.of(Map<K, V> other) => null;
+  factory LinkedHashMap.of(Map<K, V> other) {
+    throw 0;
+  }
 
   factory LinkedHashMap.fromIterable(Iterable iterable,
-      {K key(element), V value(element)}) => null;
+      {K Function(dynamic element)? key, V Function(dynamic element)? value}) {
+    throw 0;
+  }
 
-  factory LinkedHashMap.fromIterables(Iterable<K> keys, Iterable<V> values)
-      => null;
+  factory LinkedHashMap.fromIterables(Iterable<K> keys, Iterable<V> values) {
+    throw 0;
+  }
 
-  factory LinkedHashMap.fromEntries(Iterable<MapEntry<K, V>> entries) => null;
+  factory LinkedHashMap.fromEntries(Iterable<MapEntry<K, V>> entries) {
+    throw 0;
+  }
 }
 
 abstract class LinkedHashSet<E> implements Set<E> {
   external factory LinkedHashSet(
-      {bool equals(E e1, E e2),
-      int hashCode(E e),
-      bool isValidKey(potentialKey)});
+      {bool Function(E, E)? equals,
+      int Function(E)? hashCode,
+      bool Function(dynamic)? isValidKey});
 
   external factory LinkedHashSet.identity();
 
-  factory LinkedHashSet.from(Iterable elements) => null;
+  factory LinkedHashSet.from(Iterable<dynamic> elements) {
+    throw 0;
+  }
 
-  factory LinkedHashSet.of(Iterable<E> elements) => null;
+  factory LinkedHashSet.of(Iterable<E> elements) {
+    throw 0;
+  }
 }
 ''',
   )
@@ -179,6 +217,8 @@ library dart.convert;
 import 'dart:async';
 
 abstract class Converter<S, T> implements StreamTransformer {}
+
+abstract class Encoding {}
 
 class JsonDecoder extends Converter<String, Object> {}
 ''',
@@ -204,13 +244,21 @@ const override = const _Override();
 
 const proxy = const _Proxy();
 
-external bool identical(Object a, Object b);
+external bool identical(Object? a, Object? b);
 
-void print(Object object) {}
+void print(Object? object) {}
+
+class ArgumentError extends Error {
+  ArgumentError([message]);
+  
+  static T checkNotNull<T>(T argument, [String, name]) => argument;
+}
 
 abstract class bool extends Object {
   external const factory bool.fromEnvironment(String name,
       {bool defaultValue: false});
+
+  external const factory bool.hasEnvironment(String name);
 
   bool operator &(bool other);
   bool operator |(bool other);
@@ -221,6 +269,8 @@ abstract class Comparable<T> {
   int compareTo(T other);
 }
 
+typedef Comparator<T> = int Function(T a, T b);
+
 class DateTime extends Object {}
 
 class Deprecated extends Object {
@@ -230,7 +280,7 @@ class Deprecated extends Object {
 
 class pragma {
   final String name;
-  final Object options;
+  final Object? options;
   const pragma(this.name, [this.options]);
 }
 
@@ -261,25 +311,33 @@ abstract class double extends num {
   int truncate();
   double truncateToDouble();
 
-  external static double parse(String source, [double onError(String source)]);
+  external static double parse(String source,
+      [@deprecated double onError(String source)?]);
+
+  external static double? tryParse(String source);
 }
 
 class Duration implements Comparable<Duration> {}
 
 class Error {
   Error();
-  static String safeToString(Object object) => '';
-  external StackTrace get stackTrace;
+  static String safeToString(Object? object) => '';
+  external StackTrace? get stackTrace;
 }
 
 class Exception {
-  factory Exception([var message]) => null;
+  factory Exception([var message]) {
+    throw 0;
+  }
 }
+
+class FormatException implements Exception {}
 
 class Function {}
 
 abstract class int extends num {
-  external const factory int.fromEnvironment(String name, {int defaultValue});
+  external const factory int.fromEnvironment(String name,
+      {int defaultValue = 0});
 
   bool get isEven => false;
   bool get isNegative;
@@ -297,7 +355,9 @@ abstract class int extends num {
   String toString();
 
   external static int parse(String source,
-      {int radix, int onError(String source)});
+      {int? radix, @deprecated int onError(String source)?});
+
+  external static int? tryParse(String source, {int? radix});
 }
 
 abstract class Invocation {}
@@ -313,15 +373,15 @@ abstract class Iterable<E> {
 
   Iterable<T> expand<T>(Iterable<T> f(E element));
 
-  E firstWhere(bool test(E element), { E orElse()});
+  E firstWhere(bool test(E element), {E orElse()?});
 
-  R fold<R>(R initialValue, R combine(R previousValue, E element)) => null;
+  R fold<R>(R initialValue, R combine(R previousValue, E element));
 
   void forEach(void f(E element));
 
   Iterable<R> map<R>(R f(E e));
 
-  List<E> toList();
+  List<E> toList({bool growable = true});
 
   Set<E> toSet();
 
@@ -334,17 +394,17 @@ abstract class Iterator<E> {
 }
 
 class List<E> implements Iterable<E> {
-  List([int length]);
-  external factory List.from(Iterable elements, {bool growable: true});
+  external factory List([int? length]);
   external factory List.filled(int length, E fill, {bool growable = false});
+  external factory List.empty({bool growable = false});
   external factory List.from(Iterable elements, {bool growable = true});
   external factory List.of(Iterable<E> elements, {bool growable = true});
   external factory List.generate(int length, E generator(int index),
       {bool growable = true});
   external factory List.unmodifiable(Iterable elements);
 
-  E get last => null;
-  E operator [](int index) => null;
+  E get last => throw 0;
+  E operator [](int index) => throw 0;
   void operator []=(int index, E value) {}
 
   void add(E value) {}
@@ -357,27 +417,43 @@ class List<E> implements Iterable<E> {
   noSuchMethod(Invocation invocation) => null;
 }
 
-class Map<K, V> {
-  factory Map() => null;
+abstract class Map<K, V> {
+  external factory Map();
+  external factory Map.from();
+  external Map.of(Map<K, V> other);
+  external factory Map.unmodifiable(Map<dynamic, dynamic> other);
+  external factory Map.identity();
 
-  factory Map.fromIterable(Iterable iterable,
-      {K key(element), V value(element)}) => null;
+  external factory Map.fromIterable(Iterable iterable,
+      {K key(element)?, V value(element)?});
 
-  Iterable<K> get keys => null;
+  external factory Map.fromIterables(Iterable<K> keys, Iterable<V> values);
+  external factory Map.fromEntries(Iterable<MapEntry<K, V>> entries);
+
+  Iterable<K> get keys;
   bool get isEmpty;
   bool get isNotEmpty;
   int get length => 0;
-  Iterable<V> get values => null;
+  Iterable<V> get values;
 
-  V operator [](K key) => null;
-  void operator []=(K key, V value) {}
+  V? operator [](K key);
+  void operator []=(K key, V value);
 
-  Map<RK, RV> cast<RK, RV>() => null;
-  bool containsKey(Object key) => false;
+  Map<RK, RV> cast<RK, RV>();
+  bool containsKey(Object? key);
 }
 
 class Null extends Object {
-  factory Null._uninstantiable() => null;
+  factory Null._uninstantiable() {
+    throw 0;
+  }
+}
+
+class MapEntry<K, V> {
+  final K key;
+  final V value;
+  const factory MapEntry(K key, V value) = MapEntry<K, V>._;
+  const MapEntry._(this.key, this.value);
 }
 
 abstract class num implements Comparable<num> {
@@ -409,13 +485,13 @@ abstract class num implements Comparable<num> {
 class Object {
   const Object();
 
-  int get hashCode => 0;
-  Type get runtimeType => null;
+  external int get hashCode;
+  external Type get runtimeType;
 
-  bool operator ==(Object other) => identical(this, other);
+  external bool operator ==(Object other);
 
-  String toString() => 'a string';
-  dynamic noSuchMethod(Invocation invocation) => null;
+  external String toString();
+  external dynamic noSuchMethod(Invocation invocation);
 }
 
 abstract class Pattern {}
@@ -425,32 +501,49 @@ abstract class RegExp implements Pattern {
 }
 
 abstract class Set<E> implements Iterable<E> {
-  factory Set() => null;
-  factory Set.identity() => null;
-  factory Set.from(Iterable elements) => null;
-  factory Set.of(Iterable<E> elements) => null;
+  external factory Set();
+  external factory Set.identity();
+  external factory Set.from(Iterable elements);
+  external factory Set.of(Iterable<E> elements);
 
   Set<R> cast<R>();
+
+  bool add(E value);
+  void addAll(Iterable<E> elements);
+  bool remove(Object? value);
+  E? lookup(Object? object);
 }
 
 class StackTrace {}
 
 abstract class String implements Comparable<String>, Pattern {
   external factory String.fromCharCodes(Iterable<int> charCodes,
-      [int start = 0, int end]);
+      [int start = 0, int? end]);
+
+  external factory String.fromCharCode(int charCode);
+
+  external const factory String.fromEnvironment(String name,
+      {String defaultValue = ""});
 
   List<int> get codeUnits;
-  int indexOf(Pattern pattern, [int start]);
   bool get isEmpty => false;
   bool get isNotEmpty => false;
   int get length => 0;
 
-  String operator +(String other) => null;
   bool operator ==(Object other);
+  String operator [](int index);
+  String operator +(String other);
+  String operator *(int times);
 
   int codeUnitAt(int index);
   bool contains(String other, [int startIndex = 0]);
-  String substring(int len) => null;
+  int indexOf(Pattern pattern, [int start = 0]);
+  int lastIndexOf(Pattern pattern, [int? start]);
+  bool startsWith(Pattern pattern, [int index = 0]);
+  List<String> split(Pattern pattern);
+  String splitMapJoin(Pattern pattern,
+      {String Function(Match)? onMatch, String Function(String)? onNonMatch});
+  String substring(int startIndex, [int? endIndex]);
   String toLowerCase();
   String toUpperCase();
 }
@@ -489,51 +582,73 @@ final MockSdkLibrary _LIB_FFI = MockSdkLibrary([
     '$sdkRoot/lib/ffi/ffi.dart',
     '''
 library dart.ffi;
+
 class NativeType {
   const NativeType();
 }
+
 class Void extends NativeType {}
+
 class Int8 extends NativeType {
   const Int8();
 }
+
 class Uint8 extends NativeType {
   const Uint8();
 }
+
 class Int16 extends NativeType {
   const Int16();
 }
+
 class Uint16 extends NativeType {
   const Uint16();
 }
+
 class Int32 extends NativeType {
   const Int32();
 }
+
 class Uint32 extends NativeType {
   const Uint32();
 }
+
 class Int64 extends NativeType {
   const Int64();
 }
+
 class Uint64 extends NativeType {
   const Uint64();
 }
+
 class Float extends NativeType {
   const Float();
 }
+
 class Double extends NativeType {
   const Double();
 }
+
 class Pointer<T extends NativeType> extends NativeType {
   static Pointer<NativeFunction<T>> fromFunction<T extends Function>(
       @DartRepresentationOf("T") Function f,
-      [Object exceptionalReturn]);
-  R asFunction<@DartRepresentationOf("T") R extends Function>();
+      [Object exceptionalReturn]) {}
 }
+
+extension NativeFunctionPointer<NF extends Function>
+    on Pointer<NativeFunction<NF>> {
+  external DF asFunction<DF extends Function>();
+}
+
 class Struct extends NativeType {}
 
-abstract class DynamicLibrary {
-  F lookupFunction<T extends Function, F extends Function>(String symbolName);
+abstract class DynamicLibrary {}
+
+extension DynamicLibraryExtension on DynamicLibrary {
+  external F lookupFunction<T extends Function, F extends Function>(
+      String symbolName);
 }
+
 abstract class NativeFunction<T extends Function> extends NativeType {}
 
 class DartRepresentationOf {
@@ -550,42 +665,57 @@ final MockSdkLibrary _LIB_HTML_DART2JS = MockSdkLibrary(
       '$sdkRoot/lib/html/dart2js/html_dart2js.dart',
       '''
 library dart.dom.html;
+
 import 'dart:async';
 
 class Event {}
+
 class MouseEvent extends Event {}
+
 class FocusEvent extends Event {}
+
 class KeyEvent extends Event {}
 
 abstract class ElementStream<T extends Event> implements Stream<T> {}
 
 abstract class Element {
+  factory Element.html(String html,
+          {NodeValidator validator, NodeTreeSanitizer treeSanitizer}) =>
+      new HtmlElement();
+
   /// Stream of `cut` events handled by this [Element].
-  ElementStream<Event> get onCut => null;
+  ElementStream<Event> get onCut => throw 0;
 
-  String get id => null;
+  String get id => throw 0;
 
-  set id(String value) => null;
+  set id(String value) => throw 0;
+
+  DocumentFragment createFragment(String html,
+          {NodeValidator validator, NodeTreeSanitizer treeSanitizer}) => null;
+
+  void setInnerHtml(String html,
+          {NodeValidator validator, NodeTreeSanitizer treeSanitizer}) {}
 }
 
 class HtmlElement extends Element {
   int tabIndex;
-  ElementStream<Event> get onChange => null;
-  ElementStream<MouseEvent> get onClick => null;
-  ElementStream<KeyEvent> get onKeyUp => null;
-  ElementStream<KeyEvent> get onKeyDown => null;
+  ElementStream<Event> get onChange => throw 0;
+  ElementStream<MouseEvent> get onClick => throw 0;
+  ElementStream<KeyEvent> get onKeyUp => throw 0;
+  ElementStream<KeyEvent> get onKeyDown => throw 0;
 
-  bool get hidden => null;
-  set hidden(bool value) => null;
+  bool get hidden => throw 0;
+  set hidden(bool value) {}
 
-  void set className(String s){}
-  void set readOnly(bool b){}
-  void set tabIndex(int i){}
+  void set className(String s) {}
+  void set readOnly(bool b) {}
+  void set tabIndex(int i) {}
 
   String _innerHtml;
   String get innerHtml {
     throw 'not the real implementation';
   }
+
   set innerHtml(String value) {
     // stuff
   }
@@ -606,11 +736,13 @@ class AnchorElement extends HtmlElement {
 class BodyElement extends HtmlElement {
   factory BodyElement() => document.createElement("body");
 
-  ElementStream<Event> get onUnload => null;
+  ElementStream<Event> get onUnload => throw 0;
 }
 
 class ButtonElement extends HtmlElement {
-  factory ButtonElement._() { throw new UnsupportedError("Not supported"); }
+  factory ButtonElement._() {
+    throw new UnsupportedError("Not supported");
+  }
   factory ButtonElement() => document.createElement("button");
 
   bool autofocus;
@@ -621,14 +753,22 @@ class EmbedElement extends HtmlEment {
 }
 
 class HeadingElement extends HtmlElement {
-  factory HeadingElement._() { throw new UnsupportedError("Not supported"); }
+  factory HeadingElement._() {
+    throw new UnsupportedError("Not supported");
+  }
   factory HeadingElement.h1() => document.createElement("h1");
   factory HeadingElement.h2() => document.createElement("h2");
   factory HeadingElement.h3() => document.createElement("h3");
 }
 
+class ImageElement extends HtmlEment {
+  String src;
+}
+
 class InputElement extends HtmlElement {
-  factory InputElement._() { throw new UnsupportedError("Not supported"); }
+  factory InputElement._() {
+    throw new UnsupportedError("Not supported");
+  }
   factory InputElement() => document.createElement("input");
 
   String value;
@@ -636,7 +776,9 @@ class InputElement extends HtmlElement {
 }
 
 class IFrameElement extends HtmlElement {
-  factory IFrameElement._() { throw new UnsupportedError("Not supported"); }
+  factory IFrameElement._() {
+    throw new UnsupportedError("Not supported");
+  }
   factory IFrameElement() => JS(
       'returns:IFrameElement;creates:IFrameElement;new:true',
       '#.createElement(#)',
@@ -646,16 +788,12 @@ class IFrameElement extends HtmlElement {
   String src;
 }
 
-class ImageElement extends HtmlEment {
-  String src;
-}
-
 class OptionElement extends HtmlElement {
-  factory OptionElement({String data: '', String value : '', bool selected: false}) {
-  }
+  factory OptionElement(
+      {String data: '', String value: '', bool selected: false}) {}
 
-  factory OptionElement._([String data, String value, bool defaultSelected, bool selected]) {
-  }
+  factory OptionElement._(
+      [String data, String value, bool defaultSelected, bool selected]) {}
 }
 
 class ScriptElement extends HtmlElement {
@@ -664,15 +802,15 @@ class ScriptElement extends HtmlElement {
 }
 
 class TableSectionElement extends HtmlElement {
+  List<TableRowElement> get rows => throw 0;
 
-  List<TableRowElement> get rows => null;
+  TableRowElement addRow() {}
 
-  TableRowElement addRow() {
+  TableRowElement insertRow(int index) => throw 0;
+
+  factory TableSectionElement._() {
+    throw new UnsupportedError("Not supported");
   }
-
-  TableRowElement insertRow(int index) => null;
-
-  factory TableSectionElement._() { throw new UnsupportedError("Not supported"); }
 
   @Deprecated("Internal Use Only")
   external static Type get instanceRuntimeType;
@@ -682,7 +820,9 @@ class TableSectionElement extends HtmlElement {
 }
 
 class TemplateElement extends HtmlElement {
-  factory TemplateElement._() { throw new UnsupportedError("Not supported"); }
+  factory TemplateElement._() {
+    throw new UnsupportedError("Not supported");
+  }
   factory TemplateElement() => document.createElement("template");
 }
 
@@ -702,6 +842,21 @@ class AudioElement extends MediaElement {
 }
 
 class MediaElement extends Element {}
+
+class WindowBase {}
+
+class Window extends WindowBase {
+  WindowBase open(String url, String name, [String options]) => null;
+}
+
+class NodeValidator {}
+
+class NodeTreeSanitizer {}
+
+class DocumentFragment {
+  DocumentFragment.html(String html,
+          {NodeValidator validator, NodeTreeSanitizer treeSanitizer}) {}
+}
 
 dynamic JS(a, b, c, d) {}
 ''',
@@ -728,7 +883,9 @@ final MockSdkLibrary _LIB_INTERNAL = MockSdkLibrary(
       '$sdkRoot/lib/_internal/internal.dart',
       '''
 library dart._internal;
+
 class Symbol {}
+
 class ExternalName {
   final String name;
   const ExternalName(this.name);
@@ -746,48 +903,114 @@ final MockSdkLibrary _LIB_IO = MockSdkLibrary(
       '''
 library dart.io;
 
+import 'dart:convert';
+
+Never exit(int code) => throw code;
+
 abstract class Directory implements FileSystemEntity {
-  factory Directory(String path) => null;
+  factory Directory(String path) {
+    throw 0;
+  }
 
   Future<bool> exists() async => true;
   bool existsSync() => true;
 
-  Future<FileStat> stat() async => null;
-  FileStat statSync() => null;
+  Future<FileStat> stat() async => throw 0;
+  FileStat statSync() => throw 0;
 }
 
 abstract class File implements FileSystemEntity {
-  factory File(String path) => null;
+  factory File(String path) {
+    throw 0;
+  }
 
   Future<DateTime> lastModified();
   DateTime lastModifiedSync();
 
-  Future<bool> exists() async => true;
-  bool existsSync() => true;
+  Future<bool> exists();
+  bool existsSync();
 
-  Future<FileStat> stat() async => null;
-  FileStat statSync() => null;
+  Future<FileStat> stat();
+  FileStat statSync();
 }
 
 abstract class FileSystemEntity {
-  static Future<bool> isDirectory(String path) => true;
+  static Future<bool> isDirectory(String path) async => true;
   static bool isDirectorySync(String path) => true;
 
-  static Future<bool> isFile(String path) => true;
+  static Future<bool> isFile(String path) async => true;
   static bool isFileSync(String path) => true;
 
-  static Future<bool> isLink(String path) => true;
+  static Future<bool> isLink(String path) async => true;
   static bool isLinkSync(String path) => true;
 
-  static Future<FileSystemEntityType> type(
-    String path, {bool followLinks: true}) async => null;
-  static FileSystemEntityType typeSync(
-    String path, {bool followLinks: true}) => null;
+  static Future<FileSystemEntityType> type(String path,
+          {bool followLinks: true}) =>
+      throw 0;
+  static FileSystemEntityType typeSync(String path, {bool followLinks: true}) =>
+      throw 0;
+}
+
+enum ProcessStartMode {
+  normal,
+}
+
+abstract class Process {
+  external static Future<Process> start(
+    String executable,
+    List<String> arguments, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment: true,
+    bool runInShell: false,
+    ProcessStartMode mode: ProcessStartMode.normal,
+  });
+
+  external static Future<ProcessResult> run(
+    String executable,
+    List<String> arguments, {
+    String? workingDirectory,
+    Map<String, String>? environment,
+    bool includeParentEnvironment: true,
+    bool runInShell: false,
+    Encoding? stdoutEncoding,
+    Encoding? stderrEncoding,
+  });
 }
 ''',
     )
   ],
 );
+
+final MockSdkLibrary _LIB_ISOLATE = MockSdkLibrary([
+  MockSdkLibraryUnit(
+    'dart:isolate',
+    '$sdkRoot/lib/isolate/isolate.dart',
+    '''
+library dart.isolate;
+
+abstract class SendPort {}
+
+class Isolate {
+  external static Future<Isolate> spawnUri(
+    Uri uri,
+    List<String> args,
+    var message, {
+    bool paused = false,
+    SendPort? onExit,
+    SendPort? onError,
+    bool errorsAreFatal = true,
+    bool? checked,
+    Map<String, String>? environment,
+    @deprecated Uri? packageRoot,
+    Uri? packageConfig,
+    bool automaticPackageResolution = false,
+    String? debugName,
+  });
+}
+''',
+  )
+]);
 
 final MockSdkLibrary _LIB_MATH = MockSdkLibrary(
   [
@@ -797,12 +1020,12 @@ final MockSdkLibrary _LIB_MATH = MockSdkLibrary(
       '''
 library dart.math;
 
-const double E = 2.718281828459045;
-const double PI = 3.1415926535897932;
-const double LN10 =  2.302585092994046;
+const double e = 2.718281828459045;
+const double pi = 3.1415926535897932;
+const double ln10 = 2.302585092994046;
 
-T min<T extends num>(T a, T b) => null;
-T max<T extends num>(T a, T b) => null;
+T min<T extends num>(T a, T b) => throw 0;
+T max<T extends num>(T a, T b) => throw 0;
 
 external double cos(num radians);
 external double sin(num radians);
@@ -829,6 +1052,7 @@ final List<SdkLibrary> _LIBRARIES = [
   _LIB_CONVERT,
   _LIB_FFI,
   _LIB_IO,
+  _LIB_ISOLATE,
   _LIB_MATH,
   _LIB_HTML_DART2JS,
   _LIB_INTERCEPTORS,
@@ -843,6 +1067,7 @@ final Map<String, String> _librariesDartEntries = {
   'ffi': 'const LibraryInfo("ffi/ffi.dart")',
   'html': 'const LibraryInfo("html/dart2js/html_dart2js.dart")',
   'io': 'const LibraryInfo("io/io.dart")',
+  'isolate': 'const LibraryInfo("isolate/isolate.dart")',
   'math': 'const LibraryInfo("math/math.dart")',
 };
 
@@ -853,23 +1078,15 @@ class MockSdk implements DartSdk {
 
   final AnalysisOptionsImpl _analysisOptions;
 
-  /**
-   * The [AnalysisContextImpl] which is used for all of the sources.
-   */
+  /// The [AnalysisContextImpl] which is used for all of the sources.
   AnalysisContextImpl _analysisContext;
 
   @override
   final List<SdkLibrary> sdkLibraries = [];
 
-  /**
-   * The cached linked bundle of the SDK.
-   */
-  PackageBundle _bundle;
-
   /// Optional [additionalLibraries] should have unique URIs, and paths in
   /// their units are relative (will be put into `sdkRoot/lib`).
   MockSdk({
-    bool generateSummaryFiles = false,
     @required this.resourceProvider,
     AnalysisOptionsImpl analysisOptions,
     List<MockSdkLibrary> additionalLibraries = const [],
@@ -918,10 +1135,38 @@ class MockSdk implements DartSdk {
       );
     }
 
-    if (generateSummaryFiles) {
-      List<int> bytes = _computeLinkedBundleBytes();
-      resourceProvider.newFileWithBytes(
-          resourceProvider.convertPath('/lib/_internal/strong.sum'), bytes);
+    resourceProvider.newFile(
+      resourceProvider.convertPath(
+        '$sdkRoot/lib/_internal/allowed_experiments.json',
+      ),
+      r'''
+{
+  "version": 1,
+  "experimentSets": {
+    "nullSafety": ["non-nullable"]
+  },
+  "sdk": {
+    "default": {
+      "experimentSet": "nullSafety"
+    }
+  }
+}
+''',
+    );
+  }
+
+  @override
+  String get allowedExperimentsJson {
+    try {
+      var convertedRoot = resourceProvider.convertPath(sdkRoot);
+      return resourceProvider
+          .getFolder(convertedRoot)
+          .getChildAssumingFolder('lib')
+          .getChildAssumingFolder('_internal')
+          .getChildAssumingFile('allowed_experiments.json')
+          .readAsStringSync();
+    } catch (_) {
+      return null;
     }
   }
 
@@ -977,22 +1222,6 @@ class MockSdk implements DartSdk {
   }
 
   @override
-  PackageBundle getLinkedBundle() {
-    if (_bundle == null) {
-      File summaryFile = resourceProvider
-          .getFile(resourceProvider.convertPath('/lib/_internal/strong.sum'));
-      List<int> bytes;
-      if (summaryFile.exists) {
-        bytes = summaryFile.readAsBytesSync();
-      } else {
-        bytes = _computeLinkedBundleBytes();
-      }
-      _bundle = PackageBundle.fromBuffer(bytes);
-    }
-    return _bundle;
-  }
-
-  @override
   SdkLibrary getSdkLibrary(String dartUri) {
     for (SdkLibrary library in _LIBRARIES) {
       if (library.shortName == dartUri) {
@@ -1013,16 +1242,6 @@ class MockSdk implements DartSdk {
     // If we reach here then we tried to use a dartUri that's not in the
     // table above.
     return null;
-  }
-
-  /**
-   * Compute the bytes of the linked bundle associated with this SDK.
-   */
-  List<int> _computeLinkedBundleBytes() {
-    List<Source> librarySources = sdkLibraries
-        .map((SdkLibrary library) => mapDartUri(library.shortName))
-        .toList();
-    return SummaryBuilder(librarySources, context).build();
   }
 }
 

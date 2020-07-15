@@ -6,16 +6,15 @@ import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type.dart';
-import 'package:analyzer/dart/element/type_provider.dart';
-import 'package:analyzer/src/dart/element/member.dart';
+import 'package:analyzer/dart/element/type_visitor.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_schema.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/element/type_visitor.dart';
-import 'package:analyzer/src/generated/resolver.dart' show TypeSystemImpl;
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
-import '../../../generated/elements_types_mixin.dart';
-import '../../../generated/test_analysis_context.dart';
+import '../../../generated/type_system_test.dart';
 
 main() {
   defineReflectiveSuite(() {
@@ -111,7 +110,6 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
 
   test_isBottom() {
     TypeParameterElement T;
-    TypeParameterMember T2;
 
     // BOTTOM(Never) is true
     isBottom(neverNone);
@@ -121,15 +119,13 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
     // BOTTOM(X&T) is true iff BOTTOM(T)
     T = typeParameter('T', bound: objectQuestion);
 
-    T2 = promoteTypeParameter(T, neverNone);
-    isBottom(typeParameterTypeNone(T2));
-    isBottom(typeParameterTypeQuestion(T2));
-    isBottom(typeParameterTypeStar(T2));
+    isBottom(promotedTypeParameterTypeNone(T, neverNone));
+    isBottom(promotedTypeParameterTypeQuestion(T, neverNone));
+    isBottom(promotedTypeParameterTypeStar(T, neverNone));
 
-    T2 = promoteTypeParameter(T, neverQuestion);
-    isNotBottom(typeParameterTypeNone(T2));
-    isNotBottom(typeParameterTypeQuestion(T2));
-    isNotBottom(typeParameterTypeStar(T2));
+    isNotBottom(promotedTypeParameterTypeNone(T, neverQuestion));
+    isNotBottom(promotedTypeParameterTypeQuestion(T, neverQuestion));
+    isNotBottom(promotedTypeParameterTypeStar(T, neverQuestion));
 
     // BOTTOM(X extends T) is true iff BOTTOM(T)
     T = typeParameter('T', bound: neverNone);
@@ -164,10 +160,9 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
     isNotBottom(typeParameterTypeQuestion(T));
     isNotBottom(typeParameterTypeStar(T));
 
-    T2 = promoteTypeParameter(typeParameter('T'), intNone);
-    isNotBottom(typeParameterTypeNone(T2));
-    isNotBottom(typeParameterTypeQuestion(T2));
-    isNotBottom(typeParameterTypeStar(T2));
+    isNotBottom(promotedTypeParameterTypeNone(T, intNone));
+    isNotBottom(promotedTypeParameterTypeQuestion(T, intNone));
+    isNotBottom(promotedTypeParameterTypeStar(T, intNone));
   }
 
   test_isMoreBottom() {
@@ -237,27 +232,21 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
 
     // MOREBOTTOM(X&T, Y&S) = MOREBOTTOM(T, S)
     isMoreBottom(
-      typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       ),
-      typeParameterTypeQuestion(
-        promoteTypeParameter(
-          typeParameter('S', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeQuestion(
+        typeParameter('S', bound: objectQuestion),
+        neverNone,
       ),
     );
 
     // MOREBOTTOM(X&T, S) = true
     isMoreBottom(
-      typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       ),
       typeParameterTypeNone(
         typeParameter('S', bound: neverNone),
@@ -269,11 +258,9 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
       typeParameterTypeNone(
         typeParameter('T', bound: neverNone),
       ),
-      typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('S', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeNone(
+        typeParameter('S', bound: objectQuestion),
+        neverNone,
       ),
     );
 
@@ -488,6 +475,7 @@ class BoundsHelperPredicatesTest extends _BoundsTestBase {
 
     // TOP(dynamic) is true
     isTop(dynamicNone);
+    isTop(UnknownInferredType.instance);
 
     // TOP(void) is true
     isTop(voidNone);
@@ -571,11 +559,9 @@ class LowerBoundTest extends _BoundsTestBase {
     }
 
     {
-      var T = typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      var T = promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       );
       check(T, intNone);
       check(T, intQuestion);
@@ -599,11 +585,9 @@ class LowerBoundTest extends _BoundsTestBase {
 
     check(
       neverNone,
-      typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       ),
     );
   }
@@ -939,6 +923,56 @@ class LowerBoundTest extends _BoundsTestBase {
     );
   }
 
+  test_futureOr() {
+    InterfaceType futureOrFunction(DartType T, String str) {
+      var result = futureOrNone(
+        functionTypeNone(returnType: voidNone, parameters: [
+          requiredParameter(type: T),
+        ]),
+      );
+      expect(result.getDisplayString(withNullability: true), str);
+      return result;
+    }
+
+    // DOWN(FutureOr<T1>, FutureOr<T2>) = FutureOr<S>, S = DOWN(T1, T2)
+    _checkGreatestLowerBound(
+      futureOrNone(intNone),
+      futureOrNone(numNone),
+      futureOrNone(intNone),
+    );
+    _checkGreatestLowerBound(
+      futureOrFunction(intNone, 'FutureOr<void Function(int)>'),
+      futureOrFunction(doubleNone, 'FutureOr<void Function(double)>'),
+      futureOrFunction(numNone, 'FutureOr<void Function(num)>'),
+    );
+
+    // DOWN(FutureOr<T1>, Future<T2>) = Future<S>, S = DOWN(T1, T2)
+    // DOWN(Future<T1>, FutureOr<T2>) = Future<S>, S = DOWN(T1, T2)
+    _checkGreatestLowerBound(
+      futureOrNone(numNone),
+      futureNone(intNone),
+      futureNone(intNone),
+    );
+    _checkGreatestLowerBound(
+      futureOrNone(intNone),
+      futureNone(numNone),
+      futureNone(intNone),
+    );
+
+    // DOWN(FutureOr<T1>, T2) = S, S = DOWN(T1, T2)
+    // DOWN(T1, FutureOr<T2>) = S, S = DOWN(T1, T2)
+    _checkGreatestLowerBound(
+      futureOrNone(numNone),
+      intNone,
+      intNone,
+    );
+    _checkGreatestLowerBound(
+      futureOrNone(intNone),
+      numNone,
+      intNone,
+    );
+  }
+
   test_identical() {
     void check(DartType type) {
       _checkGreatestLowerBound(type, type, type);
@@ -958,8 +992,67 @@ class LowerBoundTest extends _BoundsTestBase {
       _checkGreatestLowerBound(T1, T2, expected);
     }
 
+    check(intNone, intNone, intNone);
     check(numNone, intNone, intNone);
     check(doubleNone, intNone, neverNone);
+
+    check(listNone(intNone), listNone(intNone), listNone(intNone));
+    check(listNone(numNone), listNone(intNone), listNone(intNone));
+    check(listNone(doubleNone), listNone(intNone), neverNone);
+  }
+
+  void test_interfaceType2_interfaces() {
+    // class A
+    // class B implements A
+    // class C implements B
+    var A = class_(name: 'A');
+    var B = class_(name: 'B', interfaces: [interfaceTypeNone(A)]);
+    var C = class_(name: 'C', interfaces: [interfaceTypeNone(B)]);
+    _checkGreatestLowerBound(
+      interfaceTypeNone(A),
+      interfaceTypeNone(C),
+      interfaceTypeNone(C),
+    );
+  }
+
+  void test_interfaceType2_mixins() {
+    // class A
+    // class B
+    // class C
+    // class D extends A with B, C
+    var A = class_(name: 'A');
+    var typeA = interfaceTypeNone(A);
+
+    var B = class_(name: 'B');
+    var typeB = interfaceTypeNone(B);
+
+    var C = class_(name: 'C');
+    var typeC = interfaceTypeNone(C);
+
+    var D = class_(
+      name: 'D',
+      superType: interfaceTypeNone(A),
+      mixins: [typeB, typeC],
+    );
+    var typeD = interfaceTypeNone(D);
+
+    _checkGreatestLowerBound(typeA, typeD, typeD);
+    _checkGreatestLowerBound(typeB, typeD, typeD);
+    _checkGreatestLowerBound(typeC, typeD, typeD);
+  }
+
+  void test_interfaceType2_superType() {
+    // class A
+    // class B extends A
+    // class C extends B
+    var A = class_(name: 'A');
+    var B = class_(name: 'B', superType: interfaceTypeNone(A));
+    var C = class_(name: 'C', superType: interfaceTypeNone(B));
+    _checkGreatestLowerBound(
+      interfaceTypeNone(A),
+      interfaceTypeNone(C),
+      interfaceTypeNone(C),
+    );
   }
 
   test_none_question() {
@@ -1099,10 +1192,18 @@ class LowerBoundTest extends _BoundsTestBase {
 
     {
       var T = typeParameter('T', bound: objectQuestion);
-      var T2 = promoteTypeParameter(T, objectNone);
-      check(typeParameterTypeNone(T), typeParameterTypeNone(T2));
-      check(typeParameterTypeQuestion(T), typeParameterTypeNone(T2));
-      check(typeParameterTypeStar(T), typeParameterTypeNone(T2));
+      check(
+        typeParameterTypeNone(T),
+        promotedTypeParameterTypeNone(T, objectNone),
+      );
+      check(
+        typeParameterTypeQuestion(T),
+        promotedTypeParameterTypeNone(T, objectNone),
+      );
+      check(
+        typeParameterTypeStar(T),
+        promotedTypeParameterTypeNone(T, objectNone),
+      );
     }
 
     {
@@ -1154,6 +1255,23 @@ class LowerBoundTest extends _BoundsTestBase {
     check(intQuestion, doubleQuestion, neverQuestion);
   }
 
+  test_self() {
+    var T = typeParameter('T');
+
+    List<DartType> types = [
+      dynamicType,
+      voidNone,
+      neverNone,
+      typeParameterTypeStar(T),
+      intNone,
+      functionTypeNone(returnType: voidNone),
+    ];
+
+    for (var type in types) {
+      _checkGreatestLowerBound(type, type, type);
+    }
+  }
+
   test_star_question() {
     void check(DartType T1, DartType T2, DartType expected) {
       _assertNullabilityQuestion(T1);
@@ -1202,6 +1320,8 @@ class LowerBoundTest extends _BoundsTestBase {
     check(voidNone, intStar);
     check(voidNone, listNone(intNone));
     check(voidNone, futureOrNone(intNone));
+    check(voidNone, neverNone);
+    check(voidNone, functionTypeNone(returnType: voidNone));
 
     check(dynamicNone, objectNone);
     check(dynamicNone, intNone);
@@ -1209,6 +1329,8 @@ class LowerBoundTest extends _BoundsTestBase {
     check(dynamicNone, intStar);
     check(dynamicNone, listNone(intNone));
     check(dynamicNone, futureOrNone(intNone));
+    check(dynamicNone, neverNone);
+    check(dynamicNone, functionTypeNone(returnType: voidNone));
 
     check(objectQuestion, objectNone);
     check(objectQuestion, intNone);
@@ -1216,6 +1338,8 @@ class LowerBoundTest extends _BoundsTestBase {
     check(objectQuestion, intStar);
     check(objectQuestion, listNone(intNone));
     check(objectQuestion, futureOrNone(intNone));
+    check(objectQuestion, neverNone);
+    check(objectQuestion, functionTypeNone(returnType: voidNone));
 
     check(objectStar, objectNone);
     check(objectStar, intNone);
@@ -1223,6 +1347,8 @@ class LowerBoundTest extends _BoundsTestBase {
     check(objectStar, intStar);
     check(objectStar, listNone(intNone));
     check(objectStar, futureOrNone(intNone));
+    check(objectStar, neverNone);
+    check(objectStar, functionTypeNone(returnType: voidNone));
 
     check(futureOrNone(voidNone), intNone);
     check(futureOrQuestion(voidNone), intNone);
@@ -1285,6 +1411,22 @@ class LowerBoundTest extends _BoundsTestBase {
     check(futureOrNone(dynamicNone), futureOrNone(objectStar));
   }
 
+  test_typeParameter() {
+    void check({DartType bound, DartType T2}) {
+      var T1 = typeParameterTypeNone(
+        typeParameter('T', bound: bound),
+      );
+      _checkGreatestLowerBound(T1, T2, neverNone);
+    }
+
+    check(
+      bound: null,
+      T2: functionTypeNone(returnType: voidNone),
+    );
+    check(bound: null, T2: intNone);
+    check(bound: numNone, T2: intNone);
+  }
+
   void _checkGreatestLowerBound(DartType T1, DartType T2, DartType expected,
       {bool checkSubtype = true}) {
     var expectedStr = _typeString(expected);
@@ -1298,8 +1440,8 @@ actual: $resultStr
 
     // Check that the result is a lower bound.
     if (checkSubtype) {
-      expect(typeSystem.isSubtypeOf(result, T1), true);
-      expect(typeSystem.isSubtypeOf(result, T2), true);
+      expect(typeSystem.isSubtypeOf2(result, T1), true);
+      expect(typeSystem.isSubtypeOf2(result, T2), true);
     }
 
     // Check for symmetry.
@@ -1347,11 +1489,9 @@ class UpperBoundTest extends _BoundsTestBase {
     }
 
     {
-      var T = typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      var T = promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       );
       check(T, intNone);
       check(T, intQuestion);
@@ -1375,11 +1515,9 @@ class UpperBoundTest extends _BoundsTestBase {
 
     check(
       neverNone,
-      typeParameterTypeNone(
-        promoteTypeParameter(
-          typeParameter('T', bound: objectQuestion),
-          neverNone,
-        ),
+      promotedTypeParameterTypeNone(
+        typeParameter('T', bound: objectQuestion),
+        neverNone,
       ),
     );
   }
@@ -2061,8 +2199,8 @@ actual: $resultStr
 ''');
 
     // Check that the result is an upper bound.
-    expect(typeSystem.isSubtypeOf(T1, result), true);
-    expect(typeSystem.isSubtypeOf(T2, result), true);
+    expect(typeSystem.isSubtypeOf2(T1, result), true);
+    expect(typeSystem.isSubtypeOf2(T2, result), true);
 
     // Check for symmetry.
     result = typeSystem.getLeastUpperBound(T2, T1);
@@ -2075,24 +2213,7 @@ actual: $resultStr
 }
 
 @reflectiveTest
-class _BoundsTestBase with ElementsTypesMixin {
-  @override
-  TypeProvider typeProvider;
-
-  TypeSystemImpl typeSystem;
-
-  FeatureSet get testFeatureSet {
-    return FeatureSet.forTesting();
-  }
-
-  void setUp() {
-    var analysisContext = TestAnalysisContext(
-      featureSet: testFeatureSet,
-    );
-    typeProvider = analysisContext.typeProviderNonNullableByDefault;
-    typeSystem = analysisContext.typeSystemNonNullableByDefault;
-  }
-
+class _BoundsTestBase extends AbstractTypeSystemNullSafetyTest {
   void _assertNotBottom(DartType type) {
     if (typeSystem.isBottom(type)) {
       fail('isBottom must be false: ' + _typeString(type));
@@ -2146,26 +2267,9 @@ class _BoundsTestBase with ElementsTypesMixin {
     var typeStr = '';
 
     var typeParameterCollector = _TypeParameterCollector();
-    DartTypeVisitor.visit(type, typeParameterCollector);
+    type.accept(typeParameterCollector);
     for (var typeParameter in typeParameterCollector.typeParameters) {
-      if (typeParameter is TypeParameterMember) {
-        var base = typeParameter.declaration;
-        var baseBound = base.bound;
-        if (baseBound != null) {
-          var baseBoundStr = baseBound.getDisplayString(withNullability: true);
-          typeStr += ', ${typeParameter.name} extends ' + baseBoundStr;
-        }
-
-        var bound = typeParameter.bound;
-        var boundStr = bound.getDisplayString(withNullability: true);
-        typeStr += ', ${typeParameter.name} & ' + boundStr;
-      } else {
-        var bound = typeParameter.bound;
-        if (bound != null) {
-          var boundStr = bound.getDisplayString(withNullability: true);
-          typeStr += ', ${typeParameter.name} extends ' + boundStr;
-        }
-      }
+      typeStr += ', $typeParameter';
     }
     return typeStr;
   }
@@ -2177,8 +2281,9 @@ class _BoundsTestBase with ElementsTypesMixin {
   }
 }
 
-class _TypeParameterCollector extends DartTypeVisitor<void> {
-  final Set<TypeParameterElement> typeParameters = {};
+class _TypeParameterCollector
+    implements TypeVisitor<void>, InferenceTypeVisitor<void> {
+  final Set<String> typeParameters = {};
 
   /// We don't need to print bounds for these type parameters, because
   /// they are already included into the function type itself, and cannot
@@ -2186,12 +2291,7 @@ class _TypeParameterCollector extends DartTypeVisitor<void> {
   final Set<TypeParameterElement> functionTypeParameters = {};
 
   @override
-  void defaultDartType(DartType type) {
-    throw UnimplementedError('(${type.runtimeType}) $type');
-  }
-
-  @override
-  void visitDynamicType(DynamicTypeImpl type) {}
+  void visitDynamicType(DynamicType type) {}
 
   @override
   void visitFunctionType(FunctionType type) {
@@ -2199,31 +2299,58 @@ class _TypeParameterCollector extends DartTypeVisitor<void> {
     for (var typeParameter in type.typeFormals) {
       var bound = typeParameter.bound;
       if (bound != null) {
-        DartTypeVisitor.visit(bound, this);
+        bound.accept(this);
       }
     }
     for (var parameter in type.parameters) {
-      DartTypeVisitor.visit(parameter.type, this);
+      parameter.type.accept(this);
     }
-    DartTypeVisitor.visit(type.returnType, this);
+    type.returnType.accept(this);
   }
 
   @override
   void visitInterfaceType(InterfaceType type) {
     for (var typeArgument in type.typeArguments) {
-      DartTypeVisitor.visit(typeArgument, this);
+      typeArgument.accept(this);
     }
   }
 
   @override
-  void visitNeverType(NeverTypeImpl type) {}
+  void visitNeverType(NeverType type) {}
 
   @override
   void visitTypeParameterType(TypeParameterType type) {
     if (!functionTypeParameters.contains(type.element)) {
-      typeParameters.add(type.element);
+      var bound = type.element.bound;
+      var promotedBound = (type as TypeParameterTypeImpl).promotedBound;
+
+      if (bound == null && promotedBound == null) {
+        return;
+      }
+
+      var str = '';
+
+      if (bound != null) {
+        var boundStr = bound.getDisplayString(withNullability: true);
+        str += '${type.element.name} extends ' + boundStr;
+      }
+
+      if (promotedBound != null) {
+        var promotedBoundStr = promotedBound.getDisplayString(
+          withNullability: true,
+        );
+        if (str.isNotEmpty) {
+          str += ', ';
+        }
+        str += '${type.element.name} & ' + promotedBoundStr;
+      }
+
+      typeParameters.add(str);
     }
   }
+
+  @override
+  void visitUnknownInferredType(UnknownInferredType type) {}
 
   @override
   void visitVoidType(VoidType type) {}

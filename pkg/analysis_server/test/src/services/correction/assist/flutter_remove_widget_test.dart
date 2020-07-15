@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'assist_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(FlutterRemoveWidgetTest);
   });
@@ -19,13 +19,13 @@ class FlutterRemoveWidgetTest extends AssistProcessorTest {
   @override
   AssistKind get kind => DartAssistKind.FLUTTER_REMOVE_WIDGET;
 
-  test_childIntoChild_multiLine() async {
+  Future<void> test_childIntoChild_multiLine() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Center(
         child: /*caret*/Padding(
           padding: const EdgeInsets.all(8.0),
@@ -43,7 +43,7 @@ main() {
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Center(
         child: Center(
           heightFactor: 0.5,
@@ -56,7 +56,7 @@ main() {
 ''');
   }
 
-  test_childIntoChild_singleLine() async {
+  Future<void> test_childIntoChild_singleLine() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
@@ -81,13 +81,13 @@ main() {
 ''');
   }
 
-  test_childIntoChildren() async {
+  Future<void> test_childIntoChildren() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Text('foo'),
       /*caret*/Center(
         heightFactor: 0.5,
@@ -105,7 +105,7 @@ main() {
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Text('foo'),
       Padding(
         padding: const EdgeInsets.all(8.0),
@@ -118,7 +118,7 @@ main() {
 ''');
   }
 
-  test_childrenMultipleIntoChild() async {
+  Future<void> test_childrenMultipleIntoChild() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
@@ -136,7 +136,7 @@ main() {
     await assertNoAssist();
   }
 
-  test_childrenOneIntoChild() async {
+  Future<void> test_childrenOneIntoChild() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
@@ -160,7 +160,7 @@ main() {
 ''');
   }
 
-  test_childrenOneIntoReturn() async {
+  Future<void> test_childrenOneIntoReturn() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
@@ -180,13 +180,13 @@ main() {
 ''');
   }
 
-  test_intoChildren() async {
+  Future<void> test_intoChildren() async {
     addFlutterPackage();
     await resolveTestUnit('''
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Text('aaa'),
       /*caret*/Column(
         children: [
@@ -213,7 +213,7 @@ main() {
 import 'package:flutter/material.dart';
 main() {
   Column(
-    children: <Widget>[
+    children: [
       Text('aaa'),
       Row(
         children: [

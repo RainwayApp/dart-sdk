@@ -5,6 +5,10 @@
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/src/error/analyzer_error_code.dart';
 
+// It is hard to visually separate each code's _doc comment_ from its published
+// _documentation comment_ when each is written as an end-of-line comment.
+// ignore_for_file: slash_for_doc_comments
+
 /**
  * The hints and coding recommendations for best practices which are not
  * mentioned in the Dart Language Specification.
@@ -30,7 +34,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when code is found that won't be
   // executed because execution will never reach the code.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because the invocation of
   // `print` occurs after the function has returned:
@@ -85,13 +89,13 @@ class HintCode extends AnalyzerErrorCode {
    */
   // #### Description
   //
-  // The analyzer produces this diagnostic when a catch clause is found that
-  // can't be executed because it’s after a catch clause of the form `catch (e)`
-  // or `on Object catch (e)`. The first catch clause that matches the thrown
-  // object is selected, and both of those forms will match any object, so no
-  // catch clauses that follow them will be selected.
+  // The analyzer produces this diagnostic when a `catch` clause is found that
+  // can't be executed because it’s after a `catch` clause of the form
+  // `catch (e)` or `on Object catch (e)`. The first `catch` clause that matches
+  // the thrown object is selected, and both of those forms will match any
+  // object, so no `catch` clauses that follow them will be selected.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic:
   //
@@ -147,14 +151,14 @@ class HintCode extends AnalyzerErrorCode {
    */
   // #### Description
   //
-  // The analyzer produces this diagnostic when a catch clause is found that
-  // can't be executed because it is after a catch clause that catches either
-  // the same type or a supertype of the clause's type. The first catch clause
-  // that matches the thrown object is selected, and the earlier clause l always
+  // The analyzer produces this diagnostic when a `catch` clause is found that
+  // can't be executed because it is after a `catch` clause that catches either
+  // the same type or a supertype of the clause's type. The first `catch` clause
+  // that matches the thrown object is selected, and the earlier clause always
   // matches anything matchable by the highlighted clause, so the highlighted
   // clause will never be selected.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic:
   //
@@ -223,7 +227,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when a deprecated library or class
   // member is used in a different package.
   //
-  // #### Example
+  // #### Examples
   //
   // If the method `m` in the class `C` is annotated with `@deprecated`, then
   // the following code produces this diagnostic:
@@ -253,7 +257,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when a deprecated library member or
   // class member is used in the same package in which it's declared.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `x` is deprecated:
   //
@@ -329,7 +333,7 @@ class HintCode extends AnalyzerErrorCode {
   // that is the same as an import before it in the file. The second import
   // doesn’t add value and should be removed.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic:
   //
@@ -369,6 +373,102 @@ class HintCode extends AnalyzerErrorCode {
       HintCode('DUPLICATE_SHOWN_NAME', "Duplicate shown name.",
           correction: "Try removing the repeated name from the list of shown "
               "members.");
+
+  /**
+   * No parameters.
+   */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when an element in a non-constant set
+  // is the same as a previous element in the same set. If two elements are the
+  // same, then the second value is ignored, which makes having both elements
+  // pointless and likely signals a bug.
+  //
+  // #### Example
+  //
+  // The following code produces this diagnostic because the element `1` appears
+  // twice:
+  //
+  // ```dart
+  // const a = 1;
+  // const b = 1;
+  // var s = <int>{a, [!b!]};
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If both elements should be included in the set, then change one of the
+  // elements:
+  //
+  // ```dart
+  // const a = 1;
+  // const b = 2;
+  // var s = <int>{a, b};
+  // ```
+  //
+  // If only one of the elements is needed, then remove the one that isn't
+  // needed:
+  //
+  // ```dart
+  // const a = 1;
+  // var s = <int>{a};
+  // ```
+  //
+  // Note that literal sets preserve the order of their elements, so the choice
+  // of which element to remove might affect the order in which elements are
+  // returned by an iterator.
+  static const HintCode EQUAL_ELEMENTS_IN_SET = HintCode(
+      'EQUAL_ELEMENTS_IN_SET',
+      "Two elements in a set literal shouldn't be equal.",
+      correction: "Change or remove the duplicate element.",
+      hasPublishedDocs: true);
+
+  /**
+   * No parameters.
+   */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a key in a non-constant map is
+  // the same as a previous key in the same map. If two keys are the same, then
+  // the second value overwrites the first value, which makes having both pairs
+  // pointless and likely signals a bug.
+  //
+  // #### Example
+  //
+  // The following code produces this diagnostic because the keys `a` and `b`
+  // have the same value:
+  //
+  // ```dart
+  // const a = 1;
+  // const b = 1;
+  // var m = <int, String>{a: 'a', [!b!]: 'b'};
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If both entries should be included in the map, then change one of the keys:
+  //
+  // ```dart
+  // const a = 1;
+  // const b = 2;
+  // var m = <int, String>{a: 'a', b: 'b'};
+  // ```
+  //
+  // If only one of the entries is needed, then remove the one that isn't
+  // needed:
+  //
+  // ```dart
+  // const a = 1;
+  // var m = <int, String>{a: 'a'};
+  // ```
+  //
+  // Note that literal maps preserve the order of their entries, so the choice
+  // of which entry to remove might affect the order in which the keys and
+  // values are returned by an iterator.
+  static const HintCode EQUAL_KEYS_IN_MAP = HintCode(
+      'EQUAL_KEYS_IN_MAP', "Two keys in a map literal shouldn't be equal.",
+      correction: "Change or remove the duplicate key.",
+      hasPublishedDocs: true);
 
   /**
    * It is a bad practice for a source file in a package "lib" directory
@@ -503,9 +603,9 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when the `@literal` annotation is
   // applied to anything other than a const constructor.
   //
-  // #### Example
+  // #### Examples
   //
-  // The following code produces this diagnostic because the constructor is not
+  // The following code produces this diagnostic because the constructor isn't
   // a `const` constructor:
   //
   // ```dart
@@ -727,6 +827,25 @@ class HintCode extends AnalyzerErrorCode {
           correction: "Specify a Dart language version override with a comment "
               "like '// @dart = 2.0'.");
 
+  static const HintCode INVALID_LANGUAGE_VERSION_OVERRIDE_GREATER =
+      HintCodeWithUniqueName(
+    'INVALID_LANGUAGE_VERSION_OVERRIDE',
+    'INVALID_LANGUAGE_VERSION_OVERRIDE_GREATER',
+    "The language version override can't specify a version greater than the "
+        "latest known language version: {0}.{1}",
+    correction: "Try removing the language version override.",
+  );
+
+  static const HintCode INVALID_LANGUAGE_VERSION_OVERRIDE_LOCATION =
+      HintCodeWithUniqueName(
+    'INVALID_LANGUAGE_VERSION_OVERRIDE',
+    'INVALID_LANGUAGE_VERSION_OVERRIDE_LOCATION',
+    "The language version override must be before any declaration or "
+        "directive.",
+    correction:
+        "Try moving the language version override to the top of the file.",
+  );
+
   /// Invalid Dart language version comments don't follow the specification [1].
   /// If a comment begins with "@dart" or "dart" (letters in any case),
   /// followed by optional whitespace, followed by optional non-alphanumeric,
@@ -835,7 +954,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when either the `@visibleForTemplate`
   // or `@visibleForTesting` annotation is applied to a non-public declaration.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic:
   //
@@ -938,7 +1057,7 @@ class HintCode extends AnalyzerErrorCode {
   // named parameter that is annotated as being required is invoked without
   // providing a value for the parameter.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because the named parameter `x`
   // is required:
@@ -995,7 +1114,7 @@ class HintCode extends AnalyzerErrorCode {
   // throw implicitly returns `null`. This is rarely the desired behavior. The
   // analyzer produces this diagnostic when it finds an implicit return.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `f` doesn't end with a
   // return:
@@ -1010,8 +1129,8 @@ class HintCode extends AnalyzerErrorCode {
   //
   // #### Common fixes
   //
-  // Add a return statement that makes the return value explicit, even if `null`
-  // is the appropriate value.
+  // Add a `return` statement that makes the return value explicit, even if
+  // `null` is the appropriate value.
   static const HintCode MISSING_RETURN = HintCode(
       'MISSING_RETURN',
       "This function has a return type of '{0}', but doesn't end with a "
@@ -1034,7 +1153,7 @@ class HintCode extends AnalyzerErrorCode {
   // Classes that are sealed can't be extended, implemented, mixed in, or used
   // as a superclass constraint.
   //
-  // #### Example
+  // #### Examples
   //
   // If the package 'p' defines a sealed class:
   //
@@ -1081,7 +1200,7 @@ class HintCode extends AnalyzerErrorCode {
   // marked as being immutable using the annotation `@immutable` or if it's a
   // subclass of an immutable class.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because the field `x` isn't
   // final:
@@ -1127,19 +1246,62 @@ class HintCode extends AnalyzerErrorCode {
       'MUST_BE_IMMUTABLE',
       "This class (or a class that this class inherits from) is marked as "
           "'@immutable', but one or more of its instance fields aren't final: "
-          "{0}");
+          "{0}",
+      hasPublishedDocs: true);
 
   /**
-   * Generate a hint for methods that override methods annotated `@mustCallSuper`
-   * that do not invoke the overridden super method.
-   *
    * Parameters:
    * 0: the name of the class declaring the overridden method
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a method that overrides a method
+  // that is annotated as `@mustCallSuper` doesn't invoke the overridden method
+  // as required.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because the method `m` in `B`
+  // doesn't invoke the overridden method `m` in `A`:
+  //
+  // ```dart
+  // import 'package:meta/meta.dart';
+  //
+  // class A {
+  //   @mustCallSuper
+  //   m() {}
+  // }
+  //
+  // class B extends A {
+  //   @override
+  //   [!m!]() {}
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // Add an invocation of the overridden method in the overriding method:
+  //
+  // ```dart
+  // import 'package:meta/meta.dart';
+  //
+  // class A {
+  //   @mustCallSuper
+  //   m() {}
+  // }
+  //
+  // class B extends A {
+  //   @override
+  //   m() {
+  //     super.m();
+  //   }
+  // }
+  // ```
   static const HintCode MUST_CALL_SUPER = HintCode(
       'MUST_CALL_SUPER',
-      "This method overrides a method annotated as @mustCallSuper in '{0}', "
-          "but doesn't invoke the overridden method.");
+      "This method overrides a method annotated as '@mustCallSuper' in '{0}', "
+          "but doesn't invoke the overridden method.",
+      hasPublishedDocs: true);
 
   /**
    * Generate a hint for non-const instance creation using a constructor
@@ -1156,7 +1318,7 @@ class HintCode extends AnalyzerErrorCode {
   // that the constructor should be used to create a constant value whenever
   // possible.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic:
   //
@@ -1238,6 +1400,51 @@ class HintCode extends AnalyzerErrorCode {
           "as an operand of a logical operator.");
 
   /**
+   * No parameters.
+   */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when the type following `on` in a
+  // `catch` clause is a nullable type. It isn't valid to specify a nullable
+  // type because it isn't possible to catch `null` (because it's a runtime
+  // error to throw `null`).
+  //
+  // #### Example
+  //
+  // The following code produces this diagnostic because the exception type is
+  // specified to allow `null` when `null` can't be thrown:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f() {
+  //   try {
+  //     // ...
+  //   } on [!FormatException?!] {
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // Remove the question mark from the type:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f() {
+  //   try {
+  //     // ...
+  //   } on FormatException {
+  //   }
+  // }
+  // ```
+  static const HintCode NULLABLE_TYPE_IN_CATCH_CLAUSE = HintCode(
+      'NULLABLE_TYPE_IN_CATCH_CLAUSE',
+      "A potentially nullable type can't be used in an 'on' clause because it "
+          "isn't valid to throw a nullable expression.",
+      correction: "Try using a non-nullable type.",
+      hasPublishedDocs: true);
+
+  /**
    * Hint for classes that override equals, but not hashCode.
    *
    * Parameters:
@@ -1289,7 +1496,7 @@ class HintCode extends AnalyzerErrorCode {
   // the `@override` annotation, but the member isn’t declared in any of the
   // supertypes of the class.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `m` isn't declared in
   // any of the supertypes of `C`:
@@ -1351,6 +1558,27 @@ class HintCode extends AnalyzerErrorCode {
       "A package import shouldn't contain '..'.");
 
   /**
+   * It is not an error to call or tear-off a method, setter, or getter, or to
+   * read or write a field, on a receiver of static type `Never`.
+   * Implementations that provide feedback about dead or unreachable code are
+   * encouraged to indicate that any arguments to the invocation are
+   * unreachable.
+   *
+   * It is not an error to apply an expression of type `Never` in the function
+   * position of a function call. Implementations that provide feedback about
+   * dead or unreachable code are encouraged to indicate that any arguments to
+   * the call are unreachable.
+   *
+   * Parameters: none
+   */
+  static const HintCode RECEIVER_OF_TYPE_NEVER = HintCode(
+      'RECEIVER_OF_TYPE_NEVER',
+      'The receiver expression is of type Never, and will never complete '
+          'with a value.',
+      correction: 'Try checking for throw expressions or type errors in the'
+          ' target expression');
+
+  /**
    * No parameters.
    */
   // #### Description
@@ -1361,7 +1589,7 @@ class HintCode extends AnalyzerErrorCode {
   // earlier versions, these classes weren't defined in `dart:core`, so the
   // import was necessary.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.1.0:
@@ -1410,14 +1638,14 @@ class HintCode extends AnalyzerErrorCode {
    */
   // #### Description
   //
-  // The analyzer produces this diagnostic when an as expression inside a
+  // The analyzer produces this diagnostic when an `as` expression inside a
   // [constant context](#constant-context) is found in code that has an SDK
-  // constraint whose lower bound is less than 2.3.2. Using an as expression in
-  // a [constant context](#constant-context) wasn't supported in earlier
+  // constraint whose lower bound is less than 2.3.2. Using an `as` expression
+  // in a [constant context](#constant-context) wasn't supported in earlier
   // versions, so this code won't be able to run against earlier versions of the
   // SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.3.2:
@@ -1428,7 +1656,7 @@ class HintCode extends AnalyzerErrorCode {
   //   sdk: '>=2.1.0 <2.4.0'
   // ```
   //
-  // In the package that has that pubspec, code like the following generates
+  // In the package that has that pubspec, code like the following produces
   // this diagnostic:
   //
   // ```dart
@@ -1447,8 +1675,8 @@ class HintCode extends AnalyzerErrorCode {
   // ```
   //
   // If you need to support older versions of the SDK, then either rewrite the
-  // code to not use an as expression, or change the code so that the as
-  // expression is not in a [constant context](#constant-context).:
+  // code to not use an `as` expression, or change the code so that the `as`
+  // expression isn't in a [constant context](#constant-context):
   //
   // ```dart
   // num x = 3;
@@ -1467,14 +1695,14 @@ class HintCode extends AnalyzerErrorCode {
    */
   // #### Description
   //
-  // The analyzer produces this diagnostic when any use of the `&`, `|` or `^`
+  // The analyzer produces this diagnostic when any use of the `&`, `|`, or `^`
   // operators on the class `bool` inside a
   // [constant context](#constant-context) is found in code that has an SDK
   // constraint whose lower bound is less than 2.3.2. Using these operators in a
   // [constant context](#constant-context) wasn't supported in earlier versions,
   // so this code won't be able to run against earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.3.2:
@@ -1506,7 +1734,7 @@ class HintCode extends AnalyzerErrorCode {
   //
   // If you need to support older versions of the SDK, then either rewrite the
   // code to not use these operators, or change the code so that the expression
-  // is not in a [constant context](#constant-context).:
+  // isn't in a [constant context](#constant-context):
   //
   // ```dart
   // const bool a = true;
@@ -1533,7 +1761,7 @@ class HintCode extends AnalyzerErrorCode {
   // supported in earlier versions, so this code won't be able to run against
   // earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.3.2:
@@ -1566,7 +1794,7 @@ class HintCode extends AnalyzerErrorCode {
   //
   // If you need to support older versions of the SDK, then either rewrite the
   // code to not use the `==` operator, or change the code so that the
-  // expression is not in a [constant context](#constant-context).:
+  // expression isn't in a [constant context](#constant-context):
   //
   // ```dart
   // class C {}
@@ -1593,7 +1821,7 @@ class HintCode extends AnalyzerErrorCode {
   // versions, so this code won't be able to run against earlier versions of the
   // SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.6.0:
@@ -1604,7 +1832,7 @@ class HintCode extends AnalyzerErrorCode {
   //  sdk: '>=2.4.0 <2.7.0'
   // ```
   //
-  // In the package that has that pubspec, code like the following generates
+  // In the package that has that pubspec, code like the following produces
   // this diagnostic:
   //
   // ```dart
@@ -1652,7 +1880,7 @@ class HintCode extends AnalyzerErrorCode {
   // operator wasn't supported in earlier versions, so this code won't be able
   // to run against earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.X.0:
@@ -1705,14 +1933,14 @@ class HintCode extends AnalyzerErrorCode {
    */
   // #### Description
   //
-  // The analyzer produces this diagnostic when an is expression inside a
+  // The analyzer produces this diagnostic when an `is` expression inside a
   // [constant context](#constant-context) is found in code that has an SDK
-  // constraint whose lower bound is less than 2.3.2. Using an is expression in
-  // a [constant context](#constant-context) wasn't supported in earlier
+  // constraint whose lower bound is less than 2.3.2. Using an `is` expression
+  // in a [constant context](#constant-context) wasn't supported in earlier
   // versions, so this code won't be able to run against earlier versions of the
   // SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.3.2:
@@ -1723,7 +1951,7 @@ class HintCode extends AnalyzerErrorCode {
   //   sdk: '>=2.1.0 <2.4.0'
   // ```
   //
-  // In the package that has that pubspec, code like the following generates
+  // In the package that has that pubspec, code like the following produces
   // this diagnostic:
   //
   // ```dart
@@ -1742,9 +1970,9 @@ class HintCode extends AnalyzerErrorCode {
   // ```
   //
   // If you need to support older versions of the SDK, then either rewrite the
-  // code to not use the is operator, or, if that's not possible, change the
-  // code so that the is expression is not in a
-  // [constant context](#constant-context).:
+  // code to not use the `is` operator, or, if that isn't possible, change the
+  // code so that the `is` expression isn't in a
+  // [constant context](#constant-context):
   //
   // ```dart
   // const x = 4;
@@ -1768,7 +1996,7 @@ class HintCode extends AnalyzerErrorCode {
   // literals weren't supported in earlier versions, so this code won't be able
   // to run against earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.2.0:
@@ -1819,7 +2047,7 @@ class HintCode extends AnalyzerErrorCode {
   // 2.X.0. This class wasn't defined in earlier versions, so this code won't be
   // able to run against earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.X.0:
@@ -1859,7 +2087,7 @@ class HintCode extends AnalyzerErrorCode {
       //    The type 'Never' wasn't supported until version 2.X.0, but this code
       //    is required to be able to run on earlier versions.
       'SDK_VERSION_NEVER',
-      "The type Never is not yet supported.");
+      "The type Never isn't yet supported.");
 
   /**
    * No parameters.
@@ -1872,7 +2100,7 @@ class HintCode extends AnalyzerErrorCode {
   // versions, so this code won't be able to run against earlier versions of the
   // SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.3.0:
@@ -1883,7 +2111,7 @@ class HintCode extends AnalyzerErrorCode {
   //   sdk: '>=2.2.0 <2.4.0'
   // ```
   //
-  // In the package that has that pubspec, code like the following generates
+  // In the package that has that pubspec, code like the following produces
   // this diagnostic:
   //
   // ```dart
@@ -1933,7 +2161,7 @@ class HintCode extends AnalyzerErrorCode {
   // supported in earlier versions, so this code won't be able to run against
   // earlier versions of the SDK.
   //
-  // #### Example
+  // #### Examples
   //
   // Here's an example of a pubspec that defines an SDK constraint with a lower
   // bound of less than 2.5.0:
@@ -1944,7 +2172,7 @@ class HintCode extends AnalyzerErrorCode {
   //   sdk: '>=2.4.0 <2.6.0'
   // ```
   //
-  // In the package that has that pubspec, code like the following generates
+  // In the package that has that pubspec, code like the following produces
   // this diagnostic:
   //
   // ```dart
@@ -1970,8 +2198,8 @@ class HintCode extends AnalyzerErrorCode {
   // const b = [1, 2];
   // ```
   //
-  // If that's not possible, change the code so that the element is not in a
-  // [constant context](#constant-context).:
+  // If that isn't possible, change the code so that the element isn't in a
+  // [constant context](#constant-context):
   //
   // ```dart
   // const a = [1, 2];
@@ -2021,26 +2249,113 @@ class HintCode extends AnalyzerErrorCode {
       correction: "Try replacing the 'is Null' check with '== null'.");
 
   /**
-   * An undefined name hidden in an import or export directive.
+   * Parameters:
+   * 0: the name of the library being imported
+   * 1: the name in the hide clause that isn't defined in the library
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a hide combinator includes a
+  // name that isn't defined by the library being imported.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because `dart:math` doesn't
+  // define the name `String`:
+  //
+  // ```dart
+  // import 'dart:math' hide [!String!], max;
+  //
+  // var x = min(0, 1);
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If a different name should be hidden, then correct the name. Otherwise,
+  // remove the name from the list:
+  //
+  // ```dart
+  // import 'dart:math' hide max;
+  //
+  // var x = min(0, 1);
+  // ```
   static const HintCode UNDEFINED_HIDDEN_NAME = HintCode(
       'UNDEFINED_HIDDEN_NAME',
       "The library '{0}' doesn't export a member with the hidden name '{1}'.",
-      correction: "Try removing the name from the list of hidden members.");
+      correction: "Try removing the name from the list of hidden members.",
+      hasPublishedDocs: true);
 
   /**
-   * An undefined name shown in an import or export directive.
+   * Parameters:
+   * 0: the name of the library being imported
+   * 1: the name in the show clause that isn't defined in the library
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a show combinator includes a
+  // name that isn't defined by the library being imported.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because `dart:math` doesn't
+  // define the name `String`:
+  //
+  // ```dart
+  // import 'dart:math' show min, [!String!];
+  //
+  // var x = min(0, 1);
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If a different name should be shown, then correct the name. Otherwise,
+  // remove the name from the list:
+  //
+  // ```dart
+  // import 'dart:math' show min;
+  //
+  // var x = min(0, 1);
+  // ```
   static const HintCode UNDEFINED_SHOWN_NAME = HintCode('UNDEFINED_SHOWN_NAME',
       "The library '{0}' doesn't export a member with the shown name '{1}'.",
-      correction: "Try removing the name from the list of shown members.");
+      correction: "Try removing the name from the list of shown members.",
+      hasPublishedDocs: true);
 
   /**
-   * Unnecessary cast.
+   * No parameters.
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when the value being cast is already
+  // known to be of the type that it's being cast to.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because `n` is already known to
+  // be an `int` as a result of the `is` test:
+  //
+  // ```dart
+  // void f(num n) {
+  //   if (n is int) {
+  //     ([!n as int!]).isEven;
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // Remove the unnecessary cast:
+  //
+  // ```dart
+  // void f(num n) {
+  //   if (n is int) {
+  //     n.isEven;
+  //   }
+  // }
+  // ```
   static const HintCode UNNECESSARY_CAST = HintCode(
       'UNNECESSARY_CAST', "Unnecessary cast.",
-      correction: "Try removing the cast.");
+      correction: "Try removing the cast.", hasPublishedDocs: true);
 
   /**
    * Unnecessary `noSuchMethod` declaration.
@@ -2050,24 +2365,142 @@ class HintCode extends AnalyzerErrorCode {
       correction: "Try removing the declaration of 'noSuchMethod'.");
 
   /**
-   * Unnecessary type checks, the result is always false.
+   * No parameters.
    */
-  static const HintCode UNNECESSARY_TYPE_CHECK_FALSE = HintCode(
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when it finds an equality comparison
+  // (either `==` or `!=`) with one operand of `null` and the other operand
+  // can't be `null`. Such comparisons are always either `true` or `false`, so
+  // they serve no purpose.
+  //
+  // #### Example
+  //
+  // The following code produces this diagnostic because `x` can never be
+  // `null`, so the comparison always evaluates to `true`:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f(int x) {
+  //   if (x [!!= null!]) {
+  //     print(x);
+  //   }
+  // }
+  // ```
+  //
+  // The following code produces this diagnostic because `x` can never be
+  // `null`, so the comparison always evaluates to `false`:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f(int x) {
+  //   if (x [!== null!]) {
+  //     throw ArgumentError("x can't be null");
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If the other operand should be able to be `null`, then change the type of
+  // the operand:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f(int? x) {
+  //   if (x != null) {
+  //     print(x);
+  //   }
+  // }
+  // ```
+  //
+  // If the other operand really can't be `null`, then remove the condition:
+  //
+  // ```dart
+  // %experiments=non-nullable
+  // void f(int x) {
+  //   print(x);
+  // }
+  // ```
+  static const HintCode UNNECESSARY_NULL_COMPARISON_FALSE =
+      HintCodeWithUniqueName(
+          'UNNECESSARY_NULL_COMPARISON',
+          'UNNECESSARY_NULL_COMPARISON_FALSE',
+          "The operand can't be null, so the condition is always false.",
+          correction: "Try removing the condition, an enclosing condition, "
+              "or the whole conditional statement.",
+          hasPublishedDocs: true);
+
+  /**
+   * No parameters.
+   */
+  static const HintCode UNNECESSARY_NULL_COMPARISON_TRUE =
+      HintCodeWithUniqueName(
+          'UNNECESSARY_NULL_COMPARISON',
+          'UNNECESSARY_NULL_COMPARISON_TRUE',
+          "The operand can't be null, so the condition is always true.",
+          correction: "Remove the condition.",
+          hasPublishedDocs: true);
+
+  /**
+   * Unnecessary type checks, the result is always false.
+   *
+   * No parameters.
+   */
+  static const HintCode UNNECESSARY_TYPE_CHECK_FALSE = HintCodeWithUniqueName(
+      'UNNECESSARY_TYPE_CHECK',
       'UNNECESSARY_TYPE_CHECK_FALSE',
       "Unnecessary type check, the result is always false.",
       correction: "Try correcting the type check, or removing the type check.");
 
   /**
    * Unnecessary type checks, the result is always true.
+   *
+   * No parameters.
    */
-  static const HintCode UNNECESSARY_TYPE_CHECK_TRUE = HintCode(
+  static const HintCode UNNECESSARY_TYPE_CHECK_TRUE = HintCodeWithUniqueName(
+      'UNNECESSARY_TYPE_CHECK',
       'UNNECESSARY_TYPE_CHECK_TRUE',
       "Unnecessary type check, the result is always true.",
       correction: "Try correcting the type check, or removing the type check.");
 
   /**
-   * Unused catch exception variables.
+   * Parameters:
+   * 0: the name of the exception variable
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a `catch` clause is found, and
+  // neither the exception parameter nor the optional stack trace parameter are
+  // used in the `catch` block.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because `e` isn't referenced:
+  //
+  // ```dart
+  // void f() {
+  //   try {
+  //     int.parse(';');
+  //   } on FormatException catch ([!e!]) {
+  //     // ignored
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // Remove the unused `catch` clause:
+  //
+  // ```dart
+  // void f() {
+  //   try {
+  //     int.parse(';');
+  //   } on FormatException {
+  //     // ignored
+  //   }
+  // }
+  // ```
   static const HintCode UNUSED_CATCH_CLAUSE = HintCode(
       'UNUSED_CATCH_CLAUSE',
       "The exception variable '{0}' isn't used, so the 'catch' clause can be "
@@ -2075,14 +2508,51 @@ class HintCode extends AnalyzerErrorCode {
       // TODO(brianwilkerson) Split this error code so that we can differentiate
       // between removing the catch clause and replacing the catch clause with
       // an on clause.
-      correction: "Try removing the catch clause.");
+      correction: "Try removing the catch clause.",
+      hasPublishedDocs: true);
 
   /**
-   * Unused catch stack trace variables.
+   * Parameters:
+   * 0: the name of the stack trace variable
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when the stack trace parameter in a
+  // `catch` clause isn't referenced within the body of the `catch` block.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because `stackTrace` isn't
+  // referenced:
+  //
+  // ```dart
+  // void f() {
+  //   try {
+  //     // ...
+  //   } catch (exception, [!stackTrace!]) {
+  //     // ...
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If you need to reference the stack trace parameter, then add a reference to
+  // it. Otherwise, remove it:
+  //
+  // ```dart
+  // void f() {
+  //   try {
+  //     // ...
+  //   } catch (exception) {
+  //     // ...
+  //   }
+  // }
+  // ```
   static const HintCode UNUSED_CATCH_STACK = HintCode('UNUSED_CATCH_STACK',
       "The stack trace variable '{0}' isn't used and can be removed.",
-      correction: "Try removing the stack trace variable, or using it.");
+      correction: "Try removing the stack trace variable, or using it.",
+      hasPublishedDocs: true);
 
   /**
    * Parameters:
@@ -2094,7 +2564,7 @@ class HintCode extends AnalyzerErrorCode {
   // typedef, top level variable, top level function, or method is declared but
   // never referenced.
   //
-  // #### Example
+  // #### Examples
   //
   // Assuming that no code in the library references `_C`, the following code
   // produces this diagnostic:
@@ -2122,7 +2592,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when a private field is declared but
   // never read, even if it's written in one or more places.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because `_x` isn't referenced
   // anywhere in the library:
@@ -2153,7 +2623,7 @@ class HintCode extends AnalyzerErrorCode {
   // none of the names that are imported are referenced within the importing
   // library.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because nothing defined in
   // `dart:async` is referenced in the library:
@@ -2175,13 +2645,55 @@ class HintCode extends AnalyzerErrorCode {
       correction: "Try removing the import directive.", hasPublishedDocs: true);
 
   /**
-   * Unused labels are labels that are never referenced in either a 'break' or
-   * 'continue' statement.
+   * Parameters:
+   * 0: the label that isn't used
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a label that isn't used is
+  // found.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because the label `loop` isn't
+  // referenced anywhere in the method:
+  //
+  // ```dart
+  // void f(int limit) {
+  //   [!loop:!] for (int i = 0; i < limit; i++) {
+  //     print(i);
+  //   }
+  // }
+  // ```
+  //
+  // #### Common fixes
+  //
+  // If the label isn't needed, then remove it:
+  //
+  // ```dart
+  // void f(int limit) {
+  //   for (int i = 0; i < limit; i++) {
+  //     print(i);
+  //   }
+  // }
+  // ```
+  //
+  // If the label is needed, then use it:
+  //
+  // ```dart
+  // void f(int limit) {
+  //   loop: for (int i = 0; i < limit; i++) {
+  //     print(i);
+  //     break loop;
+  //   }
+  // }
+  // ```
+  // TODO(brianwilkerson) Highlight the identifier without the colon.
   static const HintCode UNUSED_LABEL =
       HintCode('UNUSED_LABEL', "The label '{0}' isn't used.",
           correction: "Try removing the label, or "
-              "using it in either a 'break' or 'continue' statement.");
+              "using it in either a 'break' or 'continue' statement.",
+          hasPublishedDocs: true);
 
   /**
    * Parameters:
@@ -2192,7 +2704,7 @@ class HintCode extends AnalyzerErrorCode {
   // The analyzer produces this diagnostic when a local variable is declared but
   // never read, even if it's written in one or more places.
   //
-  // #### Example
+  // #### Examples
   //
   // The following code produces this diagnostic because the value of `count` is
   // never read:
@@ -2215,11 +2727,39 @@ class HintCode extends AnalyzerErrorCode {
       hasPublishedDocs: true);
 
   /**
-   * Unused shown names are names shown on imports which are never used.
+   * Parameters:
+   * 0: the name that is shown but not used
    */
+  // #### Description
+  //
+  // The analyzer produces this diagnostic when a show combinator includes a
+  // name that isn't used within the library. Because it isn't referenced, the
+  // name can be removed.
+  //
+  // #### Examples
+  //
+  // The following code produces this diagnostic because the function `max`
+  // isn't used:
+  //
+  // ```dart
+  // import 'dart:math' show min, [!max!];
+  //
+  // var x = min(0, 1);
+  // ```
+  //
+  // #### Common fixes
+  //
+  // Either use the name or remove it:
+  //
+  // ```dart
+  // import 'dart:math' show min;
+  //
+  // var x = min(0, 1);
+  // ```
   static const HintCode UNUSED_SHOWN_NAME = HintCode(
-      'UNUSED_SHOWN_NAME', "The name {0} is shown, but not used.",
-      correction: "Try removing the name from the list of shown members.");
+      'UNUSED_SHOWN_NAME', "The name {0} is shown, but isn’t used.",
+      correction: "Try removing the name from the list of shown members.",
+      hasPublishedDocs: true);
 
   /**
    * Initialize a newly created error code to have the given [name]. The message

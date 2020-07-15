@@ -82,11 +82,11 @@ VM_UNIT_TEST_CASE(Monitor) {
 
 class ObjectCounter : public ObjectPointerVisitor {
  public:
-  explicit ObjectCounter(Isolate* isolate, const Object* obj)
-      : ObjectPointerVisitor(isolate), obj_(obj), count_(0) {}
+  explicit ObjectCounter(IsolateGroup* isolate_group, const Object* obj)
+      : ObjectPointerVisitor(isolate_group), obj_(obj), count_(0) {}
 
-  virtual void VisitPointers(RawObject** first, RawObject** last) {
-    for (RawObject** current = first; current <= last; ++current) {
+  virtual void VisitPointers(ObjectPtr* first, ObjectPtr* last) {
+    for (ObjectPtr* current = first; current <= last; ++current) {
       if (*current == obj_->raw()) {
         ++count_;
       }
@@ -131,7 +131,7 @@ class TaskWithZoneAllocation : public ThreadPool::Task {
       EXPECT(smi.Value() == unique_smi);
       {
         HeapIterationScope iteration(thread);
-        ObjectCounter counter(isolate_, &smi);
+        ObjectCounter counter(isolate_->group(), &smi);
         // Ensure that our particular zone is visited.
         iteration.IterateStackPointers(&counter,
                                        ValidationPolicy::kValidateFrames);
@@ -148,7 +148,7 @@ class TaskWithZoneAllocation : public ThreadPool::Task {
       EXPECT(unique_str.Equals(unique_chars));
       {
         HeapIterationScope iteration(thread);
-        ObjectCounter str_counter(isolate_, &unique_str);
+        ObjectCounter str_counter(isolate_->group(), &unique_str);
         // Ensure that our particular zone is visited.
         iteration.IterateStackPointers(&str_counter,
                                        ValidationPolicy::kValidateFrames);
@@ -465,8 +465,8 @@ static Function* CreateFunction(const char* name) {
   const String& function_name =
       String::ZoneHandle(Symbols::New(Thread::Current(), name));
   Function& function = Function::ZoneHandle(Function::New(
-      function_name, RawFunction::kRegularFunction, true, false, false, false,
-      false, owner_class, TokenPosition::kNoSource));
+      function_name, FunctionLayout::kRegularFunction, true, false, false,
+      false, false, owner_class, TokenPosition::kNoSource));
   return &function;
 }
 
@@ -488,7 +488,7 @@ ISOLATE_UNIT_TEST_CASE(ICDataTest) {
   Function& owner = *CreateFunction("DummyFunction");
   String& name = String::Handle(String::New("foo"));
   const Array& args_desc =
-      Array::Handle(ArgumentsDescriptor::New(0, 0, Object::empty_array()));
+      Array::Handle(ArgumentsDescriptor::NewBoxed(0, 0, Object::empty_array()));
   for (intptr_t i = 0; i < kNumICData; i++) {
     ic_data = ICData::New(owner, name, args_desc, /*deopt_id=*/0,
                           /*num_args_tested=*/1, ICData::kInstance,
@@ -568,7 +568,7 @@ class SafepointTestTask : public ThreadPool::Task {
         // But occasionally, organize a rendezvous.
         HeapIterationScope iteration(thread);  // Establishes a safepoint.
         ASSERT(thread->IsAtSafepoint());
-        ObjectCounter counter(isolate_, &smi);
+        ObjectCounter counter(isolate_->group(), &smi);
         iteration.IterateStackPointers(&counter,
                                        ValidationPolicy::kValidateFrames);
         {

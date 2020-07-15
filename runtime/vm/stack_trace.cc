@@ -4,10 +4,13 @@
 
 #include "vm/stack_trace.h"
 
-#include "vm/compiler/frontend/bytecode_reader.h"
 #include "vm/dart_api_impl.h"
 #include "vm/stack_frame.h"
 #include "vm/symbols.h"
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/compiler/frontend/bytecode_reader.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
 
@@ -15,9 +18,9 @@ namespace dart {
 // sdk/lib/async/stream_controller.dart:_StreamController._STATE_SUBSCRIBED.
 const intptr_t kStreamController_StateSubscribed = 1;
 
-RawClosure* FindClosureInFrame(RawObject** last_object_in_caller,
-                               const Function& function,
-                               bool is_interpreted) {
+ClosurePtr FindClosureInFrame(ObjectPtr* last_object_in_caller,
+                              const Function& function,
+                              bool is_interpreted) {
   NoSafepointScope nsp;
 
   // The callee has function signature
@@ -29,7 +32,7 @@ RawClosure* FindClosureInFrame(RawObject** last_object_in_caller,
   auto& closure = Closure::Handle();
   for (intptr_t i = 0; i < 4; i++) {
     // KBC builds the stack upwards instead of the usual downwards stack.
-    RawObject* arg = last_object_in_caller[(is_interpreted ? -i : i)];
+    ObjectPtr arg = last_object_in_caller[(is_interpreted ? -i : i)];
     if (arg->IsHeapObject() && arg->GetClassId() == kClosureCid) {
       closure = Closure::RawCast(arg);
       if (closure.function() == function.raw()) {
@@ -46,7 +49,7 @@ RawClosure* FindClosureInFrame(RawObject** last_object_in_caller,
 intptr_t GetYieldIndex(const Closure& receiver_closure) {
   const auto& function = Function::Handle(receiver_closure.function());
   if (!function.IsAsyncClosure() && !function.IsAsyncGenClosure()) {
-    return RawPcDescriptors::kInvalidYieldIndex;
+    return PcDescriptorsLayout::kInvalidYieldIndex;
   }
   const auto& await_jump_var =
       Object::Handle(Context::Handle(receiver_closure.context())
@@ -56,10 +59,10 @@ intptr_t GetYieldIndex(const Closure& receiver_closure) {
 }
 
 intptr_t FindPcOffset(const PcDescriptors& pc_descs, intptr_t yield_index) {
-  if (yield_index == RawPcDescriptors::kInvalidYieldIndex) {
+  if (yield_index == PcDescriptorsLayout::kInvalidYieldIndex) {
     return 0;
   }
-  PcDescriptors::Iterator iter(pc_descs, RawPcDescriptors::kAnyKind);
+  PcDescriptors::Iterator iter(pc_descs, PcDescriptorsLayout::kAnyKind);
   while (iter.MoveNext()) {
     if (iter.YieldIndex() == yield_index) {
       return iter.PcOffset();
@@ -70,7 +73,10 @@ intptr_t FindPcOffset(const PcDescriptors& pc_descs, intptr_t yield_index) {
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 intptr_t FindPcOffset(const Bytecode& bytecode, intptr_t yield_index) {
-  if (yield_index == RawPcDescriptors::kInvalidYieldIndex) {
+  if (yield_index == PcDescriptorsLayout::kInvalidYieldIndex) {
+    return 0;
+  }
+  if (!bytecode.HasSourcePositions()) {
     return 0;
   }
   intptr_t last_yield_point = 0;
@@ -98,6 +104,7 @@ class CallerClosureFinder {
   explicit CallerClosureFinder(Zone* zone)
       : receiver_context_(Context::Handle(zone)),
         receiver_function_(Function::Handle(zone)),
+        parent_function_(Function::Handle(zone)),
         context_entry_(Object::Handle(zone)),
         is_sync(Object::Handle(zone)),
         future_(Object::Handle(zone)),
@@ -106,14 +113,16 @@ class CallerClosureFinder {
         controller_(Object::Handle(zone)),
         state_(Object::Handle(zone)),
         var_data_(Object::Handle(zone)),
+        callback_instance_(Object::Handle(zone)),
         future_impl_class(Class::Handle(zone)),
         async_await_completer_class(Class::Handle(zone)),
         future_listener_class(Class::Handle(zone)),
         async_start_stream_controller_class(Class::Handle(zone)),
         stream_controller_class(Class::Handle(zone)),
+        async_stream_controller_class(Class::Handle(zone)),
         controller_subscription_class(Class::Handle(zone)),
         buffering_stream_subscription_class(Class::Handle(zone)),
-        async_stream_controller_class(Class::Handle(zone)),
+        stream_iterator_class(Class::Handle(zone)),
         completer_is_sync_field(Field::Handle(zone)),
         completer_future_field(Field::Handle(zone)),
         future_result_or_listeners_field(Field::Handle(zone)),
@@ -121,7 +130,9 @@ class CallerClosureFinder {
         controller_controller_field(Field::Handle(zone)),
         var_data_field(Field::Handle(zone)),
         state_field(Field::Handle(zone)),
-        on_data_field(Field::Handle(zone)) {
+        on_data_field(Field::Handle(zone)),
+        state_data_field(Field::Handle(zone)),
+        future_timeout_method_(Function::Handle(zone)) {
     const auto& async_lib = Library::Handle(zone, Library::AsyncLibrary());
     // Look up classes:
     // - async:
@@ -150,6 +161,9 @@ class CallerClosureFinder {
     buffering_stream_subscription_class = async_lib.LookupClassAllowPrivate(
         Symbols::_BufferingStreamSubscription());
     ASSERT(!buffering_stream_subscription_class.IsNull());
+    stream_iterator_class =
+        async_lib.LookupClassAllowPrivate(Symbols::_StreamIterator());
+    ASSERT(!stream_iterator_class.IsNull());
 
     // Look up fields:
     // - async:
@@ -180,15 +194,17 @@ class CallerClosureFinder {
     on_data_field = buffering_stream_subscription_class.LookupFieldAllowPrivate(
         Symbols::_onData());
     ASSERT(!on_data_field.IsNull());
+    state_data_field =
+        stream_iterator_class.LookupFieldAllowPrivate(Symbols::_stateData());
+    ASSERT(!state_data_field.IsNull());
+
+    // Functions:
+    future_timeout_method_ =
+        future_impl_class.LookupFunction(Symbols::timeout());
+    ASSERT(!future_timeout_method_.IsNull());
   }
 
-  RawClosure* FindCallerInAsyncClosure(const Context& receiver_context) {
-    context_entry_ = receiver_context.At(Context::kAsyncCompleterIndex);
-    ASSERT(context_entry_.IsInstance());
-    ASSERT(context_entry_.GetClassId() == async_await_completer_class.id());
-
-    const Instance& completer = Instance::Cast(context_entry_);
-    future_ = completer.GetField(completer_future_field);
+  ClosurePtr GetCallerInFutureImpl(const Object& future_) {
     ASSERT(!future_.IsNull());
     ASSERT(future_.GetClassId() == future_impl_class.id());
 
@@ -208,7 +224,17 @@ class CallerClosureFinder {
     return Closure::Cast(callback_).raw();
   }
 
-  RawClosure* FindCallerInAsyncGenClosure(const Context& receiver_context) {
+  ClosurePtr FindCallerInAsyncClosure(const Context& receiver_context) {
+    context_entry_ = receiver_context.At(Context::kAsyncCompleterIndex);
+    ASSERT(context_entry_.IsInstance());
+    ASSERT(context_entry_.GetClassId() == async_await_completer_class.id());
+
+    const Instance& completer = Instance::Cast(context_entry_);
+    future_ = completer.GetField(completer_future_field);
+    return GetCallerInFutureImpl(future_);
+  }
+
+  ClosurePtr FindCallerInAsyncGenClosure(const Context& receiver_context) {
     context_entry_ = receiver_context.At(Context::kControllerIndex);
     ASSERT(context_entry_.IsInstance());
     ASSERT(context_entry_.GetClassId() ==
@@ -225,16 +251,40 @@ class CallerClosureFinder {
       return Closure::null();
     }
 
+    // _StreamController._varData
     var_data_ = Instance::Cast(controller_).GetField(var_data_field);
     ASSERT(var_data_.GetClassId() == controller_subscription_class.id());
 
+    // _ControllerSubscription<T>/_BufferingStreamSubscription.<T>_onData
     callback_ = Instance::Cast(var_data_).GetField(on_data_field);
     ASSERT(callback_.IsClosure());
 
-    return Closure::Cast(callback_).raw();
+    // If this is not the "_StreamIterator._onData" tear-off, we return the
+    // callback we found.
+    receiver_function_ = Closure::Cast(callback_).function();
+    if (!receiver_function_.IsImplicitInstanceClosureFunction() ||
+        receiver_function_.Owner() != stream_iterator_class.raw()) {
+      return Closure::Cast(callback_).raw();
+    }
+
+    // All implicit closure functions (tear-offs) have the "this" receiver
+    // captured.
+    receiver_context_ = Closure::Cast(callback_).context();
+    ASSERT(receiver_context_.num_variables() == 1);
+    callback_instance_ = receiver_context_.At(0);
+    ASSERT(callback_instance_.IsInstance());
+
+    // If the async* stream is await-for'd:
+    if (callback_instance_.GetClassId() == stream_iterator_class.id()) {
+      // _StreamIterator._stateData
+      future_ = Instance::Cast(callback_instance_).GetField(state_data_field);
+      return GetCallerInFutureImpl(future_);
+    }
+
+    UNREACHABLE();  // If no onData is found we have a bug.
   }
 
-  RawClosure* FindCaller(const Closure& receiver_closure) {
+  ClosurePtr FindCaller(const Closure& receiver_closure) {
     receiver_function_ = receiver_closure.function();
     receiver_context_ = receiver_closure.context();
 
@@ -242,6 +292,13 @@ class CallerClosureFinder {
       return FindCallerInAsyncClosure(receiver_context_);
     } else if (receiver_function_.IsAsyncGenClosure()) {
       return FindCallerInAsyncGenClosure(receiver_context_);
+    } else if (receiver_function_.IsLocalFunction()) {
+      parent_function_ = receiver_function_.parent_function();
+      if (parent_function_.recognized_kind() ==
+          MethodRecognizer::kFutureTimeout) {
+        context_entry_ = receiver_context_.At(Context::kChainedFutureIndex);
+        return GetCallerInFutureImpl(context_entry_);
+      }
     }
 
     return Closure::null();
@@ -275,6 +332,7 @@ class CallerClosureFinder {
  private:
   Context& receiver_context_;
   Function& receiver_function_;
+  Function& parent_function_;
 
   Object& context_entry_;
   Object& is_sync;
@@ -284,15 +342,17 @@ class CallerClosureFinder {
   Object& controller_;
   Object& state_;
   Object& var_data_;
+  Object& callback_instance_;
 
   Class& future_impl_class;
   Class& async_await_completer_class;
   Class& future_listener_class;
   Class& async_start_stream_controller_class;
   Class& stream_controller_class;
+  Class& async_stream_controller_class;
   Class& controller_subscription_class;
   Class& buffering_stream_subscription_class;
-  Class& async_stream_controller_class;
+  Class& stream_iterator_class;
 
   Field& completer_is_sync_field;
   Field& completer_future_field;
@@ -302,17 +362,31 @@ class CallerClosureFinder {
   Field& var_data_field;
   Field& state_field;
   Field& on_data_field;
+  Field& state_data_field;
+
+  Function& future_timeout_method_;
 };
 
 void StackTraceUtils::CollectFramesLazy(
     Thread* thread,
     const GrowableObjectArray& code_array,
     const GrowableObjectArray& pc_offset_array,
-    int skip_frames) {
+    int skip_frames,
+    std::function<void(StackFrame*)>* on_sync_frames,
+    bool* has_async) {
+  if (has_async != nullptr) {
+    *has_async = false;
+  }
   Zone* zone = thread->zone();
   DartFrameIterator frames(thread, StackFrameIterator::kNoCrossThreadIteration);
   StackFrame* frame = frames.NextFrame();
-  ASSERT(frame != nullptr);  // We expect to find a dart invocation frame.
+
+  // If e.g. the isolate is paused before executing anything, we might not get
+  // any frames at all. Bail:
+  if (frame == nullptr) {
+    return;
+  }
+
   auto& function = Function::Handle(zone);
   auto& code = Code::Handle(zone);
   auto& bytecode = Bytecode::Handle(zone);
@@ -322,44 +396,61 @@ void StackTraceUtils::CollectFramesLazy(
   CallerClosureFinder caller_closure_finder(zone);
   auto& pc_descs = PcDescriptors::Handle();
 
-  for (; frame != nullptr;) {
+  for (; frame != nullptr; frame = frames.NextFrame()) {
     if (skip_frames > 0) {
       skip_frames--;
-      frame = frames.NextFrame();
       continue;
     }
 
-    function = frame->LookupDartFunction();
-
-    // Case 1: This is an async frame; Follow callbacks instead of stack.
-    if (function.IsAsyncClosure() || function.IsAsyncGenClosure()) {
-      // Start by adding the async function in the frame.
-      if (frame->is_interpreted()) {
-        bytecode = frame->LookupDartBytecode();
-        ASSERT(function.raw() == bytecode.function());
-        code_array.Add(bytecode);
-        const intptr_t pc_offset = frame->pc() - bytecode.PayloadStart();
-        ASSERT(pc_offset >= 0 && pc_offset < bytecode.Size());
-        offset = Smi::New(pc_offset);
-      } else {
-        code = frame->LookupDartCode();
-        ASSERT(function.raw() == code.function());
-        code_array.Add(code);
-        offset = Smi::New(frame->pc() - code.PayloadStart());
+    if (frame->is_interpreted()) {
+      bytecode = frame->LookupDartBytecode();
+      ASSERT(!bytecode.IsNull());
+      function = bytecode.function();
+      if (function.IsNull()) {
+        continue;
       }
-      pc_offset_array.Add(offset);
+      RELEASE_ASSERT(function.raw() == frame->LookupDartFunction());
+    } else {
+      function = frame->LookupDartFunction();
+    }
+
+    // Add the current synchronous frame.
+    if (frame->is_interpreted()) {
+      code_array.Add(bytecode);
+      const intptr_t pc_offset = frame->pc() - bytecode.PayloadStart();
+      ASSERT(pc_offset > 0 && pc_offset <= bytecode.Size());
+      offset = Smi::New(pc_offset);
+    } else {
+      code = frame->LookupDartCode();
+      ASSERT(function.raw() == code.function());
+      code_array.Add(code);
+      const intptr_t pc_offset = frame->pc() - code.PayloadStart();
+      ASSERT(pc_offset > 0 && pc_offset <= code.Size());
+      offset = Smi::New(pc_offset);
+    }
+    pc_offset_array.Add(offset);
+    if (on_sync_frames != nullptr) {
+      (*on_sync_frames)(frame);
+    }
+
+    // Either continue the loop (sync-async case) or find all await'ers and
+    // return.
+    if (!function.IsNull() &&
+        (function.IsAsyncClosure() || function.IsAsyncGenClosure())) {
+      if (has_async != nullptr) {
+        *has_async = true;
+      }
 
       // Next, look up caller's closure on the stack and walk backwards through
       // the yields.
-      frame = frames.NextFrame();
-      RawObject** last_caller_obj = reinterpret_cast<RawObject**>(frame->sp());
+      ObjectPtr* last_caller_obj =
+          reinterpret_cast<ObjectPtr*>(frame->GetCallerSp());
       closure = FindClosureInFrame(last_caller_obj, function,
                                    frame->is_interpreted());
 
       // If this async function hasn't yielded yet, we're still dealing with a
       // normal stack. Continue to next frame as usual.
       if (!caller_closure_finder.IsRunningAsync(closure)) {
-        // Don't advance frame since we already did so just above.
         continue;
       }
 
@@ -394,8 +485,11 @@ void StackTraceUtils::CollectFramesLazy(
         } else {
           UNREACHABLE();
         }
+        // Unlike other sources of PC offsets, the offset may be 0 here if we
+        // reach a non-async closure receiving the yielded value.
         ASSERT(offset.Value() >= 0);
         pc_offset_array.Add(offset);
+
         // Inject async suspension marker.
         code_array.Add(StubCode::AsynchronousGapMarker());
         offset = Smi::New(0);
@@ -404,25 +498,7 @@ void StackTraceUtils::CollectFramesLazy(
 
       // Ignore the rest of the stack; already unwound all async calls.
       return;
-    } else {
-      // Case 2: This is a sync frame; handle normally.
-
-      if (frame->is_interpreted()) {
-        bytecode = frame->LookupDartBytecode();
-        ASSERT(function.raw() == bytecode.function());
-        code_array.Add(bytecode);
-        offset = Smi::New(frame->pc() - bytecode.PayloadStart());
-        pc_offset_array.Add(offset);
-      } else {
-        code = frame->LookupDartCode();
-        ASSERT(function.raw() == code.function());
-        code_array.Add(code);
-        offset = Smi::New(frame->pc() - code.PayloadStart());
-        pc_offset_array.Add(offset);
-      }
     }
-
-    frame = frames.NextFrame();
   }
 
   return;
@@ -458,14 +534,13 @@ intptr_t StackTraceUtils::CountFrames(Thread* thread,
     if (frame->is_interpreted()) {
       bytecode = frame->LookupDartBytecode();
       function = bytecode.function();
-      if (function.IsNull()) {
-        continue;
-      }
+      if (function.IsNull()) continue;
     } else {
       code = frame->LookupDartCode();
       function = code.function();
     }
-    if (sync_async_gap_frames > 0) {
+    const bool function_is_null = function.IsNull();
+    if (!function_is_null && sync_async_gap_frames > 0) {
       function_name = function.QualifiedScrubbedName();
       if (!CheckAndSkipAsync(&sync_async_gap_frames, function_name)) {
         *sync_async_end = false;
@@ -474,7 +549,7 @@ intptr_t StackTraceUtils::CountFrames(Thread* thread,
     } else {
       frame_count++;
     }
-    if (!async_function_is_null &&
+    if (!async_function_is_null && !function_is_null &&
         (async_function.raw() == function.parent_function())) {
       sync_async_gap_frames = kSyncAsyncFrameGap;
     }

@@ -5,7 +5,6 @@
 #include "vm/thread.h"
 
 #include "vm/dart_api_state.h"
-#include "vm/ffi_callback_trampolines.h"
 #include "vm/growable_array.h"
 #include "vm/heap/safepoint.h"
 #include "vm/isolate.h"
@@ -24,6 +23,10 @@
 #include "vm/thread_registry.h"
 #include "vm/timeline.h"
 #include "vm/zone.h"
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
+#include "vm/ffi_callback_trampolines.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
 
@@ -62,13 +65,12 @@ Thread::~Thread() {
 Thread::Thread(bool is_vm_isolate)
     : ThreadState(false),
       stack_limit_(0),
+      write_barrier_mask_(ObjectLayout::kGenerationalBarrierMask),
+      isolate_(NULL),
+      dispatch_table_array_(NULL),
       saved_stack_limit_(0),
       stack_overflow_flags_(0),
-      write_barrier_mask_(RawObject::kGenerationalBarrierMask),
-      isolate_(NULL),
       heap_(NULL),
-      top_(0),
-      end_(0),
       top_exit_frame_info_(0),
       store_buffer_block_(NULL),
       marking_stack_block_(NULL),
@@ -82,11 +84,11 @@ Thread::Thread(bool is_vm_isolate)
       execution_state_(kThreadInNative),
       safepoint_state_(0),
       ffi_callback_code_(GrowableObjectArray::null()),
+      api_top_scope_(NULL),
       task_kind_(kUnknownTask),
       dart_stream_(NULL),
       thread_lock_(),
       api_reusable_scope_(NULL),
-      api_top_scope_(NULL),
       no_callback_scope_depth_(0),
 #if defined(DEBUG)
       no_safepoint_scope_depth_(0),
@@ -96,7 +98,6 @@ Thread::Thread(bool is_vm_isolate)
       deferred_interrupts_mask_(0),
       deferred_interrupts_(0),
       stack_overflow_count_(0),
-      bump_allocate_(false),
       hierarchy_info_(NULL),
       type_usage_info_(NULL),
       pending_functions_(GrowableObjectArray::null()),
@@ -146,12 +147,12 @@ static const double double_nan_constant = NAN;
 static const struct ALIGN16 {
   uint64_t a;
   uint64_t b;
-} double_negate_constant = {0x8000000000000000LL, 0x8000000000000000LL};
+} double_negate_constant = {0x8000000000000000ULL, 0x8000000000000000ULL};
 
 static const struct ALIGN16 {
   uint64_t a;
   uint64_t b;
-} double_abs_constant = {0x7FFFFFFFFFFFFFFFLL, 0x7FFFFFFFFFFFFFFFLL};
+} double_abs_constant = {0x7FFFFFFFFFFFFFFFULL, 0x7FFFFFFFFFFFFFFFULL};
 
 static const struct ALIGN16 {
   uint32_t a;
@@ -234,7 +235,7 @@ void Thread::PrintJSON(JSONStream* stream) const {
 }
 #endif
 
-RawGrowableObjectArray* Thread::pending_functions() {
+GrowableObjectArrayPtr Thread::pending_functions() {
   if (pending_functions_ == GrowableObjectArray::null()) {
     pending_functions_ = GrowableObjectArray::New(Heap::kOld);
   }
@@ -253,7 +254,7 @@ void Thread::set_active_stacktrace(const Object& value) {
   active_stacktrace_ = value.raw();
 }
 
-RawError* Thread::sticky_error() const {
+ErrorPtr Thread::sticky_error() const {
   return sticky_error_;
 }
 
@@ -266,9 +267,9 @@ void Thread::ClearStickyError() {
   sticky_error_ = Error::null();
 }
 
-RawError* Thread::StealStickyError() {
+ErrorPtr Thread::StealStickyError() {
   NoSafepointScope no_safepoint;
-  RawError* return_value = sticky_error_;
+  ErrorPtr return_value = sticky_error_;
   sticky_error_ = Error::null();
   return return_value;
 }
@@ -291,7 +292,7 @@ const char* Thread::TaskKindToCString(TaskKind kind) {
   }
 }
 
-RawStackTrace* Thread::async_stack_trace() const {
+StackTracePtr Thread::async_stack_trace() const {
   return async_stack_trace_;
 }
 
@@ -300,7 +301,7 @@ void Thread::set_async_stack_trace(const StackTrace& stack_trace) {
   async_stack_trace_ = stack_trace.raw();
 }
 
-void Thread::set_raw_async_stack_trace(RawStackTrace* raw_stack_trace) {
+void Thread::set_raw_async_stack_trace(StackTracePtr raw_stack_trace) {
   async_stack_trace_ = raw_stack_trace;
 }
 
@@ -313,13 +314,9 @@ bool Thread::EnterIsolate(Isolate* isolate) {
   Thread* thread = isolate->ScheduleThread(kIsMutatorThread);
   if (thread != NULL) {
     ASSERT(thread->store_buffer_block_ == NULL);
-    thread->task_kind_ = kMutatorTask;
-    thread->StoreBufferAcquire();
-    if (isolate->marking_stack() != NULL) {
-      // Concurrent mark in progress. Enable barrier for this thread.
-      thread->MarkingStackAcquire();
-      thread->DeferredMarkingStackAcquire();
-    }
+    ASSERT(thread->isolate() == isolate);
+    ASSERT(thread->isolate_group() == isolate->group());
+    thread->FinishEntering(kMutatorTask);
     return true;
   }
   return false;
@@ -327,22 +324,17 @@ bool Thread::EnterIsolate(Isolate* isolate) {
 
 void Thread::ExitIsolate() {
   Thread* thread = Thread::Current();
-  ASSERT(thread != NULL && thread->IsMutatorThread());
+  ASSERT(thread != nullptr);
+  ASSERT(thread->IsMutatorThread());
+  ASSERT(thread->isolate() != nullptr);
+  ASSERT(thread->isolate_group() != nullptr);
   DEBUG_ASSERT(!thread->IsAnyReusableHandleScopeActive());
-  thread->task_kind_ = kUnknownTask;
+
+  thread->PrepareLeaving();
+
   Isolate* isolate = thread->isolate();
-  ASSERT(isolate != NULL);
-  ASSERT(thread->execution_state() == Thread::kThreadInVM);
-  if (thread->is_marking()) {
-    thread->MarkingStackRelease();
-    thread->DeferredMarkingStackRelease();
-  }
-  thread->StoreBufferRelease();
-  if (isolate->is_runnable()) {
-    thread->set_vm_tag(VMTag::kIdleTagId);
-  } else {
-    thread->set_vm_tag(VMTag::kLoadWaitTagId);
-  }
+  thread->set_vm_tag(isolate->is_runnable() ? VMTag::kIdleTagId
+                                            : VMTag::kLoadWaitTagId);
   const bool kIsMutatorThread = true;
   isolate->UnscheduleThread(thread, kIsMutatorThread);
 }
@@ -351,23 +343,13 @@ bool Thread::EnterIsolateAsHelper(Isolate* isolate,
                                   TaskKind kind,
                                   bool bypass_safepoint) {
   ASSERT(kind != kMutatorTask);
-  const bool kIsNotMutatorThread = false;
-  Thread* thread =
-      isolate->ScheduleThread(kIsNotMutatorThread, bypass_safepoint);
+  const bool kIsMutatorThread = false;
+  Thread* thread = isolate->ScheduleThread(kIsMutatorThread, bypass_safepoint);
   if (thread != NULL) {
-    ASSERT(thread->store_buffer_block_ == NULL);
-    // TODO(koda): Use StoreBufferAcquire once we properly flush
-    // before Scavenge.
-    thread->store_buffer_block_ =
-        thread->isolate()->store_buffer()->PopEmptyBlock();
-    if (isolate->marking_stack() != NULL) {
-      // Concurrent mark in progress. Enable barrier for this thread.
-      thread->MarkingStackAcquire();
-      thread->DeferredMarkingStackAcquire();
-    }
-    // This thread should not be the main mutator.
-    thread->task_kind_ = kind;
     ASSERT(!thread->IsMutatorThread());
+    ASSERT(thread->isolate() == isolate);
+    ASSERT(thread->isolate_group() == isolate->group());
+    thread->FinishEntering(kind);
     return true;
   }
   return false;
@@ -375,19 +357,46 @@ bool Thread::EnterIsolateAsHelper(Isolate* isolate,
 
 void Thread::ExitIsolateAsHelper(bool bypass_safepoint) {
   Thread* thread = Thread::Current();
-  ASSERT(thread != NULL);
+  ASSERT(thread != nullptr);
   ASSERT(!thread->IsMutatorThread());
-  ASSERT(thread->execution_state() == Thread::kThreadInVM);
-  thread->task_kind_ = kUnknownTask;
-  if (thread->is_marking()) {
-    thread->MarkingStackRelease();
-    thread->DeferredMarkingStackRelease();
-  }
-  thread->StoreBufferRelease();
+  ASSERT(thread->isolate() != nullptr);
+  ASSERT(thread->isolate_group() != nullptr);
+
+  thread->PrepareLeaving();
+
   Isolate* isolate = thread->isolate();
   ASSERT(isolate != NULL);
-  const bool kIsNotMutatorThread = false;
-  isolate->UnscheduleThread(thread, kIsNotMutatorThread, bypass_safepoint);
+  const bool kIsMutatorThread = false;
+  isolate->UnscheduleThread(thread, kIsMutatorThread, bypass_safepoint);
+}
+
+bool Thread::EnterIsolateGroupAsHelper(IsolateGroup* isolate_group,
+                                       TaskKind kind,
+                                       bool bypass_safepoint) {
+  ASSERT(kind != kMutatorTask);
+  Thread* thread = isolate_group->ScheduleThread(bypass_safepoint);
+  if (thread != NULL) {
+    ASSERT(!thread->IsMutatorThread());
+    ASSERT(thread->isolate() == nullptr);
+    ASSERT(thread->isolate_group() == isolate_group);
+    thread->FinishEntering(kind);
+    return true;
+  }
+  return false;
+}
+
+void Thread::ExitIsolateGroupAsHelper(bool bypass_safepoint) {
+  Thread* thread = Thread::Current();
+  ASSERT(thread != nullptr);
+  ASSERT(!thread->IsMutatorThread());
+  ASSERT(thread->isolate() == nullptr);
+  ASSERT(thread->isolate_group() != nullptr);
+
+  thread->PrepareLeaving();
+
+  const bool kIsMutatorThread = false;
+  thread->isolate_group()->UnscheduleThread(thread, kIsMutatorThread,
+                                            bypass_safepoint);
 }
 
 void Thread::ReleaseStoreBuffer() {
@@ -398,7 +407,7 @@ void Thread::ReleaseStoreBuffer() {
   // Make sure to get an *empty* block; the isolate needs all entries
   // at GC time.
   // TODO(koda): Replace with an epilogue (PrepareAfterGC) that acquires.
-  store_buffer_block_ = isolate()->store_buffer()->PopEmptyBlock();
+  store_buffer_block_ = isolate_group()->store_buffer()->PopEmptyBlock();
 }
 
 void Thread::SetStackLimit(uword limit) {
@@ -436,9 +445,10 @@ void Thread::ScheduleInterruptsLocked(uword interrupt_bits) {
   }
 
   if (stack_limit_ == saved_stack_limit_) {
-    stack_limit_ = kInterruptStackLimit & ~kInterruptsMask;
+    stack_limit_ = (kInterruptStackLimit & ~kInterruptsMask) | interrupt_bits;
+  } else {
+    stack_limit_ = stack_limit_ | interrupt_bits;
   }
-  stack_limit_ |= interrupt_bits;
 }
 
 uword Thread::GetAndClearInterrupts() {
@@ -466,7 +476,7 @@ void Thread::DeferOOBMessageInterrupts() {
     deferred_interrupts_ = stack_limit_ & deferred_interrupts_mask_;
 
     // Clear deferrable interrupts, if present.
-    stack_limit_ &= ~deferred_interrupts_mask_;
+    stack_limit_ = stack_limit_ & ~deferred_interrupts_mask_;
 
     if ((stack_limit_ & kInterruptsMask) == 0) {
       // No other pending interrupts.  Restore normal stack limit.
@@ -494,7 +504,7 @@ void Thread::RestoreOOBMessageInterrupts() {
     if (stack_limit_ == saved_stack_limit_) {
       stack_limit_ = kInterruptStackLimit & ~kInterruptsMask;
     }
-    stack_limit_ |= deferred_interrupts_;
+    stack_limit_ = stack_limit_ | deferred_interrupts_;
     deferred_interrupts_ = 0;
   }
 #if !defined(PRODUCT)
@@ -505,11 +515,11 @@ void Thread::RestoreOOBMessageInterrupts() {
 #endif  // !defined(PRODUCT)
 }
 
-RawError* Thread::HandleInterrupts() {
+ErrorPtr Thread::HandleInterrupts() {
   uword interrupt_bits = GetAndClearInterrupts();
   if ((interrupt_bits & kVMInterrupt) != 0) {
     CheckForSafepoint();
-    if (isolate()->store_buffer()->Overflowed()) {
+    if (isolate_group()->store_buffer()->Overflowed()) {
       if (FLAG_verbose_gc) {
         OS::PrintErr("Scavenge scheduled by store buffer overflow.\n");
       }
@@ -529,7 +539,7 @@ RawError* Thread::HandleInterrupts() {
             isolate()->name());
       }
       NoSafepointScope no_safepoint;
-      RawError* error = Thread::Current()->StealStickyError();
+      ErrorPtr error = Thread::Current()->StealStickyError();
       ASSERT(error->IsUnwindError());
       return error;
     }
@@ -548,14 +558,15 @@ void Thread::StoreBufferBlockProcess(StoreBuffer::ThresholdPolicy policy) {
   StoreBufferAcquire();
 }
 
-void Thread::StoreBufferAddObject(RawObject* obj) {
+void Thread::StoreBufferAddObject(ObjectPtr obj) {
+  ASSERT(this == Thread::Current());
   store_buffer_block_->Push(obj);
   if (store_buffer_block_->IsFull()) {
     StoreBufferBlockProcess(StoreBuffer::kCheckThreshold);
   }
 }
 
-void Thread::StoreBufferAddObjectGC(RawObject* obj) {
+void Thread::StoreBufferAddObjectGC(ObjectPtr obj) {
   store_buffer_block_->Push(obj);
   if (store_buffer_block_->IsFull()) {
     StoreBufferBlockProcess(StoreBuffer::kIgnoreThreshold);
@@ -565,11 +576,11 @@ void Thread::StoreBufferAddObjectGC(RawObject* obj) {
 void Thread::StoreBufferRelease(StoreBuffer::ThresholdPolicy policy) {
   StoreBufferBlock* block = store_buffer_block_;
   store_buffer_block_ = NULL;
-  isolate()->store_buffer()->PushBlock(block, policy);
+  isolate_group()->store_buffer()->PushBlock(block, policy);
 }
 
 void Thread::StoreBufferAcquire() {
-  store_buffer_block_ = isolate()->store_buffer()->PopNonFullBlock();
+  store_buffer_block_ = isolate_group()->store_buffer()->PopNonFullBlock();
 }
 
 void Thread::MarkingStackBlockProcess() {
@@ -582,14 +593,14 @@ void Thread::DeferredMarkingStackBlockProcess() {
   DeferredMarkingStackAcquire();
 }
 
-void Thread::MarkingStackAddObject(RawObject* obj) {
+void Thread::MarkingStackAddObject(ObjectPtr obj) {
   marking_stack_block_->Push(obj);
   if (marking_stack_block_->IsFull()) {
     MarkingStackBlockProcess();
   }
 }
 
-void Thread::DeferredMarkingStackAddObject(RawObject* obj) {
+void Thread::DeferredMarkingStackAddObject(ObjectPtr obj) {
   deferred_marking_stack_block_->Push(obj);
   if (deferred_marking_stack_block_->IsFull()) {
     DeferredMarkingStackBlockProcess();
@@ -599,29 +610,25 @@ void Thread::DeferredMarkingStackAddObject(RawObject* obj) {
 void Thread::MarkingStackRelease() {
   MarkingStackBlock* block = marking_stack_block_;
   marking_stack_block_ = NULL;
-  write_barrier_mask_ = RawObject::kGenerationalBarrierMask;
-  isolate()->marking_stack()->PushBlock(block);
+  write_barrier_mask_ = ObjectLayout::kGenerationalBarrierMask;
+  isolate_group()->marking_stack()->PushBlock(block);
 }
 
 void Thread::MarkingStackAcquire() {
-  marking_stack_block_ = isolate()->marking_stack()->PopEmptyBlock();
-  write_barrier_mask_ =
-      RawObject::kGenerationalBarrierMask | RawObject::kIncrementalBarrierMask;
+  marking_stack_block_ = isolate_group()->marking_stack()->PopEmptyBlock();
+  write_barrier_mask_ = ObjectLayout::kGenerationalBarrierMask |
+                        ObjectLayout::kIncrementalBarrierMask;
 }
 
 void Thread::DeferredMarkingStackRelease() {
   MarkingStackBlock* block = deferred_marking_stack_block_;
   deferred_marking_stack_block_ = NULL;
-  isolate()->deferred_marking_stack()->PushBlock(block);
+  isolate_group()->deferred_marking_stack()->PushBlock(block);
 }
 
 void Thread::DeferredMarkingStackAcquire() {
   deferred_marking_stack_block_ =
-      isolate()->deferred_marking_stack()->PopEmptyBlock();
-}
-
-bool Thread::IsMutatorThread() const {
-  return ((isolate_ != NULL) && (isolate_->mutator_thread() == this));
+      isolate_group()->deferred_marking_stack()->PopEmptyBlock();
 }
 
 bool Thread::CanCollectGarbage() const {
@@ -666,13 +673,13 @@ void Thread::VisitObjectPointers(ObjectPointerVisitor* visitor,
   // Visit objects in thread specific handles area.
   reusable_handles_.VisitObjectPointers(visitor);
 
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&pending_functions_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&global_object_pool_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&active_exception_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&active_stacktrace_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&sticky_error_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&async_stack_trace_));
-  visitor->VisitPointer(reinterpret_cast<RawObject**>(&ffi_callback_code_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&pending_functions_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&global_object_pool_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&active_exception_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&active_stacktrace_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&sticky_error_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&async_stack_trace_));
+  visitor->VisitPointer(reinterpret_cast<ObjectPtr*>(&ffi_callback_code_));
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   if (interpreter() != NULL) {
@@ -716,6 +723,110 @@ void Thread::VisitObjectPointers(ObjectPointerVisitor* visitor,
   }
 }
 
+class RestoreWriteBarrierInvariantVisitor : public ObjectPointerVisitor {
+ public:
+  RestoreWriteBarrierInvariantVisitor(IsolateGroup* group,
+                                      Thread* thread,
+                                      Thread::RestoreWriteBarrierInvariantOp op)
+      : ObjectPointerVisitor(group),
+        thread_(thread),
+        current_(Thread::Current()),
+        op_(op) {}
+
+  void VisitPointers(ObjectPtr* first, ObjectPtr* last) {
+    for (; first != last + 1; first++) {
+      ObjectPtr obj = *first;
+      // Stores into new-space objects don't need a write barrier.
+      if (obj->IsSmiOrNewObject()) continue;
+
+      // To avoid adding too much work into the remembered set, skip
+      // arrays. Write barrier elimination will not remove the barrier
+      // if we can trigger GC between array allocation and store.
+      if (obj->GetClassId() == kArrayCid) continue;
+
+      // Dart code won't store into VM-internal objects except Contexts and
+      // UnhandledExceptions. This assumption is checked by an assertion in
+      // WriteBarrierElimination::UpdateVectorForBlock.
+      if (!obj->IsDartInstance() && !obj->IsContext() &&
+          !obj->IsUnhandledException())
+        continue;
+
+      // Dart code won't store into canonical instances.
+      if (obj->ptr()->IsCanonical()) continue;
+
+      // Objects in the VM isolate heap are immutable and won't be
+      // stored into. Check this condition last because there's no bit
+      // in the header for it.
+      if (obj->ptr()->InVMIsolateHeap()) continue;
+
+      switch (op_) {
+        case Thread::RestoreWriteBarrierInvariantOp::kAddToRememberedSet:
+          if (!obj->ptr()->IsRemembered()) {
+            obj->ptr()->AddToRememberedSet(current_);
+          }
+          if (current_->is_marking()) {
+            current_->DeferredMarkingStackAddObject(obj);
+          }
+          break;
+        case Thread::RestoreWriteBarrierInvariantOp::kAddToDeferredMarkingStack:
+          // Re-scan obj when finalizing marking.
+          current_->DeferredMarkingStackAddObject(obj);
+          break;
+      }
+    }
+  }
+
+ private:
+  Thread* const thread_;
+  Thread* const current_;
+  Thread::RestoreWriteBarrierInvariantOp op_;
+};
+
+// Write barrier elimination assumes that all live temporaries will be
+// in the remembered set after a scavenge triggered by a non-Dart-call
+// instruction (see Instruction::CanCallDart()), and additionally they will be
+// in the deferred marking stack if concurrent marking started. Specifically,
+// this includes any instruction which will always create an exit frame
+// below the current frame before any other Dart frames.
+//
+// Therefore, to support this assumption, we scan the stack after a scavenge
+// or when concurrent marking begins and add all live temporaries in
+// Dart frames preceeding an exit frame to the store buffer or deferred
+// marking stack.
+void Thread::RestoreWriteBarrierInvariant(RestoreWriteBarrierInvariantOp op) {
+  ASSERT(IsAtSafepoint());
+  ASSERT(IsMutatorThread());
+
+  const StackFrameIterator::CrossThreadPolicy cross_thread_policy =
+      StackFrameIterator::kAllowCrossThreadIteration;
+  StackFrameIterator frames_iterator(top_exit_frame_info(),
+                                     ValidationPolicy::kDontValidateFrames,
+                                     this, cross_thread_policy);
+  RestoreWriteBarrierInvariantVisitor visitor(isolate_group(), this, op);
+  bool scan_next_dart_frame = false;
+  for (StackFrame* frame = frames_iterator.NextFrame(); frame != NULL;
+       frame = frames_iterator.NextFrame()) {
+    if (frame->IsExitFrame()) {
+      scan_next_dart_frame = true;
+    } else if (frame->IsDartFrame(/*validate=*/false)) {
+      if (scan_next_dart_frame) {
+        frame->VisitObjectPointers(&visitor);
+      }
+      scan_next_dart_frame = false;
+    }
+  }
+}
+
+void Thread::DeferredMarkLiveTemporaries() {
+  RestoreWriteBarrierInvariant(
+      RestoreWriteBarrierInvariantOp::kAddToDeferredMarkingStack);
+}
+
+void Thread::RememberLiveTemporaries() {
+  RestoreWriteBarrierInvariant(
+      RestoreWriteBarrierInvariantOp::kAddToRememberedSet);
+}
+
 bool Thread::CanLoadFromThread(const Object& object) {
   // In order to allow us to use assembler helper routines with non-[Code]
   // objects *before* stubs are initialized, we only loop ver the stubs if the
@@ -746,7 +857,7 @@ intptr_t Thread::OffsetFromThread(const Object& object) {
   // [object] is in fact a [Code] object.
   if (object.IsCode()) {
 #define COMPUTE_OFFSET(type_name, member_name, expr, default_init_value)       \
-  ASSERT((expr)->InVMIsolateHeap());                                           \
+  ASSERT((expr)->ptr()->InVMIsolateHeap());                                    \
   if (object.raw() == expr) {                                                  \
     return Thread::member_name##offset();                                      \
   }
@@ -913,15 +1024,46 @@ void Thread::UnwindScopes(uword stack_marker) {
 }
 
 void Thread::EnterSafepointUsingLock() {
-  isolate()->safepoint_handler()->EnterSafepointUsingLock(this);
+  isolate_group()->safepoint_handler()->EnterSafepointUsingLock(this);
 }
 
 void Thread::ExitSafepointUsingLock() {
-  isolate()->safepoint_handler()->ExitSafepointUsingLock(this);
+  isolate_group()->safepoint_handler()->ExitSafepointUsingLock(this);
 }
 
 void Thread::BlockForSafepoint() {
-  isolate()->safepoint_handler()->BlockForSafepoint(this);
+  isolate_group()->safepoint_handler()->BlockForSafepoint(this);
+}
+
+void Thread::FinishEntering(TaskKind kind) {
+  ASSERT(store_buffer_block_ == nullptr);
+
+  task_kind_ = kind;
+  if (isolate_group()->marking_stack() != NULL) {
+    // Concurrent mark in progress. Enable barrier for this thread.
+    MarkingStackAcquire();
+    DeferredMarkingStackAcquire();
+  }
+
+  // TODO(koda): Use StoreBufferAcquire once we properly flush
+  // before Scavenge.
+  if (kind == kMutatorTask) {
+    StoreBufferAcquire();
+  } else {
+    store_buffer_block_ = isolate_group()->store_buffer()->PopEmptyBlock();
+  }
+}
+
+void Thread::PrepareLeaving() {
+  ASSERT(store_buffer_block_ != nullptr);
+  ASSERT(execution_state() == Thread::kThreadInVM);
+
+  task_kind_ = kUnknownTask;
+  if (is_marking()) {
+    MarkingStackRelease();
+    DeferredMarkingStackRelease();
+  }
+  StoreBufferRelease();
 }
 
 DisableThreadInterruptsScope::DisableThreadInterruptsScope(Thread* thread)
@@ -990,13 +1132,12 @@ void Thread::SetFfiCallbackCode(int32_t callback_id, const Code& code) {
 void Thread::VerifyCallbackIsolate(int32_t callback_id, uword entry) {
   NoSafepointScope _;
 
-  const RawGrowableObjectArray* const array = ffi_callback_code_;
+  const GrowableObjectArrayPtr array = ffi_callback_code_;
   if (array == GrowableObjectArray::null()) {
     FATAL("Cannot invoke callback on incorrect isolate.");
   }
 
-  const RawSmi* const length_smi =
-      GrowableObjectArray::NoSafepointLength(array);
+  const SmiPtr length_smi = GrowableObjectArray::NoSafepointLength(array);
   const intptr_t length = Smi::Value(length_smi);
 
   if (callback_id < 0 || callback_id >= length) {
@@ -1004,11 +1145,10 @@ void Thread::VerifyCallbackIsolate(int32_t callback_id, uword entry) {
   }
 
   if (entry != 0) {
-    RawObject** const code_array =
+    ObjectPtr* const code_array =
         Array::DataOf(GrowableObjectArray::NoSafepointData(array));
     // RawCast allocates handles in ASSERTs.
-    const RawCode* const code =
-        reinterpret_cast<RawCode*>(code_array[callback_id]);
+    const CodePtr code = static_cast<CodePtr>(code_array[callback_id]);
     if (!Code::ContainsInstructionAt(code, entry)) {
       FATAL("Cannot invoke callback on incorrect isolate.");
     }

@@ -1741,9 +1741,12 @@ class ToSourceVisitor2Test {
 
   void test_visitIndexExpression() {
     _assertSource(
-        "a[i]",
-        AstTestFactory.indexExpression(
-            AstTestFactory.identifier3("a"), AstTestFactory.identifier3("i")));
+      "a[i]",
+      AstTestFactory.indexExpression(
+        target: AstTestFactory.identifier3("a"),
+        index: AstTestFactory.identifier3("i"),
+      ),
+    );
   }
 
   void test_visitInstanceCreationExpression_const() {
@@ -2690,6 +2693,18 @@ class ToSourceVisitor2Test {
         AstTestFactory.typeName4("C", [AstTestFactory.typeName4("D")], true));
   }
 
+  void test_visitTypeParameter_variance_contravariant() {
+    _assertSource("in E", AstTestFactory.typeParameter3("E", "in"));
+  }
+
+  void test_visitTypeParameter_variance_covariant() {
+    _assertSource("out E", AstTestFactory.typeParameter3("E", "out"));
+  }
+
+  void test_visitTypeParameter_variance_invariant() {
+    _assertSource("inout E", AstTestFactory.typeParameter3("E", "inout"));
+  }
+
   void test_visitTypeParameter_withExtends() {
     _assertSource("E extends C",
         AstTestFactory.typeParameter2("E", AstTestFactory.typeName4("C")));
@@ -2704,18 +2719,6 @@ class ToSourceVisitor2Test {
 
   void test_visitTypeParameter_withoutExtends() {
     _assertSource("E", AstTestFactory.typeParameter("E"));
-  }
-
-  void test_visitTypeParameter_variance_covariant() {
-    _assertSource("out E", AstTestFactory.typeParameter3("E", "out"));
-  }
-
-  void test_visitTypeParameter_variance_contravariant() {
-    _assertSource("in E", AstTestFactory.typeParameter3("E", "in"));
-  }
-
-  void test_visitTypeParameter_variance_invariant() {
-    _assertSource("inout E", AstTestFactory.typeParameter3("E", "inout"));
   }
 
   void test_visitTypeParameterList_multiple() {
@@ -2834,10 +2837,8 @@ class ToSourceVisitor2Test {
         AstTestFactory.yieldEachStatement(AstTestFactory.identifier3("e")));
   }
 
-  /**
-   * Assert that a `ToSourceVisitor2` will produce the [expectedSource] when
-   * visiting the given [node].
-   */
+  /// Assert that a `ToSourceVisitor2` will produce the [expectedSource] when
+  /// visiting the given [node].
   void _assertSource(String expectedSource, AstNode node) {
     StringBuffer buffer = StringBuffer();
     node.accept(ToSourceVisitor(buffer));

@@ -1,4 +1,4 @@
-// Copyright (c) 2018, the Dart project authors.  Please see the AUTHORS file
+// Copyright (c) 2018, the Dart project authors. Please see the AUTHORS file
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
@@ -13,16 +13,16 @@ import 'package:path/path.dart' as path;
 import 'package:pub_semver/pub_semver.dart';
 
 /// A simple application that uses the analysis server to analyze a package.
-main(List<String> args) async {
-  String target = await parseArgs(args);
+void main(List<String> args) async {
+  var target = await parseArgs(args);
   print('Analyzing $target');
 
   // Launch the server
-  Server server = Server();
+  var server = Server();
   await server.start();
 
   // Connect to the server
-  _Handler handler = _Handler(server);
+  var handler = _Handler(server);
   server.listenToOutput(notificationProcessor: handler.handleEvent);
   if (!await handler.serverConnected(timeLimit: const Duration(seconds: 15))) {
     exit(1);
@@ -38,6 +38,7 @@ main(List<String> args) async {
   StreamSubscription<ProcessSignal> subscription;
   subscription = ProcessSignal.sigint.watch().listen((_) async {
     print('Exiting...');
+    // ignore: unawaited_futures
     subscription.cancel();
     await server.stop();
   });
@@ -72,9 +73,9 @@ class _Handler with NotificationHandler, ConnectionHandler {
 
   @override
   void onAnalysisErrors(AnalysisErrorsParams params) {
-    List<AnalysisError> errors = params.errors;
-    bool first = true;
-    for (AnalysisError error in errors) {
+    var errors = params.errors;
+    var first = true;
+    for (var error in errors) {
       if (error.type.name == 'TODO') {
         // Ignore these types of "errors"
         continue;
@@ -83,7 +84,7 @@ class _Handler with NotificationHandler, ConnectionHandler {
         first = false;
         print('${params.file}:');
       }
-      Location loc = error.location;
+      var loc = error.location;
       print('  ${error.message} • ${loc.startLine}:${loc.startColumn}');
       ++errorCount;
     }

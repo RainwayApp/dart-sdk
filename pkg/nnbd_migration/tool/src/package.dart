@@ -4,17 +4,10 @@
 
 /// Abstractions for the different sources of truth for different packages.
 
-import 'dart:convert';
 import 'dart:io';
 
+import 'package:nnbd_migration/src/utilities/subprocess_launcher.dart';
 import 'package:path/path.dart' as path;
-
-import 'multi_future_tracker.dart';
-import 'subprocess_launcher.dart';
-
-/// Route all executions of pub through this [MultiFutureTracker] to avoid
-/// parallel executions of the pub command.
-final MultiFutureTracker _pubTracker = MultiFutureTracker(1);
 
 /// Return a resolved path including the home directory in place of tilde
 /// references.
@@ -78,10 +71,11 @@ final String thisSdkRepo = () {
 
 /// Abstraction for an unmanaged package.
 class ManualPackage extends Package {
-  ManualPackage(this.packagePath) : super(packagePath);
+  final String _packagePath;
+  ManualPackage(this._packagePath) : super(_packagePath);
 
   @override
-  final String packagePath;
+  List<String> get migrationPaths => [_packagePath];
 }
 
 /// Abstraction for a package fetched via Git.
@@ -140,9 +134,8 @@ class GitPackage extends Package {
             workingDirectory: packagePath);
         // TODO(jcollins-g): allow for migrating dependencies?
       }
-      await _pubTracker.addFutureFromClosure(() =>
+      await pubTracker.runFutureFromClosure(() =>
           launcher.runStreamed('pub', ['get'], workingDirectory: packagePath));
-      await _pubTracker.wait();
     }
   }
 
@@ -151,10 +144,12 @@ class GitPackage extends Package {
       _launcher ??= SubprocessLauncher('$name-$label', _playground.env);
 
   String _packagePath;
-  @override
   String get packagePath =>
       // TODO(jcollins-g): allow packages from subdirectories of clones
       _packagePath ??= path.join(_playground.playgroundPath, '$name-$label');
+
+  @override
+  List<String> get migrationPaths => [_packagePath];
 
   @override
   String toString() {
@@ -170,7 +165,7 @@ class PubPackage extends Package {
 
   @override
   // TODO: implement packagePath
-  String get packagePath => null;
+  List<String> get migrationPaths => throw UnimplementedError();
 }
 
 /// Abstraction for a package located within pkg or third_party/pkg.
@@ -194,10 +189,10 @@ class SdkPackage extends Package {
 
   /* late final */ String _packagePath;
   @override
-  String get packagePath => _packagePath;
+  List<String> get migrationPaths => [_packagePath];
 
   @override
-  String toString() => path.relative(packagePath, from: thisSdkRepo);
+  String toString() => path.relative(_packagePath, from: thisSdkRepo);
 }
 
 /// Base class for pub, github, SDK, or possibly other package sources.
@@ -206,8 +201,8 @@ abstract class Package {
 
   Package(this.name);
 
-  /// Returns the root directory of the package.
-  String get packagePath;
+  /// Returns the set of directories for this package.
+  List<String> get migrationPaths;
 
   @override
   String toString() => name;
@@ -220,16 +215,5 @@ class Sdk {
 
   Sdk(String sdkPath) {
     this.sdkPath = path.canonicalize(sdkPath);
-  }
-
-  /// Returns true if the SDK was built with --nnbd.
-  ///
-  /// May throw if [sdkPath] is invalid, or there is an error parsing
-  /// the libraries.json file.
-  bool get isNnbdSdk {
-    // TODO(jcollins-g): contact eng-prod for a more foolproof detection method
-    String libraries = path.join(sdkPath, 'lib', 'libraries.json');
-    var decodedJson = JsonDecoder().convert(File(libraries).readAsStringSync());
-    return ((decodedJson['comment:1'] as String).contains('sdk_nnbd'));
   }
 }

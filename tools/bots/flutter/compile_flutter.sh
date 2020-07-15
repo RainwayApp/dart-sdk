@@ -7,18 +7,42 @@
 
 set -e
 
+prepareOnly=false
+
+REMAINING_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --prepareOnly|--prepare-only|--prepare_only)
+      prepareOnly=true
+      shift
+      ;;
+    *)
+      REMAINING_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+# Restore remaining arguments.
+set -- "${REMAINING_ARGS[@]}"
+
+if $prepareOnly; then
+  echo "Will prepare only!"
+fi
+
 checkout=$(pwd)
 dart=$checkout/out/ReleaseX64/dart-sdk/bin/dart
 sdk=$checkout/out/ReleaseX64/dart-sdk
 tmpdir=$(mktemp -d)
 cleanup() {
-  rm -rf "$tmpdir"
+  if ! $prepareOnly; then
+    rm -rf "$tmpdir"
+  fi
 }
 trap cleanup EXIT HUP INT QUIT TERM PIPE
 pushd "$tmpdir"
 
 git clone --single-branch -vv \
-  https://dart.googlesource.com/external/github.com/flutter/flutter
+    https://dart.googlesource.com/external/github.com/flutter/flutter
 
 pushd flutter
 bin/flutter config --no-analytics
@@ -29,26 +53,65 @@ if [ -e "$patch" ]; then
 fi
 
 bin/flutter update-packages
-popd
+popd  # flutter
 
 # Directly in temp directory again.
 mkdir src
 pushd src
 git clone --single-branch --depth=1 -vv \
-  https://dart.googlesource.com/external/github.com/flutter/engine flutter
+    https://dart.googlesource.com/external/github.com/flutter/engine flutter
 mkdir third_party
 pushd third_party
 ln -s $checkout dart
-popd
-popd
+popd  # third_party
+popd  # src
 
 ./src/third_party/dart/tools/patches/flutter-engine/apply.sh || true
 
 mkdir flutter_patched_sdk
 
-$checkout/tools/sdks/dart-sdk/bin/dart --packages=$checkout/.packages $checkout/pkg/front_end/tool/_fasta/compile_platform.dart dart:core --single-root-scheme=org-dartlang-sdk --single-root-base=$checkout/ org-dartlang-sdk:///sdk/lib/libraries.json vm_outline_strong.dill vm_platform_strong.dill vm_outline_strong.dill
-$checkout/tools/sdks/dart-sdk/bin/dart --packages=$checkout/.packages $checkout/pkg/front_end/tool/_fasta/compile_platform.dart --target=flutter dart:core --single-root-scheme=org-dartlang-sdk --single-root-base=src org-dartlang-sdk:///flutter/lib/snapshot/libraries.json vm_outline_strong.dill flutter_patched_sdk/platform_strong.dill flutter_patched_sdk/outline_strong.dill
+$checkout/tools/sdks/dart-sdk/bin/dart \
+    --packages=$checkout/.packages \
+    $checkout/pkg/front_end/tool/_fasta/compile_platform.dart \
+    dart:core \
+    -Ddart.vm.product=false \
+    -Ddart.developer.causal_async_stacks=true \
+    -Ddart.isVM=true \
+    --enable-experiment=non-nullable \
+    --nnbd-agnostic \
+    --single-root-scheme=org-dartlang-sdk \
+    --single-root-base=$checkout/ \
+    org-dartlang-sdk:///sdk/lib/libraries.json \
+    vm_outline_strong.dill \
+    vm_platform_strong.dill \
+    vm_outline_strong.dill
 
-popd
+$checkout/tools/sdks/dart-sdk/bin/dart \
+    --packages=$checkout/.packages \
+    $checkout/pkg/front_end/tool/_fasta/compile_platform.dart \
+    --enable-experiment=non-nullable \
+    --nnbd-weak \
+    --target=flutter \
+    dart:core \
+    --single-root-scheme=org-dartlang-sdk \
+    --single-root-base=src \
+    org-dartlang-sdk:///flutter/lib/snapshot/libraries.json \
+    vm_outline_strong.dill \
+    flutter_patched_sdk/platform_strong.dill \
+    flutter_patched_sdk/outline_strong.dill
 
-$dart --enable-asserts pkg/frontend_server/test/frontend_server_flutter.dart --flutterDir=$tmpdir/flutter --flutterPlatformDir=$tmpdir/flutter_patched_sdk
+popd  # tmpdir
+
+if $prepareOnly; then
+  echo "Preparations complete!"
+  echo "Flutter is now in $tmpdir/flutter and the patched sdk in $tmpdir/flutter_patched_sdk"
+  echo "You can run the test with $dart --enable-asserts pkg/frontend_server/test/frontend_server_flutter.dart --flutterDir=$tmpdir/flutter --flutterPlatformDir=$tmpdir/flutter_patched_sdk"
+else
+  $dart \
+      --enable-asserts \
+      pkg/frontend_server/test/frontend_server_flutter_suite.dart \
+      -v \
+      --flutterDir=$tmpdir/flutter \
+      --flutterPlatformDir=$tmpdir/flutter_patched_sdk \
+      $@
+fi

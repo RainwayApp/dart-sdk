@@ -11,7 +11,6 @@ import 'package:analyzer/dart/constant/value.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
-import 'package:analyzer/dart/element/type_system.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/ast/utilities.dart';
@@ -19,6 +18,7 @@ import 'package:analyzer/src/dart/constant/evaluation.dart';
 import 'package:analyzer/src/dart/constant/potentially_constant.dart';
 import 'package:analyzer/src/dart/constant/value.dart';
 import 'package:analyzer/src/dart/element/element.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/diagnostic/diagnostic_factory.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -30,6 +30,9 @@ import 'package:analyzer/src/generated/engine.dart';
 class ConstantVerifier extends RecursiveAstVisitor<void> {
   /// The error reporter by which errors will be reported.
   final ErrorReporter _errorReporter;
+
+  /// The type operations.
+  final TypeSystemImpl _typeSystem;
 
   /// The type provider used to access the known types.
   final TypeProvider _typeProvider;
@@ -51,17 +54,16 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
 
   /// Initialize a newly created constant verifier.
   ConstantVerifier(ErrorReporter errorReporter, LibraryElement currentLibrary,
-      TypeProvider typeProvider, DeclaredVariables declaredVariables,
-      // TODO(brianwilkerson) Remove the unused parameter `forAnalysisDriver`.
-      {bool forAnalysisDriver,
+      DeclaredVariables declaredVariables,
+      {
       // TODO(paulberry): make [featureSet] a required parameter.
       FeatureSet featureSet})
       : this._(
             errorReporter,
             currentLibrary,
-            typeProvider,
-            declaredVariables,
             currentLibrary.typeSystem,
+            currentLibrary.typeProvider,
+            declaredVariables,
             featureSet ??
                 (currentLibrary.context.analysisOptions as AnalysisOptionsImpl)
                     .contextFeatures);
@@ -69,16 +71,18 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
   ConstantVerifier._(
       this._errorReporter,
       this._currentLibrary,
+      this._typeSystem,
       this._typeProvider,
       this.declaredVariables,
-      TypeSystem typeSystem,
       FeatureSet featureSet)
       : _constantUpdate2018Enabled =
             featureSet.isEnabled(Feature.constant_update_2018),
         _intType = _typeProvider.intType,
         _evaluationEngine = ConstantEvaluationEngine(
             _typeProvider, declaredVariables,
-            typeSystem: typeSystem, experimentStatus: featureSet);
+            typeSystem: _typeSystem, experimentStatus: featureSet);
+
+  bool get _isNonNullableByDefault => _currentLibrary.isNonNullableByDefault;
 
   @override
   void visitAnnotation(Annotation node) {
@@ -108,7 +112,9 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
   void visitConstructorDeclaration(ConstructorDeclaration node) {
     if (node.constKeyword != null) {
       _validateConstructorInitializers(node);
-      _validateFieldInitializers(node.parent, node);
+      if (node.factoryKeyword == null) {
+        _validateFieldInitializers(node.parent, node);
+      }
     }
     _validateDefaultValues(node.parameters);
     super.visitConstructorDeclaration(node);
@@ -126,9 +132,11 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
       TypeName typeName = node.constructorName.type;
       _checkForConstWithTypeParameters(typeName);
 
+      node.argumentList.accept(this);
+
       // We need to evaluate the constant to see if any errors occur during its
       // evaluation.
-      ConstructorElement constructor = node.staticElement;
+      ConstructorElement constructor = node.constructorName.staticElement;
       if (constructor != null) {
         ConstantVisitor constantVisitor =
             ConstantVisitor(_evaluationEngine, _errorReporter);
@@ -227,40 +235,10 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
 
   @override
   void visitSwitchStatement(SwitchStatement node) {
-    // TODO(paulberry): to minimize error messages, it would be nice to
-    // compare all types with the most popular type rather than the first
-    // type.
-    NodeList<SwitchMember> switchMembers = node.members;
-    bool foundError = false;
-    DartType firstType;
-    for (SwitchMember switchMember in switchMembers) {
-      if (switchMember is SwitchCase) {
-        Expression expression = switchMember.expression;
-        DartObjectImpl caseResult = _validate(
-            expression, CompileTimeErrorCode.NON_CONSTANT_CASE_EXPRESSION);
-        if (caseResult != null) {
-          _reportErrorIfFromDeferredLibrary(
-              expression,
-              CompileTimeErrorCode
-                  .NON_CONSTANT_CASE_EXPRESSION_FROM_DEFERRED_LIBRARY);
-          DartObject value = caseResult;
-          if (firstType == null) {
-            firstType = value.type;
-          } else {
-            DartType nType = value.type;
-            if (firstType != nType) {
-              _errorReporter.reportErrorForNode(
-                  CompileTimeErrorCode.INCONSISTENT_CASE_EXPRESSION_TYPES,
-                  expression,
-                  [expression.toSource(), firstType]);
-              foundError = true;
-            }
-          }
-        }
-      }
-    }
-    if (!foundError) {
-      _checkForCaseExpressionTypeImplementsEquals(node, firstType);
+    if (_isNonNullableByDefault) {
+      _validateSwitchStatement_nullSafety(node);
+    } else {
+      _validateSwitchStatement_legacy(node);
     }
     super.visitSwitchStatement(node);
   }
@@ -291,27 +269,6 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
           CompileTimeErrorCode
               .CONST_INITIALIZED_WITH_NON_CONSTANT_VALUE_FROM_DEFERRED_LIBRARY);
     }
-  }
-
-  /// This verifies that the passed switch statement does not have a case
-  /// expression with the operator '==' overridden.
-  ///
-  /// @param node the switch statement to evaluate
-  /// @param type the common type of all 'case' expressions
-  /// @return `true` if and only if an error code is generated on the passed
-  ///         node.
-  /// See [CompileTimeErrorCode.CASE_EXPRESSION_TYPE_IMPLEMENTS_EQUALS].
-  bool _checkForCaseExpressionTypeImplementsEquals(
-      SwitchStatement node, DartType type) {
-    if (!_implementsEqualsWhenNotAllowed(type)) {
-      return false;
-    }
-    // report error
-    _errorReporter.reportErrorForToken(
-        CompileTimeErrorCode.CASE_EXPRESSION_TYPE_IMPLEMENTS_EQUALS,
-        node.switchKeyword,
-        [type]);
-    return true;
   }
 
   /// Verify that the given [type] does not reference any type parameters.
@@ -345,9 +302,11 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
   ///         not <i>int</i> or <i>String</i>.
   bool _implementsEqualsWhenNotAllowed(DartType type) {
     // ignore int or String
-    if (type == null || type == _intType || type == _typeProvider.stringType) {
+    if (type == null ||
+        type.element == _intType.element ||
+        type.element == _typeProvider.stringType.element) {
       return false;
-    } else if (type == _typeProvider.doubleType) {
+    } else if (type.element == _typeProvider.doubleType.element) {
       return true;
     }
     // prepare ClassElement
@@ -426,7 +385,10 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
   }
 
   void _reportNotPotentialConstants(AstNode node) {
-    var notPotentiallyConstants = getNotPotentiallyConstants(node);
+    var notPotentiallyConstants = getNotPotentiallyConstants(
+      node,
+      isNonNullableByDefault: _isNonNullableByDefault,
+    );
     if (notPotentiallyConstants.isEmpty) return;
 
     for (var notConst in notPotentiallyConstants) {
@@ -515,7 +477,11 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
         Expression defaultValue = parameter.defaultValue;
         DartObjectImpl result;
         if (defaultValue == null) {
-          result = DartObjectImpl(_typeProvider.nullType, NullState.NULL_STATE);
+          result = DartObjectImpl(
+            _typeSystem,
+            _typeProvider.nullType,
+            NullState.NULL_STATE,
+          );
         } else {
           result = _validate(
               defaultValue, CompileTimeErrorCode.NON_CONSTANT_DEFAULT_VALUE);
@@ -561,13 +527,111 @@ class ConstantVerifier extends RecursiveAstVisitor<void> {
             DartObjectImpl result = initializer
                 .accept(ConstantVisitor(_evaluationEngine, subErrorReporter));
             if (result == null) {
-              _errorReporter.reportErrorForNode(
+              _errorReporter.reportErrorForToken(
                   CompileTimeErrorCode
                       .CONST_CONSTRUCTOR_WITH_FIELD_INITIALIZED_BY_NON_CONST,
-                  errorSite,
+                  errorSite.constKeyword,
                   [variableDeclaration.name.name]);
             }
           }
+        }
+      }
+    }
+  }
+
+  void _validateSwitchStatement_legacy(SwitchStatement node) {
+    // TODO(paulberry): to minimize error messages, it would be nice to
+    // compare all types with the most popular type rather than the first
+    // type.
+    bool foundError = false;
+    DartType firstType;
+    for (var switchMember in node.members) {
+      if (switchMember is SwitchCase) {
+        Expression expression = switchMember.expression;
+
+        DartObjectImpl expressionValue = _validate(
+          expression,
+          CompileTimeErrorCode.NON_CONSTANT_CASE_EXPRESSION,
+        );
+        if (expressionValue == null) {
+          continue;
+        }
+
+        _reportErrorIfFromDeferredLibrary(
+          expression,
+          CompileTimeErrorCode
+              .NON_CONSTANT_CASE_EXPRESSION_FROM_DEFERRED_LIBRARY,
+        );
+
+        var expressionValueType = _typeSystem.toLegacyType(
+          expressionValue.type,
+        );
+
+        if (firstType == null) {
+          firstType = expressionValueType;
+        } else {
+          if (firstType != expressionValueType) {
+            _errorReporter.reportErrorForNode(
+              CompileTimeErrorCode.INCONSISTENT_CASE_EXPRESSION_TYPES,
+              expression,
+              [expression.toSource(), firstType],
+            );
+            foundError = true;
+          }
+        }
+      }
+    }
+
+    if (foundError) {
+      return;
+    }
+
+    if (_implementsEqualsWhenNotAllowed(firstType)) {
+      _errorReporter.reportErrorForToken(
+        CompileTimeErrorCode.CASE_EXPRESSION_TYPE_IMPLEMENTS_EQUALS,
+        node.switchKeyword,
+        [firstType],
+      );
+    }
+  }
+
+  void _validateSwitchStatement_nullSafety(SwitchStatement node) {
+    var switchType = node.expression.staticType;
+    for (var switchMember in node.members) {
+      if (switchMember is SwitchCase) {
+        Expression expression = switchMember.expression;
+
+        DartObjectImpl expressionValue = _validate(
+          expression,
+          CompileTimeErrorCode.NON_CONSTANT_CASE_EXPRESSION,
+        );
+        if (expressionValue == null) {
+          continue;
+        }
+
+        _reportErrorIfFromDeferredLibrary(
+          expression,
+          CompileTimeErrorCode
+              .NON_CONSTANT_CASE_EXPRESSION_FROM_DEFERRED_LIBRARY,
+        );
+
+        var expressionType = expressionValue.type;
+
+        if (_implementsEqualsWhenNotAllowed(expressionType)) {
+          _errorReporter.reportErrorForNode(
+            CompileTimeErrorCode.CASE_EXPRESSION_TYPE_IMPLEMENTS_EQUALS,
+            expression,
+            [expressionType],
+          );
+        }
+
+        if (!_typeSystem.isSubtypeOf(expressionType, switchType)) {
+          _errorReporter.reportErrorForNode(
+            CompileTimeErrorCode
+                .CASE_EXPRESSION_TYPE_IS_NOT_SWITCH_EXPRESSION_SUBTYPE,
+            expression,
+            [expressionType, switchType],
+          );
         }
       }
     }
@@ -697,7 +761,10 @@ class _ConstLiteralVerifier {
 
   /// Return `true` if the [node] is a potential constant.
   bool _reportNotPotentialConstants(AstNode node) {
-    var notPotentiallyConstants = getNotPotentiallyConstants(node);
+    var notPotentiallyConstants = getNotPotentiallyConstants(
+      node,
+      isNonNullableByDefault: verifier._isNonNullableByDefault,
+    );
     if (notPotentiallyConstants.isEmpty) return true;
 
     for (var notConst in notPotentiallyConstants) {

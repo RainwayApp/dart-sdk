@@ -28,6 +28,17 @@ const char* CanonicalFunction(const char* func);
 
 #define CURRENT_FUNC CanonicalFunction(__FUNCTION__)
 
+// Checks that the current isolate group is not NULL.
+#define CHECK_ISOLATE_GROUP(isolate_group)                                     \
+  do {                                                                         \
+    if ((isolate_group) == NULL) {                                             \
+      FATAL1(                                                                  \
+          "%s expects there to be a current isolate group. Did you "           \
+          "forget to call Dart_CreateIsolateGroup or Dart_EnterIsolate?",      \
+          CURRENT_FUNC);                                                       \
+    }                                                                          \
+  } while (0)
+
 // Checks that the current isolate is not NULL.
 #define CHECK_ISOLATE(isolate)                                                 \
   do {                                                                         \
@@ -145,10 +156,10 @@ class Api : AllStatic {
   };
 
   // Creates a new local handle.
-  static Dart_Handle NewHandle(Thread* thread, RawObject* raw);
+  static Dart_Handle NewHandle(Thread* thread, ObjectPtr raw);
 
   // Unwraps the raw object from the handle.
-  static RawObject* UnwrapHandle(Dart_Handle object);
+  static ObjectPtr UnwrapHandle(Dart_Handle object);
 
 // Unwraps a raw Type from the handle.  The handle will be null if
 // the object was not of the requested Type.
@@ -173,24 +184,21 @@ class Api : AllStatic {
   // Casts the internal Isolate* type to the external Dart_Isolate type.
   static Dart_Isolate CastIsolate(Isolate* isolate);
 
+  // Casts the internal IsolateGroup* type to the external Dart_IsolateGroup
+  // type.
+  static Dart_IsolateGroup CastIsolateGroup(IsolateGroup* isolate);
+
   // Gets the handle used to designate successful return.
   static Dart_Handle Success() { return Api::True(); }
 
-  // Sets up the acquired error object after initializing an Isolate. This
-  // object is pre-created because we will not be able to allocate this
-  // object when the error actually occurs. When the error occurs there will
-  // be outstanding acquires to internal data pointers making it unsafe to
-  // allocate objects on the dart heap.
-  static void SetupAcquiredError(Isolate* isolate);
-
   // Gets the handle which holds the pre-created acquired error object.
-  static Dart_Handle AcquiredError(Isolate* isolate);
+  static Dart_Handle AcquiredError(IsolateGroup* isolate_group);
 
   // Returns true if the handle holds a Smi.
   static bool IsSmi(Dart_Handle handle) {
     // Important: we do not require current thread to be in VM state because
     // we do not dereference the handle.
-    RawObject* raw = *(reinterpret_cast<RawObject**>(handle));
+    ObjectPtr raw = *(reinterpret_cast<ObjectPtr*>(handle));
     return !raw->IsHeapObject();
   }
 
@@ -198,8 +206,8 @@ class Api : AllStatic {
   static intptr_t SmiValue(Dart_Handle handle) {
     // Important: we do not require current thread to be in VM state because
     // we do not dereference the handle.
-    RawObject* value = *(reinterpret_cast<RawObject**>(handle));
-    return Smi::Value(static_cast<RawSmi*>(value));
+    ObjectPtr value = *(reinterpret_cast<ObjectPtr*>(handle));
+    return Smi::Value(static_cast<SmiPtr>(value));
   }
 
   // Returns true if the handle holds a Dart Instance.
@@ -212,11 +220,11 @@ class Api : AllStatic {
 
   // Returns true if the handle holds an Error.
   static bool IsError(Dart_Handle handle) {
-    return RawObject::IsErrorClassId(ClassId(handle));
+    return IsErrorClassId(ClassId(handle));
   }
 
   static intptr_t ClassId(Dart_Handle handle) {
-    RawObject* raw = UnwrapHandle(handle);
+    ObjectPtr raw = UnwrapHandle(handle);
     if (!raw->IsHeapObject()) {
       return kSmiCid;
     }
@@ -297,29 +305,20 @@ class Api : AllStatic {
   static void SetWeakHandleReturnValue(NativeArguments* args,
                                        Dart_WeakPersistentHandle retval);
 
-  static RawString* GetEnvironmentValue(Thread* thread, const String& name);
+  static StringPtr GetEnvironmentValue(Thread* thread, const String& name);
 
   static bool IsFfiEnabled() {
-    // dart:ffi is not implemented for the following configurations
-#if defined(TARGET_ARCH_ARM) &&                                                \
-    !(defined(TARGET_OS_ANDROID) || defined(TARGET_OS_MACOS_IOS))
-    // TODO(36309): Support hardfp calling convention.
-    return false;
-#elif !defined(TARGET_OS_LINUX) && !defined(TARGET_OS_MACOS) &&                \
-    !defined(TARGET_OS_ANDROID) && !defined(TARGET_OS_WINDOWS)
+#if defined(TAGET_OS_FUCHSIA)
     return false;
 #else
-    // dart:ffi is also not implemented for precompiled in which case
-    // FLAG_enable_ffi is set to false by --precompilation.
-    // Once dart:ffi is supported on all targets, only users will set this flag
     return FLAG_enable_ffi;
 #endif
   }
 
  private:
-  static Dart_Handle InitNewHandle(Thread* thread, RawObject* raw);
+  static Dart_Handle InitNewHandle(Thread* thread, ObjectPtr raw);
 
-  static RawString* CallEnvironmentCallback(Thread* thread, const String& name);
+  static StringPtr CallEnvironmentCallback(Thread* thread, const String& name);
 
   // Thread local key used by the API. Currently holds the current
   // ApiNativeScope if any.
@@ -341,13 +340,7 @@ class Api : AllStatic {
 #define CHECK_CALLBACK_STATE(thread)                                           \
   if (thread->no_callback_scope_depth() != 0) {                                \
     return reinterpret_cast<Dart_Handle>(                                      \
-        Api::AcquiredError(thread->isolate()));                                \
-  }
-
-#define CHECK_COMPILATION_ALLOWED(isolate)                                     \
-  if (!isolate->compilation_allowed()) {                                       \
-    return Api::NewError("%s: Cannot load after Dart_Precompile",              \
-                         CURRENT_FUNC);                                        \
+        Api::AcquiredError(thread->isolate_group()));                          \
   }
 
 #define ASSERT_CALLBACK_STATE(thread)                                          \
@@ -360,6 +353,9 @@ class IsolateGroupSource;
 Isolate* CreateWithinExistingIsolateGroup(IsolateGroup* group,
                                           const char* name,
                                           char** error);
+Isolate* CreateWithinExistingIsolateGroupAOT(IsolateGroup* group,
+                                             const char* name,
+                                             char** error);
 
 }  // namespace dart.
 

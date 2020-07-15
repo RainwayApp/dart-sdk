@@ -11,23 +11,21 @@ import 'package:test/test.dart';
 
 import '../../test/integration/support/integration_tests.dart';
 
-/**
- * Base class for analysis server memory usage tests.
- */
+/// Base class for analysis server memory usage tests.
 class AnalysisServerMemoryUsageTest
     extends AbstractAnalysisServerIntegrationTest {
   int _vmServicePort;
 
   Future<int> getMemoryUsage() async {
-    Uri uri = Uri.parse('ws://127.0.0.1:$_vmServicePort/ws');
-    final ServiceProtocol service = await ServiceProtocol.connect(uri);
-    final Map vm = await service.call('getVM');
+    var uri = Uri.parse('ws://127.0.0.1:$_vmServicePort/ws');
+    var service = await ServiceProtocol.connect(uri);
+    var vm = await service.call('getVM');
 
-    int total = 0;
+    var total = 0;
 
     List isolateRefs = vm['isolates'];
     for (Map isolateRef in isolateRefs) {
-      Map isolate =
+      var isolate =
           await service.call('getIsolate', {'isolateId': isolateRef['id']});
 
       Map _heaps = isolate['_heaps'];
@@ -40,16 +38,12 @@ class AnalysisServerMemoryUsageTest
     return total;
   }
 
-  /**
-   * Send the server an 'analysis.setAnalysisRoots' command directing it to
-   * analyze [sourceDirectory].
-   */
+  /// Send the server an 'analysis.setAnalysisRoots' command directing it to
+  /// analyze [sourceDirectory].
   Future setAnalysisRoot() =>
       sendAnalysisSetAnalysisRoots([sourceDirectory.path], []);
 
-  /**
-   * The server is automatically started before every test.
-   */
+  /// The server is automatically started before every test.
   @override
   Future setUp() async {
     _vmServicePort = await _findAvailableSocketPort();
@@ -61,7 +55,7 @@ class AnalysisServerMemoryUsageTest
       // A server error should never happen during an integration test.
       fail('${params.message}\n${params.stackTrace}');
     });
-    Completer serverConnected = Completer();
+    var serverConnected = Completer();
     onServerConnected.listen((_) {
       outOfTestExpect(serverConnected.isCompleted, isFalse);
       serverConnected.complete();
@@ -75,15 +69,11 @@ class AnalysisServerMemoryUsageTest
     });
   }
 
-  /**
-   * After every test, the server is stopped.
-   */
+  /// After every test, the server is stopped.
   Future shutdown() async => await shutdownIfNeeded();
 
-  /**
-   * Enable [ServerService.STATUS] notifications so that [analysisFinished]
-   * can be used.
-   */
+  /// Enable [ServerService.STATUS] notifications so that [analysisFinished]
+  /// can be used.
   Future subscribeToStatusNotifications() async {
     await sendServerSetSubscriptions([ServerService.STATUS]);
   }
@@ -108,13 +98,18 @@ class ServiceProtocol {
     socket.listen(_handleMessage);
   }
 
-  Future<Map> call(String method, [Map args]) {
-    String id = '${++_id}';
-    Completer<Map> completer = Completer();
+  Future<Map> call(String method, [Map args = const {}]) {
+    var id = '${++_id}';
+    var completer = Completer<Map>();
     _completers[id] = completer;
-    Map m = {'id': id, 'method': method};
+    var m = <String, dynamic>{
+      'jsonrpc': '2.0',
+      'id': id,
+      'method': method,
+      'args': args
+    };
     if (args != null) m['params'] = args;
-    String message = jsonEncode(m);
+    var message = jsonEncode(m);
     socket.add(message);
     return completer.future;
   }
@@ -139,7 +134,7 @@ class ServiceProtocol {
   }
 
   static Future<ServiceProtocol> connect(Uri uri) async {
-    WebSocket socket = await WebSocket.connect(uri.toString());
+    var socket = await WebSocket.connect(uri.toString());
     return ServiceProtocol._(socket);
   }
 }

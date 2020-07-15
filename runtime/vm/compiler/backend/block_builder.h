@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_BLOCK_BUILDER_H_
 #define RUNTIME_VM_COMPILER_BACKEND_BLOCK_BUILDER_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/compiler/backend/flow_graph.h"
 #include "vm/compiler/backend/il.h"
 
@@ -19,10 +23,16 @@ class BlockBuilder : public ValueObject {
         entry_(entry),
         current_(entry),
         dummy_env_(
-            new Environment(0, 0, flow_graph->parsed_function(), nullptr)) {}
+            new Environment(0, 0, flow_graph->parsed_function(), nullptr)) {
+    // Some graph transformations use environments from block entries.
+    entry->SetEnvironment(dummy_env_);
+  }
 
   Definition* AddToInitialDefinitions(Definition* def) {
     def->set_ssa_temp_index(flow_graph_->alloc_ssa_temp_index());
+    if (FlowGraph::NeedsPairLocation(def->representation())) {
+      flow_graph_->alloc_ssa_temp_index();
+    }
     auto normal_entry = flow_graph_->graph_entry()->normal_entry();
     flow_graph_->AddToInitialDefinitions(normal_entry, def);
     return def;
@@ -37,7 +47,8 @@ class BlockBuilder : public ValueObject {
 
   template <typename T>
   T* AddInstruction(T* instr) {
-    if (instr->ComputeCanDeoptimize()) {
+    if (instr->ComputeCanDeoptimize() ||
+        instr->CanBecomeDeoptimizationTarget()) {
       // All instructions that can deoptimize must have an environment attached
       // to them.
       instr->SetEnvironment(dummy_env_);
@@ -46,17 +57,35 @@ class BlockBuilder : public ValueObject {
     return instr;
   }
 
-  void AddReturn(Value* value) {
+  const Function& function() const { return flow_graph_->function(); }
+
+  ReturnInstr* AddReturn(Value* value) {
+    const auto& function = flow_graph_->function();
+    const auto representation = FlowGraph::ReturnRepresentationOf(function);
     ReturnInstr* instr = new ReturnInstr(
-        TokenPos(), value, CompilerState::Current().GetNextDeoptId());
+        TokenPos(), value, CompilerState::Current().GetNextDeoptId(),
+        PcDescriptorsLayout::kInvalidYieldIndex, representation);
     AddInstruction(instr);
     entry_->set_last_instruction(instr);
+    return instr;
   }
 
   Definition* AddParameter(intptr_t index, bool with_frame) {
+    const auto& function = flow_graph_->function();
+    const intptr_t param_offset = FlowGraph::ParameterOffsetAt(function, index);
+    const auto representation =
+        FlowGraph::ParameterRepresentationAt(function, index);
+    return AddParameter(index, param_offset, with_frame, representation);
+  }
+
+  Definition* AddParameter(intptr_t index,
+                           intptr_t param_offset,
+                           bool with_frame,
+                           Representation representation) {
     auto normal_entry = flow_graph_->graph_entry()->normal_entry();
     return AddToInitialDefinitions(
-        new ParameterInstr(index, normal_entry, with_frame ? FPREG : SPREG));
+        new ParameterInstr(index, param_offset, normal_entry, representation,
+                           with_frame ? FPREG : SPREG));
   }
 
   TokenPosition TokenPos() { return flow_graph_->function().token_pos(); }
@@ -89,6 +118,8 @@ class BlockBuilder : public ValueObject {
                          TargetEntryInstr* false_successor) {
     auto branch =
         new BranchInstr(comp, CompilerState::Current().GetNextDeoptId());
+    // Some graph transformations use environments from branches.
+    branch->SetEnvironment(dummy_env_);
     current_->AppendInstruction(branch);
     current_ = nullptr;
 
@@ -100,6 +131,9 @@ class BlockBuilder : public ValueObject {
 
   void AddPhi(PhiInstr* phi) {
     phi->set_ssa_temp_index(flow_graph_->alloc_ssa_temp_index());
+    if (FlowGraph::NeedsPairLocation(phi->representation())) {
+      flow_graph_->alloc_ssa_temp_index();
+    }
     phi->mark_alive();
     entry_->AsJoinEntry()->InsertPhi(phi);
   }

@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analyzer/dart/analysis/declared_variables.dart';
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
@@ -14,6 +15,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../../../generated/test_support.dart';
 import '../resolution/driver_resolution.dart';
+import 'potentially_constant_test.dart';
 
 main() {
   defineReflectiveSuite(() {
@@ -21,6 +23,7 @@ main() {
     defineReflectiveTests(ConstantVisitorWithConstantUpdate2018Test);
     defineReflectiveTests(
         ConstantVisitorWithFlowControlAndSpreadCollectionsTest);
+    defineReflectiveTests(ConstantVisitorWithNullSafetyTest);
   });
 }
 
@@ -107,6 +110,91 @@ const c = true ? x : 0;
     expect(result, isNull);
   }
 
+  test_visitInstanceCreationExpression_bool_fromEnvironment() async {
+    await resolveTestCode('''
+const a = bool.fromEnvironment('a');
+const b = bool.fromEnvironment('b', defaultValue: true);
+''');
+    expect(
+      _evaluateConstant('a'),
+      _boolValue(false),
+    );
+    expect(
+      _evaluateConstant('a', declaredVariables: {'a': 'true'}),
+      _boolValue(true),
+    );
+
+    expect(
+      _evaluateConstant(
+        'b',
+        declaredVariables: {'b': 'bbb'},
+        lexicalEnvironment: {'defaultValue': _boolValue(true)},
+      ),
+      _boolValue(true),
+    );
+  }
+
+  test_visitInstanceCreationExpression_bool_hasEnvironment() async {
+    await resolveTestCode('''
+const a = bool.hasEnvironment('a');
+''');
+    expect(
+      _evaluateConstant('a'),
+      _boolValue(false),
+    );
+
+    expect(
+      _evaluateConstant('a', declaredVariables: {'a': '42'}),
+      _boolValue(true),
+    );
+  }
+
+  test_visitInstanceCreationExpression_int_fromEnvironment() async {
+    await resolveTestCode('''
+const a = int.fromEnvironment('a');
+const b = int.fromEnvironment('b', defaultValue: 42);
+''');
+    expect(
+      _evaluateConstant('a'),
+      _intValue(0),
+    );
+    expect(
+      _evaluateConstant('a', declaredVariables: {'a': '5'}),
+      _intValue(5),
+    );
+
+    expect(
+      _evaluateConstant(
+        'b',
+        declaredVariables: {'b': 'bbb'},
+        lexicalEnvironment: {'defaultValue': _intValue(42)},
+      ),
+      _intValue(42),
+    );
+  }
+
+  test_visitInstanceCreationExpression_string_fromEnvironment() async {
+    await resolveTestCode('''
+const a = String.fromEnvironment('a');
+''');
+    expect(
+      _evaluateConstant('a'),
+      DartObjectImpl(
+        typeSystem,
+        typeProvider.stringType,
+        StringState(''),
+      ),
+    );
+    expect(
+      _evaluateConstant('a', declaredVariables: {'a': 'test'}),
+      DartObjectImpl(
+        typeSystem,
+        typeProvider.stringType,
+        StringState('test'),
+      ),
+    );
+  }
+
   test_visitIntegerLiteral() async {
     await resolveTestCode('''
 const double d = 3;
@@ -159,7 +247,7 @@ const a = dynamic;
 const a = b;
 const b = 3;''');
     var environment = <String, DartObjectImpl>{
-      'b': DartObjectImpl(typeProvider.intType, IntState(6)),
+      'b': DartObjectImpl(typeSystem, typeProvider.intType, IntState(6)),
     };
     var result = _evaluateConstant('a', lexicalEnvironment: environment);
     expect(result.type, typeProvider.intType);
@@ -171,7 +259,7 @@ const b = 3;''');
 const a = b;
 const b = 3;''');
     var environment = <String, DartObjectImpl>{
-      'c': DartObjectImpl(typeProvider.intType, IntState(6)),
+      'c': DartObjectImpl(typeSystem, typeProvider.intType, IntState(6)),
     };
     var result = _evaluateConstant('a', lexicalEnvironment: environment);
     expect(result.type, typeProvider.intType);
@@ -186,12 +274,38 @@ const b = 3;''');
     expect(result.type, typeProvider.intType);
     expect(result.toIntValue(), 3);
   }
+
+  DartObjectImpl _boolValue(bool value) {
+    if (identical(value, false)) {
+      return DartObjectImpl(
+        typeSystem,
+        typeProvider.boolType,
+        BoolState.FALSE_STATE,
+      );
+    } else if (identical(value, true)) {
+      return DartObjectImpl(
+        typeSystem,
+        typeProvider.boolType,
+        BoolState.TRUE_STATE,
+      );
+    }
+    fail("Invalid boolean value used in test");
+  }
+
+  DartObjectImpl _intValue(int value) {
+    return DartObjectImpl(
+      typeSystem,
+      typeProvider.intType,
+      IntState(value),
+    );
+  }
 }
 
 class ConstantVisitorTestSupport extends DriverResolutionTest {
   DartObjectImpl _evaluateConstant(
     String name, {
     List<ErrorCode> errorCodes,
+    Map<String, String> declaredVariables = const {},
     Map<String, DartObjectImpl> lexicalEnvironment,
   }) {
     var options = driver.analysisOptions as AnalysisOptionsImpl;
@@ -209,7 +323,7 @@ class ConstantVisitorTestSupport extends DriverResolutionTest {
       ConstantVisitor(
         ConstantEvaluationEngine(
           typeProvider,
-          DeclaredVariables(),
+          DeclaredVariables.fromMap(declaredVariables),
           experimentStatus: options.experimentStatus,
           typeSystem: this.result.typeSystem,
         ),
@@ -231,10 +345,9 @@ class ConstantVisitorWithConstantUpdate2018Test
     extends ConstantVisitorTestSupport {
   @override
   AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..enabledExperiments = [
-      EnableString.constant_update_2018,
-      EnableString.triple_shift
-    ];
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.constant_update_2018, EnableString.triple_shift],
+    );
 
   test_visitAsExpression_instanceOfSameClass() async {
     await resolveTestCode('''
@@ -1039,5 +1152,24 @@ const c = {1, ...{2, 3}, 4};
     DartObjectImpl result = _evaluateConstant('c');
     expect(result.type, typeProvider.setType2(typeProvider.intType));
     expect(result.toSetValue().map((e) => e.toIntValue()), [1, 2, 3, 4]);
+  }
+}
+
+@reflectiveTest
+class ConstantVisitorWithNullSafetyTest extends ConstantVisitorTestSupport
+    with WithNullSafetyMixin {
+  test_visitAsExpression_potentialConstType() async {
+    await assertNoErrorsInCode('''
+const num three = 3;
+
+class C<T extends num> {
+  final T w;
+  const C() : w = three as T;
+}
+
+void main() {
+  const C<int>().w;
+}
+''');
   }
 }

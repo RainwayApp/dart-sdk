@@ -5,12 +5,14 @@
 #ifndef RUNTIME_VM_COMPILER_FRONTEND_BYTECODE_FLOW_GRAPH_BUILDER_H_
 #define RUNTIME_VM_COMPILER_FRONTEND_BYTECODE_FLOW_GRAPH_BUILDER_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include "vm/compiler/backend/il.h"
 #include "vm/compiler/frontend/base_flow_graph_builder.h"
 #include "vm/compiler/frontend/kernel_translation_helper.h"  // For InferredTypeMetadata
 #include "vm/constants_kbc.h"
-
-#if !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
 namespace kernel {
@@ -208,9 +210,6 @@ class BytecodeFlowGraphBuilder {
   }
   const Function& function() const { return parsed_function()->function(); }
 
-  // The NNBD mode to use when compiling type tests.
-  NNBDMode nnbd_mode() const { return function().nnbd_mode(); }
-
   BaseFlowGraphBuilder* flow_graph_builder_;
   Zone* zone_;
   bool is_generating_interpreter_;
@@ -250,5 +249,4 @@ class BytecodeFlowGraphBuilder {
 }  // namespace kernel
 }  // namespace dart
 
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 #endif  // RUNTIME_VM_COMPILER_FRONTEND_BYTECODE_FLOW_GRAPH_BUILDER_H_

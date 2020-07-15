@@ -32,9 +32,11 @@ class KernelAnnotationProcessor implements AnnotationProcessor {
     KCommonElements commonElements = elementMap.commonElements;
     String annotationName;
     for (ConstantValue value in metadata) {
-      String name = readAnnotationName(
-          spannable, value, commonElements.jsAnnotationClass,
-          defaultValue: '');
+      String name = readAnnotationName(commonElements.dartTypes, spannable,
+              value, commonElements.jsAnnotationClass1, defaultValue: '') ??
+          readAnnotationName(commonElements.dartTypes, spannable, value,
+              commonElements.jsAnnotationClass2,
+              defaultValue: '');
       if (annotationName == null) {
         annotationName = name;
       } else if (name != null) {
@@ -161,19 +163,6 @@ class KernelAnnotationProcessor implements AnnotationProcessor {
             _nativeBasicDataBuilder.markAsJsInteropMember(
                 constructor, memberName);
           }
-
-          // TODO(33834): It is a breaking change (at least against in some of
-          // our own tests) but JS-interop constructors should be required to be
-          // external since we otherwise allow creating a Dart object that tries
-          // to pass as a JS-interop class.
-          /*if (!constructor.isExternal) {
-            reporter.reportErrorMessage(constructor,
-                MessageKind.JS_INTEROP_CLASS_NON_EXTERNAL_CONSTRUCTOR, {
-              'cls': cls.name,
-              'constructor':
-                  constructor.name.isEmpty ? '${cls.name}.' : constructor.name
-            });
-          }*/
 
           if (constructor.isFactoryConstructor && isAnonymous) {
             if (constructor.parameterStructure.positionalParameters > 0) {

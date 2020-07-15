@@ -12,7 +12,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../analysis_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AnalysisNotificationOverridesTest);
   });
@@ -25,13 +25,11 @@ class AnalysisNotificationOverridesTest extends AbstractAnalysisTest {
 
   final Completer<void> _resultsAvailable = Completer();
 
-  /**
-   * Asserts that there is an overridden interface [OverriddenMember] at the
-   * offset of [search] in [override].
-   */
+  /// Asserts that there is an overridden interface [OverriddenMember] at the
+  /// offset of [search] in [override].
   void assertHasInterfaceMember(String search) {
-    int offset = findOffset(search);
-    for (OverriddenMember member in overrideObject.interfaceMembers) {
+    var offset = findOffset(search);
+    for (var member in overrideObject.interfaceMembers) {
       if (member.element.location.offset == offset) {
         return;
       }
@@ -40,68 +38,56 @@ class AnalysisNotificationOverridesTest extends AbstractAnalysisTest {
         '${overrideObject.interfaceMembers.join('\n')}');
   }
 
-  /**
-   * Validates that there is an [Override] at the offset of [search].
-   *
-   * If [length] is not specified explicitly, then length of an identifier
-   * from [search] is used.
-   */
+  /// Validates that there is an [Override] at the offset of [search].
+  ///
+  /// If [length] is not specified explicitly, then length of an identifier
+  /// from [search] is used.
   void assertHasOverride(String search, [int length = -1]) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     if (length == -1) {
       length = findIdentifierLength(search);
     }
     findOverride(offset, length, true);
   }
 
-  /**
-   * Asserts that there is an overridden superclass [OverriddenMember] at the
-   * offset of [search] in [override].
-   */
+  /// Asserts that there is an overridden superclass [OverriddenMember] at the
+  /// offset of [search] in [override].
   void assertHasSuperElement(String search) {
-    int offset = findOffset(search);
-    OverriddenMember member = overrideObject.superclassMember;
+    var offset = findOffset(search);
+    var member = overrideObject.superclassMember;
     expect(member.element.location.offset, offset);
   }
 
-  /**
-   * Asserts that there are no overridden members from interfaces.
-   */
+  /// Asserts that there are no overridden members from interfaces.
   void assertNoInterfaceMembers() {
     expect(overrideObject.interfaceMembers, isNull);
   }
 
-  /**
-   * Validates that there is no [Override] at the offset of [search].
-   *
-   * If [length] is not specified explicitly, then length of an identifier
-   * from [search] is used.
-   */
+  /// Validates that there is no [Override] at the offset of [search].
+  ///
+  /// If [length] is not specified explicitly, then length of an identifier
+  /// from [search] is used.
   void assertNoOverride(String search, [int length = -1]) {
-    int offset = findOffset(search);
+    var offset = findOffset(search);
     if (length == -1) {
       length = findIdentifierLength(search);
     }
     findOverride(offset, length, false);
   }
 
-  /**
-   * Asserts that there are no overridden member from the superclass.
-   */
+  /// Asserts that there are no overridden member from the superclass.
   void assertNoSuperMember() {
     expect(overrideObject.superclassMember, isNull);
   }
 
-  /**
-   * Finds an [Override] with the given [offset] and [length].
-   *
-   * If [exists] is `true`, then fails if such [Override] does not exist.
-   * Otherwise remembers this it into [override].
-   *
-   * If [exists] is `false`, then fails if such [Override] exists.
-   */
+  /// Finds an [Override] with the given [offset] and [length].
+  ///
+  /// If [exists] is `true`, then fails if such [Override] does not exist.
+  /// Otherwise remembers this it into [override].
+  ///
+  /// If [exists] is `false`, then fails if such [Override] exists.
   void findOverride(int offset, int length, [bool exists]) {
-    for (Override override in overridesList) {
+    for (var override in overridesList) {
       if (override.offset == offset && override.length == length) {
         if (exists == false) {
           fail('Not expected to find (offset=$offset; length=$length) in\n'
@@ -139,7 +125,7 @@ class AnalysisNotificationOverridesTest extends AbstractAnalysisTest {
     createProject();
   }
 
-  test_afterAnalysis() async {
+  Future<void> test_afterAnalysis() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -155,7 +141,7 @@ class B implements A {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_BAD_fieldByMethod() async {
+  Future<void> test_BAD_fieldByMethod() async {
     addTestFile('''
 class A {
   int fff; // in A
@@ -168,7 +154,7 @@ class B extends A {
     assertNoOverride('fff() {} // in B');
   }
 
-  test_BAD_getterByMethod() async {
+  Future<void> test_BAD_getterByMethod() async {
     addTestFile('''
 class A {
   get fff => null;
@@ -181,7 +167,7 @@ class B extends A {
     assertNoOverride('fff() {}');
   }
 
-  test_BAD_getterBySetter() async {
+  Future<void> test_BAD_getterBySetter() async {
     addTestFile('''
 class A {
   get fff => null;
@@ -194,7 +180,7 @@ class B extends A {
     assertNoOverride('fff(x) {}');
   }
 
-  test_BAD_methodByField() async {
+  Future<void> test_BAD_methodByField() async {
     addTestFile('''
 class A {
   fff() {} // in A
@@ -207,7 +193,7 @@ class B extends A {
     assertNoOverride('fff; // in B');
   }
 
-  test_BAD_methodByGetter() async {
+  Future<void> test_BAD_methodByGetter() async {
     addTestFile('''
 class A {
   fff() {}
@@ -220,7 +206,7 @@ class B extends A {
     assertNoOverride('fff => null');
   }
 
-  test_BAD_methodBySetter() async {
+  Future<void> test_BAD_methodBySetter() async {
     addTestFile('''
 class A {
   fff(x) {} // A
@@ -233,7 +219,7 @@ class B extends A {
     assertNoOverride('fff(x) {} // B');
   }
 
-  test_BAD_privateByPrivate_inDifferentLib() async {
+  Future<void> test_BAD_privateByPrivate_inDifferentLib() async {
     newFile(join(testFolder, 'lib.dart'), content: r'''
 class A {
   void _m() {}
@@ -249,7 +235,7 @@ class B extends A {
     assertNoOverride('_m() {} // in B');
   }
 
-  test_BAD_setterByGetter() async {
+  Future<void> test_BAD_setterByGetter() async {
     addTestFile('''
 class A {
   set fff(x) {}
@@ -262,7 +248,7 @@ class B extends A {
     assertNoOverride('fff => null;');
   }
 
-  test_BAD_setterByMethod() async {
+  Future<void> test_BAD_setterByMethod() async {
     addTestFile('''
 class A {
   set fff(x) {} // A
@@ -275,7 +261,7 @@ class B extends A {
     assertNoOverride('fff(x) {} // B');
   }
 
-  test_definedInInterface_ofInterface() async {
+  Future<void> test_definedInInterface_ofInterface() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -291,7 +277,7 @@ class C implements B {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_definedInInterface_ofSuper() async {
+  Future<void> test_definedInInterface_ofSuper() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -307,7 +293,7 @@ class C extends B {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_inMixin_interface_method_direct_single() async {
+  Future<void> test_inMixin_interface_method_direct_single() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -323,7 +309,7 @@ mixin M implements A {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_inMixin_superclassConstraint_method_direct() async {
+  Future<void> test_inMixin_superclassConstraint_method_direct() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -339,7 +325,7 @@ mixin M on A {
     assertNoInterfaceMembers();
   }
 
-  test_interface_method_direct_multiple() async {
+  Future<void> test_interface_method_direct_multiple() async {
     addTestFile('''
 class IA {
   m() {} // in IA
@@ -358,7 +344,7 @@ class A implements IA, IB {
     assertHasInterfaceMember('m() {} // in IB');
   }
 
-  test_interface_method_direct_single() async {
+  Future<void> test_interface_method_direct_single() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -373,7 +359,7 @@ class B implements A {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_interface_method_indirect_single() async {
+  Future<void> test_interface_method_indirect_single() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -390,7 +376,7 @@ class C implements B {
     assertHasInterfaceMember('m() {} // in A');
   }
 
-  test_interface_stopWhenFound() async {
+  Future<void> test_interface_stopWhenFound() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -408,7 +394,7 @@ class C implements B {
     assertHasInterfaceMember('m() {} // in B');
   }
 
-  test_mix_sameMethod() async {
+  Future<void> test_mix_sameMethod() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -425,7 +411,7 @@ class C extends A implements A {
     assertNoInterfaceMembers();
   }
 
-  test_mix_sameMethod_Object_hashCode() async {
+  Future<void> test_mix_sameMethod_Object_hashCode() async {
     addTestFile('''
 class A {}
 abstract class B {}
@@ -439,7 +425,7 @@ class C extends A implements A {
     expect(overrideObject.interfaceMembers, isNull);
   }
 
-  test_mixin_method_direct() async {
+  Future<void> test_mixin_method_direct() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -454,7 +440,7 @@ class B extends Object with A {
     assertNoInterfaceMembers();
   }
 
-  test_mixin_method_indirect() async {
+  Future<void> test_mixin_method_indirect() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -471,7 +457,7 @@ class C extends Object with B {
     assertNoInterfaceMembers();
   }
 
-  test_mixin_method_indirect2() async {
+  Future<void> test_mixin_method_indirect2() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -488,7 +474,7 @@ class C extends B {
     assertNoInterfaceMembers();
   }
 
-  test_staticMembers() async {
+  Future<void> test_staticMembers() async {
     addTestFile('''
 class A {
   static int F = 0;
@@ -507,7 +493,7 @@ class B extends A {
     expect(overridesList, isEmpty);
   }
 
-  test_super_fieldByField() async {
+  Future<void> test_super_fieldByField() async {
     addTestFile('''
 class A {
   int fff; // in A
@@ -522,7 +508,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_fieldByGetter() async {
+  Future<void> test_super_fieldByGetter() async {
     addTestFile('''
 class A {
   int fff; // in A
@@ -537,7 +523,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_fieldBySetter() async {
+  Future<void> test_super_fieldBySetter() async {
     addTestFile('''
 class A {
   int fff; // in A
@@ -552,7 +538,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_getterByField() async {
+  Future<void> test_super_getterByField() async {
     addTestFile('''
 class A {
   get fff => 0; // in A
@@ -568,7 +554,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_getterByGetter() async {
+  Future<void> test_super_getterByGetter() async {
     addTestFile('''
 class A {
   get fff => 0; // in A
@@ -583,7 +569,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_method_direct() async {
+  Future<void> test_super_method_direct() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -598,7 +584,7 @@ class B extends A {
     assertNoInterfaceMembers();
   }
 
-  test_super_method_indirect() async {
+  Future<void> test_super_method_indirect() async {
     addTestFile('''
 class A {
   m() {} // in A
@@ -615,7 +601,7 @@ class C extends B {
     assertNoInterfaceMembers();
   }
 
-  test_super_method_privateByPrivate() async {
+  Future<void> test_super_method_privateByPrivate() async {
     addTestFile('''
 class A {
   _m() {} // in A
@@ -643,7 +629,7 @@ class B extends A {
     // must finish
   }
 
-  test_super_setterBySetter() async {
+  Future<void> test_super_setterBySetter() async {
     addTestFile('''
 class A {
   set fff(x) {} // in A

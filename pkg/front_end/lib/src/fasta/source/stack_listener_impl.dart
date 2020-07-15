@@ -15,10 +15,37 @@ import 'package:_fe_analyzer_shared/src/scanner/scanner.dart' show Token;
 import 'package:kernel/ast.dart'
     show AsyncMarker, Expression, FunctionNode, TreeNode;
 
+import '../fasta_codes.dart';
+
 import '../problems.dart' as problems
     show internalProblem, unhandled, unsupported;
 
+import 'source_library_builder.dart';
+
 abstract class StackListenerImpl extends StackListener {
+  SourceLibraryBuilder get libraryBuilder;
+
+  AsyncMarker asyncMarkerFromTokens(Token asyncToken, Token starToken) {
+    if (asyncToken == null || identical(asyncToken.stringValue, "sync")) {
+      if (starToken == null) {
+        return AsyncMarker.Sync;
+      } else {
+        assert(identical(starToken.stringValue, "*"));
+        return AsyncMarker.SyncStar;
+      }
+    } else if (identical(asyncToken.stringValue, "async")) {
+      if (starToken == null) {
+        return AsyncMarker.Async;
+      } else {
+        assert(identical(starToken.stringValue, "*"));
+        return AsyncMarker.AsyncStar;
+      }
+    } else {
+      return unhandled(asyncToken.lexeme, "asyncMarkerFromTokens",
+          asyncToken.charOffset, null);
+    }
+  }
+
   // TODO(ahe): This doesn't belong here. Only implemented by body_builder.dart
   // and ast_builder.dart.
   void finishFunction(
@@ -57,6 +84,46 @@ abstract class StackListenerImpl extends StackListener {
   /// listener.
   dynamic unhandled(String what, String where, int charOffset, Uri uri) {
     return problems.unhandled(what, where, charOffset, uri);
+  }
+
+  void reportMissingNonNullableSupport(Token token) {
+    assert(!libraryBuilder.isNonNullableByDefault);
+    assert(token != null);
+    if (libraryBuilder.enableNonNullableInLibrary) {
+      if (libraryBuilder.languageVersion.isExplicit) {
+        addProblem(messageNonNullableOptOut, token.charOffset, token.charCount,
+            context: <LocatedMessage>[
+              messageNonNullableOptOutComment.withLocation(
+                  libraryBuilder.languageVersion.fileUri,
+                  libraryBuilder.languageVersion.charOffset,
+                  libraryBuilder.languageVersion.charCount)
+            ]);
+      } else {
+        addProblem(messageNonNullableOptOut, token.charOffset, token.charCount);
+      }
+    } else {
+      addProblem(
+          templateExperimentNotEnabled.withArguments('non-nullable', '2.9'),
+          token.offset,
+          noLength);
+    }
+  }
+
+  void reportErrorIfNullableType(Token questionMark) {
+    if (questionMark != null) {
+      reportMissingNonNullableSupport(questionMark);
+    }
+  }
+
+  void reportNonNullableModifierError(Token modifierToken) {
+    assert(!libraryBuilder.isNonNullableByDefault);
+    if (modifierToken != null) {
+      reportMissingNonNullableSupport(modifierToken);
+    }
+  }
+
+  void reportNonNullAssertExpressionNotEnabled(Token bang) {
+    reportMissingNonNullableSupport(bang);
   }
 }
 

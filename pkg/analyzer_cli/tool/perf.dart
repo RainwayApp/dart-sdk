@@ -10,9 +10,11 @@ import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/error/listener.dart';
+import 'package:analyzer/file_system/file_system.dart'
+    show Folder, ResourceUriResolver;
 import 'package:analyzer/file_system/physical_file_system.dart'
     show PhysicalResourceProvider;
-import 'package:analyzer/src/context/builder.dart';
+import 'package:analyzer/src/context/packages.dart';
 import 'package:analyzer/src/dart/scanner/reader.dart';
 import 'package:analyzer/src/dart/scanner/scanner.dart';
 import 'package:analyzer/src/dart/sdk/sdk.dart' show FolderBasedDartSdk;
@@ -21,9 +23,8 @@ import 'package:analyzer/src/generated/parser.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/source_io.dart';
 import 'package:analyzer/src/source/package_map_resolver.dart';
-import 'package:package_config/discovery.dart';
 
-main(List<String> args) async {
+void main(List<String> args) async {
   // TODO(sigmund): provide sdk folder as well.
   if (args.length < 2) {
     print('usage: perf.dart <bench-id> <entry.dart>');
@@ -34,16 +35,20 @@ main(List<String> args) async {
   var bench = args[0];
   var entryUri = Uri.base.resolve(args[1]);
 
-  await setup(entryUri);
+  await setup(args[1]);
 
   if (bench == 'scan') {
-    Set<Source> files = scanReachableFiles(entryUri);
+    var files = scanReachableFiles(entryUri);
     // TODO(sigmund): consider replacing the warmup with instrumented snapshots.
-    for (int i = 0; i < 10; i++) scanFiles(files);
+    for (var i = 0; i < 10; i++) {
+      scanFiles(files);
+    }
   } else if (bench == 'parse') {
-    Set<Source> files = scanReachableFiles(entryUri);
+    var files = scanReachableFiles(entryUri);
     // TODO(sigmund): consider replacing the warmup with instrumented snapshots.
-    for (int i = 0; i < 10; i++) parseFiles(files);
+    for (var i = 0; i < 10; i++) {
+      parseFiles(files);
+    }
   } else {
     print('unsupported bench-id: $bench. Please specify "scan" or "parse"');
     // TODO(sigmund): implement the remaining benchmarks.
@@ -51,7 +56,7 @@ main(List<String> args) async {
   }
 
   totalTimer.stop();
-  report("total", totalTimer.elapsedMicroseconds);
+  report('total', totalTimer.elapsedMicroseconds);
 }
 
 /// Cumulative time spent scanning.
@@ -78,9 +83,11 @@ void collectSources(Source start, Set<Source> files) {
 /// Uses the diet-parser to parse only directives in [source].
 CompilationUnit parseDirectives(Source source) {
   var token = tokenize(source);
-  var featureSet = FeatureSet.fromEnableFlags([]);
-  var parser = Parser(source, AnalysisErrorListener.NULL_LISTENER,
-      featureSet: featureSet);
+  var parser = Parser(
+    source,
+    AnalysisErrorListener.NULL_LISTENER,
+    featureSet: FeatureSet.fromEnableFlags([]),
+  );
   return parser.parseDirectives(token);
 }
 
@@ -101,18 +108,20 @@ void parseFiles(Set<Source> files) {
 
   // Report size and scanning time again. See discussion above.
   if (old != scanTotalChars) print('input size changed? $old chars');
-  report("scan", scanTimer.elapsedMicroseconds);
+  report('scan', scanTimer.elapsedMicroseconds);
 
   var pTime = parseTimer.elapsedMicroseconds - scanTimer.elapsedMicroseconds;
-  report("parse", pTime);
+  report('parse', pTime);
 }
 
 /// Parse the full body of [source] and return it's compilation unit.
 CompilationUnit parseFull(Source source) {
   var token = tokenize(source);
-  var featureSet = FeatureSet.fromEnableFlags([]);
-  var parser = Parser(source, AnalysisErrorListener.NULL_LISTENER,
-      featureSet: featureSet);
+  var parser = Parser(
+    source,
+    AnalysisErrorListener.NULL_LISTENER,
+    featureSet: FeatureSet.fromEnableFlags([]),
+  );
   return parser.parseCompilationUnit(token);
 }
 
@@ -140,29 +149,29 @@ void scanFiles(Set<Source> files) {
 
   // Report size and scanning time again. See discussion above.
   if (old != scanTotalChars) print('input size changed? $old chars');
-  report("scan", scanTimer.elapsedMicroseconds);
+  report('scan', scanTimer.elapsedMicroseconds);
 }
 
 /// Load and scans all files we need to process: files reachable from the
 /// entrypoint and all core libraries automatically included by the VM.
 Set<Source> scanReachableFiles(Uri entryUri) {
-  var files = Set<Source>();
+  var files = <Source>{};
   var loadTimer = Stopwatch()..start();
   collectSources(sources.forUri2(entryUri), files);
 
   var libs = [
-    "dart:async",
-    "dart:cli",
-    "dart:collection",
-    "dart:convert",
-    "dart:core",
-    "dart:developer",
-    "dart:_internal",
-    "dart:isolate",
-    "dart:math",
-    "dart:mirrors",
-    "dart:typed_data",
-    "dart:io",
+    'dart:async',
+    'dart:cli',
+    'dart:collection',
+    'dart:convert',
+    'dart:core',
+    'dart:developer',
+    'dart:_internal',
+    'dart:isolate',
+    'dart:math',
+    'dart:mirrors',
+    'dart:typed_data',
+    'dart:io',
   ];
 
   for (var lib in libs) {
@@ -173,21 +182,30 @@ Set<Source> scanReachableFiles(Uri entryUri) {
 
   print('input size: $scanTotalChars chars');
   var loadTime = loadTimer.elapsedMicroseconds - scanTimer.elapsedMicroseconds;
-  report("load", loadTime);
-  report("scan", scanTimer.elapsedMicroseconds);
+  report('load', loadTime);
+  report('scan', scanTimer.elapsedMicroseconds);
   return files;
 }
 
 /// Sets up analyzer to be able to load and resolve app, packages, and sdk
 /// sources.
-Future setup(Uri entryUri) async {
+Future setup(String path) async {
   var provider = PhysicalResourceProvider.INSTANCE;
-  var packageMap = ContextBuilder(provider, null, null)
-      .convertPackagesToMap(await findPackages(entryUri));
+
+  var packages = findPackagesFrom(
+    provider,
+    provider.getResource(path),
+  );
+
+  var packageMap = <String, List<Folder>>{};
+  for (var package in packages.packages) {
+    packageMap[package.name] = [package.libFolder];
+  }
+
   sources = SourceFactory([
     ResourceUriResolver(provider),
     PackageMapUriResolver(provider, packageMap),
-    DartUriResolver(FolderBasedDartSdk(provider, provider.getFolder("sdk"))),
+    DartUriResolver(FolderBasedDartSdk(provider, provider.getFolder('sdk'))),
   ]);
 }
 
@@ -202,7 +220,10 @@ Token tokenize(Source source) {
   // first converting to String?
   var scanner = Scanner(
       source, CharSequenceReader(contents), AnalysisErrorListener.NULL_LISTENER)
-    ..configureFeatures(featureSet)
+    ..configureFeatures(
+      featureSetForOverriding: featureSet,
+      featureSet: featureSet,
+    )
     ..preserveComments = false;
   var token = scanner.tokenize();
   scanTimer.stop();

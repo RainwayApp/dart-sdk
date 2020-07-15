@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(AddReturnTypeLintTest);
   });
@@ -23,131 +23,163 @@ class AddReturnTypeLintTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.always_declare_return_types;
 
-  test_localFunction_block() async {
+  Future<void> test_localFunction_block() async {
     await resolveTestUnit('''
 class A {
   void m() {
-    /*LINT*/f() {
+    f() {
       return '';
     }
+    f();
   }
 }
 ''');
     await assertHasFix('''
 class A {
   void m() {
-    /*LINT*/String f() {
+    String f() {
       return '';
     }
+    f();
   }
 }
 ''');
   }
 
-  test_localFunction_expression() async {
+  Future<void> test_localFunction_expression() async {
     await resolveTestUnit('''
 class A {
   void m() {
-    /*LINT*/f() => '';
+    f() => '';
+    f();
   }
 }
 ''');
     await assertHasFix('''
 class A {
   void m() {
-    /*LINT*/String f() => '';
+    String f() => '';
+    f();
   }
 }
 ''');
   }
 
-  test_method_block_noReturn() async {
+  Future<void> test_method_block_noReturn() async {
     await resolveTestUnit('''
 class A {
-  /*LINT*/m() {
+  m() {
   }
 }
 ''');
     await assertNoFix();
   }
 
-  test_method_block_returnDynamic() async {
+  Future<void> test_method_block_returnDynamic() async {
     await resolveTestUnit('''
 class A {
-  /*LINT*/m(p) {
+  m(p) {
     return p;
   }
 }
 ''');
-    await assertNoFix();
+    await assertHasFix('''
+class A {
+  dynamic m(p) {
+    return p;
+  }
+}
+''');
   }
 
-  test_method_block_returnNoValue() async {
+  Future<void> test_method_block_returnNoValue() async {
     await resolveTestUnit('''
 class A {
-  /*LINT*/m() {
+  m() {
     return;
   }
 }
 ''');
     await assertHasFix('''
 class A {
-  /*LINT*/void m() {
+  void m() {
     return;
   }
 }
 ''');
   }
 
-  test_method_block_singleReturn() async {
+  Future<void> test_method_block_singleReturn() async {
     await resolveTestUnit('''
 class A {
-  /*LINT*/m() {
+  m() {
     return '';
   }
 }
 ''');
     await assertHasFix('''
 class A {
-  /*LINT*/String m() {
+  String m() {
     return '';
   }
 }
 ''');
   }
 
-  test_method_expression() async {
+  Future<void> test_method_expression() async {
     await resolveTestUnit('''
 class A {
-  /*LINT*/m() => '';
+  m() => '';
 }
 ''');
     await assertHasFix('''
 class A {
-  /*LINT*/String m() => '';
+  String m() => '';
 }
 ''');
   }
 
-  test_topLevelFunction_block() async {
+  Future<void> test_method_getter() async {
     await resolveTestUnit('''
-/*LINT*/f() {
+class A {
+  get foo => 0;
+}
+''');
+    await assertHasFix('''
+class A {
+  int get foo => 0;
+}
+''');
+  }
+
+  Future<void> test_topLevelFunction_block() async {
+    await resolveTestUnit('''
+f() {
   return '';
 }
 ''');
     await assertHasFix('''
-/*LINT*/String f() {
+String f() {
   return '';
 }
 ''');
   }
 
-  test_topLevelFunction_expression() async {
+  Future<void> test_topLevelFunction_expression() async {
     await resolveTestUnit('''
-/*LINT*/f() => '';
+f() => '';
 ''');
     await assertHasFix('''
-/*LINT*/String f() => '';
+String f() => '';
+''');
+  }
+
+  Future<void> test_topLevelFunction_getter() async {
+    await resolveTestUnit('''
+get foo => 0;
+''');
+    await assertHasFix('''
+int get foo => 0;
 ''');
   }
 }

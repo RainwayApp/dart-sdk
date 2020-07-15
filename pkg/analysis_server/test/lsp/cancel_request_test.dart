@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 import '../tool/lsp_spec/matchers.dart';
 import 'server_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(CancelRequestTest);
   });
@@ -17,7 +17,7 @@ main() {
 
 @reflectiveTest
 class CancelRequestTest extends AbstractLspAnalysisServerTest {
-  test_cancel() async {
+  Future<void> test_cancel() async {
     final content = '''
 main() {
   InOtherF^
@@ -33,14 +33,13 @@ main() {
     final completionRequest = makeRequest(
       Method.textDocument_completion,
       CompletionParams(
-        null,
-        TextDocumentIdentifier(mainFileUri.toString()),
-        positionFromMarker(content),
+        textDocument: TextDocumentIdentifier(uri: mainFileUri.toString()),
+        position: positionFromMarker(content),
       ),
     );
     // And a request to cancel it.
     final cancelNotification = makeNotification(
-        Method.cancelRequest, CancelParams(completionRequest.id));
+        Method.cancelRequest, CancelParams(id: completionRequest.id));
 
     // Send both (without waiting for the results of the first).
     final completionRequestFuture = sendRequestToServer(completionRequest);

@@ -14,6 +14,10 @@ import 'package:front_end/src/fasta/resolve_input_uri.dart';
 import 'patch_sdk.dart' as patch;
 
 void main(List<String> argv) {
+  if (Platform.isWindows) {
+    print('Golden file does not support Windows.  Skipping.');
+    return;
+  }
   var args = _parser.parse(argv);
   if (args['help'] as bool) {
     print('Apply patch file to the SDK and report analysis errors from the '
@@ -22,7 +26,7 @@ void main(List<String> argv) {
         '${_parser.usage}');
     return;
   }
-  String baseDir = args['out'] as String;
+  var baseDir = args['out'] as String;
   if (baseDir == null) {
     var tmp = Directory.systemTemp.createTempSync('check_sdk-');
     baseDir = tmp.path;
@@ -31,34 +35,87 @@ void main(List<String> argv) {
   var sdkDir = baseUri.resolve('sdk/').toFilePath();
   print('Generating a patched sdk at ${baseUri.path}');
 
-  Uri librariesJson = args['libraries'] != null
+  var librariesJson = args['libraries'] != null
       ? resolveInputUri(args['libraries'] as String)
-      : Platform.script.resolve('../../../sdk_nnbd/lib/libraries.json');
+      : Platform.script.resolve('../../../sdk/lib/libraries.json');
+  var target = args['target'] as String;
   patch.main([
     '--libraries',
     librariesJson.toFilePath(),
     '--target',
-    args['target'] as String,
+    target,
     '--out',
     sdkDir,
     '--merge-parts',
     '--nnbd',
   ]);
 
+  var isWeb = false;
+  var isNative = false;
+  switch (target) {
+    case 'dartdevc':
+    case 'dart2js':
+      isWeb = true;
+      break;
+    case 'flutter':
+    case 'vm':
+      isNative = true;
+      break;
+  }
+
+  var core = '''
+import 'dart:async';
+import 'dart:collection';
+import 'dart:convert';
+import 'dart:core';
+import 'dart:developer';
+import 'dart:math';
+import 'dart:typed_data';
+''';
+
+  var web = !isWeb
+      ? ''
+      : '''
+import 'dart:js';
+import 'dart:js_util';
+import 'dart:indexed_db';
+import 'dart:html';
+import 'dart:html_common';
+import 'dart:svg';
+import 'dart:web_audio';
+import 'dart:web_gl';
+import 'dart:web_sql';
+''';
+
+  var native = !isNative
+      ? '''
+import 'dart:io';
+import 'dart:isolate';
+'''
+      : '''
+import 'dart:ffi';
+import 'dart:io';
+import 'dart:isolate';
+import 'dart:mirrors';
+''';
+
   var emptyProgramUri = baseUri.resolve('empty_program.dart');
-  File.fromUri(emptyProgramUri).writeAsStringSync('main() {}');
+  File.fromUri(emptyProgramUri).writeAsStringSync('''
+$core
+$web
+$native
+
+main() {}
+''');
 
   print('Running dartanalyzer');
-  var dart = Uri.base.resolve(Platform.resolvedExecutable);
-  var analyzerSnapshot = Uri.base
-      .resolve(Platform.resolvedExecutable)
-      .resolve('snapshots/dartanalyzer.dart.snapshot')
-      .toFilePath();
+  var dart = resolveInputUri(Platform.resolvedExecutable);
+  var analyzerSnapshot =
+      dart.resolve('snapshots/dartanalyzer.dart.snapshot').toFilePath();
   var result = Process.runSync(dart.toFilePath(), [
     // The NNBD dart binaries / snapshots require this flag to be enabled at
     // VM level.
-    if (analyzerSnapshot.contains('NNBD'))
-      '--enable-experiment=non-nullable',
+    if (analyzerSnapshot.contains('NNBD')) '--enable-experiment=non-nullable',
     analyzerSnapshot,
     '--dart-sdk=${sdkDir}',
     '--format',
@@ -85,7 +142,8 @@ void main(List<String> argv) {
   File.fromUri(errorFile).writeAsStringSync(errors, flush: true);
 
   // Check against golden file.
-  var goldenFile = Platform.script.resolve('nnbd_sdk_error_golden.txt');
+  var goldenFile =
+      Platform.script.resolve('${target}_nnbd_sdk_error_golden.txt');
   var golden = File.fromUri(goldenFile).readAsStringSync();
   if (errors != golden) {
     if (args['update-golden'] as bool) {
@@ -96,13 +154,40 @@ void main(List<String> argv) {
     } else {
       // Fail.
       print('Golden file does not match.');
-      var diff = Process.runSync('diff', [goldenFile.path, errorFile.path]);
-      print(diff.stdout);
-      print('''
+      print('\nTo update the golden file, run:'
+          '\n  ${Platform.executable} ${Platform.script} '
+          '${argv.join(' ')} --update-golden');
 
-To update the golden file, run:
-> <path-to-newly-built-dart-sdk>/bin/dart pkg/dev_compiler/tool/check_nnbd_sdk.dart --update-golden
-''');
+      // Compare the two sorted lists to show what errors changed.  Note, we
+      // don't use `diff` as an external tool because it is not available on
+      // windows bots.
+      var toAdd = <String>[];
+      var toRemove = <String>[];
+      var goldenList = golden.trim().split('\n');
+      var i = 0, j = 0;
+      for (; i < errorList.length && j < goldenList.length;) {
+        var compare = errorList[i].compareTo(goldenList[j]);
+        if (compare == 0) {
+          i++;
+          j++;
+        } else if (compare < 0) {
+          toAdd.add(errorList[i]);
+          i++;
+        } else {
+          toRemove.add(goldenList[j]);
+          j++;
+        }
+      }
+      for (; i < errorList.length; i++) {
+        toAdd.add(errorList[i]);
+      }
+      for (; j < goldenList.length; j++) {
+        toRemove.add(goldenList[j]);
+      }
+      print('\nNew errors:');
+      print(toAdd.join('\n'));
+      print('\nErrors that can be removed from the golden file:');
+      print(toRemove.join('\n'));
       exit(1);
     }
   }
@@ -112,7 +197,7 @@ To update the golden file, run:
 final _parser = ArgParser()
   ..addOption('libraries',
       help: 'Path to the nnbd libraries.json (defaults to the one under '
-          'sdk_nnbd/lib/libraries.json.')
+          'sdk/lib/libraries.json.')
   ..addOption('out',
       help: 'Path to an output folder (defaults to a new tmp folder).')
   ..addOption('target',

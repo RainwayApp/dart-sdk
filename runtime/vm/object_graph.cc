@@ -37,24 +37,28 @@ static bool IsUserClass(intptr_t cid) {
 // - Use tag bits for compact Node and sentinel representations.
 class ObjectGraph::Stack : public ObjectPointerVisitor {
  public:
-  explicit Stack(Isolate* isolate)
-      : ObjectPointerVisitor(isolate),
+  explicit Stack(IsolateGroup* isolate_group)
+      : ObjectPointerVisitor(isolate_group),
         include_vm_objects_(true),
-        data_(kInitialCapacity) {}
+        data_(kInitialCapacity) {
+    object_ids_ = new WeakTable();
+  }
+  ~Stack() {
+    delete object_ids_;
+    object_ids_ = nullptr;
+  }
 
   // Marks and pushes. Used to initialize this stack with roots.
   // We can use ObjectIdTable normally used by serializers because it
   // won't be in use while handling a service request (ObjectGraph's only use).
-  virtual void VisitPointers(RawObject** first, RawObject** last) {
-    Heap* heap = isolate()->heap();
-    for (RawObject** current = first; current <= last; ++current) {
-      if ((*current)->IsHeapObject() &&
-          !(*current)->InVMIsolateHeap() &&
-          heap->GetObjectId(*current) == 0) {  // not visited yet
+  virtual void VisitPointers(ObjectPtr* first, ObjectPtr* last) {
+    for (ObjectPtr* current = first; current <= last; ++current) {
+      if ((*current)->IsHeapObject() && !(*current)->ptr()->InVMIsolateHeap() &&
+          object_ids_->GetValueExclusive(*current) == 0) {  // not visited yet
         if (!include_vm_objects_ && !IsUserClass((*current)->GetClassId())) {
           continue;
         }
-        heap->SetObjectId(*current, 1);
+        object_ids_->SetValueExclusive(*current, 1);
         Node node;
         node.ptr = current;
         node.obj = *current;
@@ -74,7 +78,7 @@ class ObjectGraph::Stack : public ObjectPointerVisitor {
         data_.RemoveLast();
         continue;
       }
-      RawObject* obj = node.obj;
+      ObjectPtr obj = node.obj;
       ASSERT(obj->IsHeapObject());
       Node sentinel;
       sentinel.ptr = kSentinel;
@@ -87,11 +91,10 @@ class ObjectGraph::Stack : public ObjectPointerVisitor {
       }
       if (direction == ObjectGraph::Visitor::kProceed) {
         set_gc_root_type(node.gc_root_type);
-        obj->VisitPointers(this);
+        obj->ptr()->VisitPointers(this);
         clear_gc_root_type();
       }
     }
-    isolate()->heap()->ResetObjectIdTable();
   }
 
   virtual bool visit_weak_persistent_handles() const {
@@ -106,13 +109,13 @@ class ObjectGraph::Stack : public ObjectPointerVisitor {
 
  private:
   struct Node {
-    RawObject** ptr;  // kSentinel for the sentinel node.
-    RawObject* obj;
+    ObjectPtr* ptr;  // kSentinel for the sentinel node.
+    ObjectPtr obj;
     const char* gc_root_type;
   };
 
   bool visit_weak_persistent_handles_ = false;
-  static RawObject** const kSentinel;
+  static ObjectPtr* const kSentinel;
   static const intptr_t kInitialCapacity = 1024;
   static const intptr_t kNoParent = -1;
 
@@ -126,14 +129,18 @@ class ObjectGraph::Stack : public ObjectPointerVisitor {
     return kNoParent;
   }
 
+  // During the iteration of the heap we are already at a safepoint, so there is
+  // no need to let the GC know about [object_ids_] (i.e. GC cannot run while we
+  // use [object_ids]).
+  WeakTable* object_ids_ = nullptr;
   GrowableArray<Node> data_;
   friend class StackIterator;
   DISALLOW_COPY_AND_ASSIGN(Stack);
 };
 
-RawObject** const ObjectGraph::Stack::kSentinel = NULL;
+ObjectPtr* const ObjectGraph::Stack::kSentinel = NULL;
 
-RawObject* ObjectGraph::StackIterator::Get() const {
+ObjectPtr ObjectGraph::StackIterator::Get() const {
   return stack_->data_[index_].obj;
 }
 
@@ -153,17 +160,18 @@ intptr_t ObjectGraph::StackIterator::OffsetFromParentInWords() const {
     return -1;
   }
   Stack::Node parent = stack_->data_[parent_index];
-  uword parent_start = RawObject::ToAddr(parent.obj);
+  uword parent_start = ObjectLayout::ToAddr(parent.obj);
   Stack::Node child = stack_->data_[index_];
   ASSERT(child.obj == *child.ptr);
   uword child_ptr_addr = reinterpret_cast<uword>(child.ptr);
   intptr_t offset = child_ptr_addr - parent_start;
-  if (offset > 0 && offset < parent.obj->HeapSize()) {
+  if (offset > 0 && offset < parent.obj->ptr()->HeapSize()) {
     ASSERT(Utils::IsAligned(offset, kWordSize));
     return offset >> kWordSizeLog2;
   } else {
     // Some internal VM objects visit pointers not contained within the parent.
-    // For instance, RawCode::VisitCodePointers visits pointers in instructions.
+    // For instance, CodeLayout::VisitCodePointers visits pointers in
+    // instructions.
     ASSERT(!parent.obj->IsDartInstance());
     return -1;
   }
@@ -192,12 +200,12 @@ static void IterateUserFields(ObjectPointerVisitor* visitor) {
         fields = cls.fields();
         for (intptr_t j = 0; j < fields.Length(); j++) {
           field ^= fields.At(j);
-          RawObject* ptr = field.raw();
+          ObjectPtr ptr = field.raw();
           visitor->VisitPointer(&ptr);
         }
       } else if (entry.IsField()) {
         field ^= entry.raw();
-        RawObject* ptr = field.raw();
+        ObjectPtr ptr = field.raw();
         visitor->VisitPointer(&ptr);
       }
     }
@@ -214,15 +222,16 @@ ObjectGraph::ObjectGraph(Thread* thread) : ThreadStackResource(thread) {
 ObjectGraph::~ObjectGraph() {}
 
 void ObjectGraph::IterateObjects(ObjectGraph::Visitor* visitor) {
-  Stack stack(isolate());
+  Stack stack(isolate_group());
   stack.set_visit_weak_persistent_handles(
       visitor->visit_weak_persistent_handles());
-  isolate()->VisitObjectPointers(&stack, ValidationPolicy::kDontValidateFrames);
+  isolate_group()->VisitObjectPointers(&stack,
+                                       ValidationPolicy::kDontValidateFrames);
   stack.TraverseGraph(visitor);
 }
 
 void ObjectGraph::IterateUserObjects(ObjectGraph::Visitor* visitor) {
-  Stack stack(isolate());
+  Stack stack(isolate_group());
   stack.set_visit_weak_persistent_handles(
       visitor->visit_weak_persistent_handles());
   IterateUserFields(&stack);
@@ -232,10 +241,10 @@ void ObjectGraph::IterateUserObjects(ObjectGraph::Visitor* visitor) {
 
 void ObjectGraph::IterateObjectsFrom(const Object& root,
                                      ObjectGraph::Visitor* visitor) {
-  Stack stack(isolate());
+  Stack stack(isolate_group());
   stack.set_visit_weak_persistent_handles(
       visitor->visit_weak_persistent_handles());
-  RawObject* root_raw = root.raw();
+  ObjectPtr root_raw = root.raw();
   stack.VisitPointer(&root_raw);
   stack.TraverseGraph(visitor);
 }
@@ -245,9 +254,9 @@ class InstanceAccumulator : public ObjectVisitor {
   InstanceAccumulator(ObjectGraph::Stack* stack, intptr_t class_id)
       : stack_(stack), class_id_(class_id) {}
 
-  void VisitObject(RawObject* obj) {
+  void VisitObject(ObjectPtr obj) {
     if (obj->GetClassId() == class_id_) {
-      RawObject* rawobj = obj;
+      ObjectPtr rawobj = obj;
       stack_->VisitPointer(&rawobj);
     }
   }
@@ -260,12 +269,12 @@ class InstanceAccumulator : public ObjectVisitor {
 };
 
 void ObjectGraph::IterateObjectsFrom(intptr_t class_id,
+                                     HeapIterationScope* iteration,
                                      ObjectGraph::Visitor* visitor) {
-  HeapIterationScope iteration(thread());
-  Stack stack(isolate());
+  Stack stack(isolate_group());
 
   InstanceAccumulator accumulator(&stack, class_id);
-  iteration.IterateObjectsNoImagePages(&accumulator);
+  iteration->IterateObjectsNoImagePages(&accumulator);
 
   stack.TraverseGraph(visitor);
 }
@@ -274,13 +283,13 @@ class SizeVisitor : public ObjectGraph::Visitor {
  public:
   SizeVisitor() : size_(0) {}
   intptr_t size() const { return size_; }
-  virtual bool ShouldSkip(RawObject* obj) const { return false; }
+  virtual bool ShouldSkip(ObjectPtr obj) const { return false; }
   virtual Direction VisitObject(ObjectGraph::StackIterator* it) {
-    RawObject* obj = it->Get();
+    ObjectPtr obj = it->Get();
     if (ShouldSkip(obj)) {
       return kBacktrack;
     }
-    size_ += obj->HeapSize();
+    size_ += obj->ptr()->HeapSize();
     return kProceed;
   }
 
@@ -291,7 +300,7 @@ class SizeVisitor : public ObjectGraph::Visitor {
 class SizeExcludingObjectVisitor : public SizeVisitor {
  public:
   explicit SizeExcludingObjectVisitor(const Object& skip) : skip_(skip) {}
-  virtual bool ShouldSkip(RawObject* obj) const { return obj == skip_.raw(); }
+  virtual bool ShouldSkip(ObjectPtr obj) const { return obj == skip_.raw(); }
 
  private:
   const Object& skip_;
@@ -300,7 +309,7 @@ class SizeExcludingObjectVisitor : public SizeVisitor {
 class SizeExcludingClassVisitor : public SizeVisitor {
  public:
   explicit SizeExcludingClassVisitor(intptr_t skip) : skip_(skip) {}
-  virtual bool ShouldSkip(RawObject* obj) const {
+  virtual bool ShouldSkip(ObjectPtr obj) const {
     return obj->GetClassId() == skip_;
   }
 
@@ -340,21 +349,20 @@ intptr_t ObjectGraph::SizeRetainedByClass(intptr_t class_id) {
 intptr_t ObjectGraph::SizeReachableByClass(intptr_t class_id) {
   HeapIterationScope iteration_scope(Thread::Current(), true);
   SizeVisitor total;
-  IterateObjectsFrom(class_id, &total);
+  IterateObjectsFrom(class_id, &iteration_scope, &total);
   return total.size();
 }
 
 class RetainingPathVisitor : public ObjectGraph::Visitor {
  public:
   // We cannot use a GrowableObjectArray, since we must not trigger GC.
-  RetainingPathVisitor(RawObject* obj, const Array& path)
-      : thread_(Thread::Current()), obj_(obj), path_(path), length_(0) {
-  }
+  RetainingPathVisitor(ObjectPtr obj, const Array& path)
+      : thread_(Thread::Current()), obj_(obj), path_(path), length_(0) {}
 
   intptr_t length() const { return length_; }
   virtual bool visit_weak_persistent_handles() const { return true; }
 
-  bool ShouldSkip(RawObject* obj) {
+  bool ShouldSkip(ObjectPtr obj) {
     // A retaining path through ICData is never the only retaining path,
     // and it is less informative than its alternatives.
     intptr_t cid = obj->GetClassId();
@@ -366,10 +374,10 @@ class RetainingPathVisitor : public ObjectGraph::Visitor {
     }
   }
 
-  bool ShouldStop(RawObject* obj) {
+  bool ShouldStop(ObjectPtr obj) {
     // A static field is considered a root from a language point of view.
     if (obj->IsField()) {
-      const Field& field = Field::Handle(static_cast<RawField*>(obj));
+      const Field& field = Field::Handle(static_cast<FieldPtr>(obj));
       return field.is_static();
     }
     return false;
@@ -377,7 +385,7 @@ class RetainingPathVisitor : public ObjectGraph::Visitor {
 
   void StartList() { was_last_array_ = false; }
 
-  intptr_t HideNDescendant(RawObject* obj) {
+  intptr_t HideNDescendant(ObjectPtr obj) {
     // A GrowableObjectArray overwrites its internal storage.
     // Keeping both of them in the list is redundant.
     if (was_last_array_ && obj->IsGrowableObjectArray()) {
@@ -425,7 +433,7 @@ class RetainingPathVisitor : public ObjectGraph::Visitor {
 
  private:
   Thread* thread_;
-  RawObject* obj_;
+  ObjectPtr obj_;
   const Array& path_;
   intptr_t length_;
   bool was_last_array_;
@@ -436,7 +444,7 @@ ObjectGraph::RetainingPathResult ObjectGraph::RetainingPath(Object* obj,
   HeapIterationScope iteration_scope(Thread::Current(), true);
   // To break the trivial path, the handle 'obj' is temporarily cleared during
   // the search, but restored before returning.
-  RawObject* raw = obj->raw();
+  ObjectPtr raw = obj->raw();
   *obj = Object::null();
   RetainingPathVisitor visitor(raw, path);
   IterateUserObjects(&visitor);
@@ -452,11 +460,11 @@ class InboundReferencesVisitor : public ObjectVisitor,
  public:
   // We cannot use a GrowableObjectArray, since we must not trigger GC.
   InboundReferencesVisitor(Isolate* isolate,
-                           RawObject* target,
+                           ObjectPtr target,
                            const Array& references,
                            Object* scratch)
-      : ObjectPointerVisitor(isolate),
-        source_(NULL),
+      : ObjectPointerVisitor(isolate->group()),
+        source_(nullptr),
         target_(target),
         references_(references),
         scratch_(scratch),
@@ -466,14 +474,14 @@ class InboundReferencesVisitor : public ObjectVisitor,
 
   intptr_t length() const { return length_; }
 
-  virtual void VisitObject(RawObject* raw_obj) {
+  virtual void VisitObject(ObjectPtr raw_obj) {
     source_ = raw_obj;
-    raw_obj->VisitPointers(this);
+    raw_obj->ptr()->VisitPointers(this);
   }
 
-  virtual void VisitPointers(RawObject** first, RawObject** last) {
-    for (RawObject** current_ptr = first; current_ptr <= last; current_ptr++) {
-      RawObject* current_obj = *current_ptr;
+  virtual void VisitPointers(ObjectPtr* first, ObjectPtr* last) {
+    for (ObjectPtr* current_ptr = first; current_ptr <= last; current_ptr++) {
+      ObjectPtr current_obj = *current_ptr;
       if (current_obj == target_) {
         intptr_t obj_index = length_ * 2;
         intptr_t offset_index = obj_index + 1;
@@ -482,16 +490,16 @@ class InboundReferencesVisitor : public ObjectVisitor,
           references_.SetAt(obj_index, *scratch_);
 
           *scratch_ = Smi::New(0);
-          uword source_start = RawObject::ToAddr(source_);
+          uword source_start = ObjectLayout::ToAddr(source_);
           uword current_ptr_addr = reinterpret_cast<uword>(current_ptr);
           intptr_t offset = current_ptr_addr - source_start;
-          if (offset > 0 && offset < source_->HeapSize()) {
+          if (offset > 0 && offset < source_->ptr()->HeapSize()) {
             ASSERT(Utils::IsAligned(offset, kWordSize));
             *scratch_ = Smi::New(offset >> kWordSizeLog2);
           } else {
             // Some internal VM objects visit pointers not contained within the
-            // parent. For instance, RawCode::VisitCodePointers visits pointers
-            // in instructions.
+            // parent. For instance, CodeLayout::VisitCodePointers visits
+            // pointers in instructions.
             ASSERT(!source_->IsDartInstance());
             *scratch_ = Smi::New(-1);
           }
@@ -503,8 +511,8 @@ class InboundReferencesVisitor : public ObjectVisitor,
   }
 
  private:
-  RawObject* source_;
-  RawObject* target_;
+  ObjectPtr source_;
+  ObjectPtr target_;
   const Array& references_;
   Object* scratch_;
   intptr_t length_;
@@ -519,7 +527,7 @@ intptr_t ObjectGraph::InboundReferences(Object* obj, const Array& references) {
   return visitor.length();
 }
 
-// Each HeapPage is divided into blocks of size kBlockSize. Each object belongs
+// Each OldPage is divided into blocks of size kBlockSize. Each object belongs
 // to the block containing its header word.
 // When generating a heap snapshot, we assign objects sequential ids in heap
 // iteration order. A bitvector is computed that indicates the number of objects
@@ -576,7 +584,7 @@ class CountingPage {
   }
 
   CountingBlock* BlockFor(uword addr) {
-    intptr_t page_offset = addr & ~kPageMask;
+    intptr_t page_offset = addr & ~kOldPageMask;
     intptr_t block_number = page_offset / kBlockSize;
     ASSERT(block_number >= 0);
     ASSERT(block_number <= kBlocksPerPage);
@@ -648,7 +656,7 @@ void HeapSnapshotWriter::SetupCountingPages() {
     image_page_ranges_[i].size = 0;
   }
   intptr_t next_offset = 0;
-  HeapPage* image_page = Dart::vm_isolate()->heap()->old_space()->image_pages_;
+  OldPage* image_page = Dart::vm_isolate()->heap()->old_space()->image_pages_;
   while (image_page != NULL) {
     RELEASE_ASSERT(next_offset <= kMaxImagePages);
     image_page_ranges_[next_offset].base = image_page->object_start();
@@ -667,7 +675,7 @@ void HeapSnapshotWriter::SetupCountingPages() {
     next_offset++;
   }
 
-  HeapPage* page = isolate()->heap()->old_space()->pages_;
+  OldPage* page = isolate()->heap()->old_space()->pages_;
   while (page != NULL) {
     page->forwarding_page();
     CountingPage* counting_page =
@@ -678,49 +686,61 @@ void HeapSnapshotWriter::SetupCountingPages() {
   }
 }
 
-CountingPage* HeapSnapshotWriter::FindCountingPage(RawObject* obj) const {
-  if (obj->IsOldObject()) {
-    const uword addr = RawObject::ToAddr(obj);
-    for (intptr_t i = 0; i < kMaxImagePages; i++) {
-      if ((addr - image_page_ranges_[i].base) < image_page_ranges_[i].size) {
-        return nullptr;  // On an image page.
-      }
+bool HeapSnapshotWriter::OnImagePage(ObjectPtr obj) const {
+  const uword addr = ObjectLayout::ToAddr(obj);
+  for (intptr_t i = 0; i < kMaxImagePages; i++) {
+    if ((addr - image_page_ranges_[i].base) < image_page_ranges_[i].size) {
+      return true;
     }
+  }
+  return false;
+}
+
+CountingPage* HeapSnapshotWriter::FindCountingPage(ObjectPtr obj) const {
+  if (obj->IsOldObject() && !OnImagePage(obj)) {
     // On a regular or large page.
-    HeapPage* page = HeapPage::Of(obj);
+    OldPage* page = OldPage::Of(obj);
     return reinterpret_cast<CountingPage*>(page->forwarding_page());
   }
 
-  // In new space.
+  // On an image page or in new space.
   return nullptr;
 }
 
-void HeapSnapshotWriter::AssignObjectId(RawObject* obj) {
+void HeapSnapshotWriter::AssignObjectId(ObjectPtr obj) {
   ASSERT(obj->IsHeapObject());
 
   CountingPage* counting_page = FindCountingPage(obj);
   if (counting_page != nullptr) {
     // Likely: object on an ordinary page.
-    counting_page->Record(RawObject::ToAddr(obj), ++object_count_);
+    counting_page->Record(ObjectLayout::ToAddr(obj), ++object_count_);
   } else {
     // Unlikely: new space object, or object on a large or image page.
     thread()->heap()->SetObjectId(obj, ++object_count_);
   }
 }
 
-intptr_t HeapSnapshotWriter::GetObjectId(RawObject* obj) const {
+intptr_t HeapSnapshotWriter::GetObjectId(ObjectPtr obj) const {
   if (!obj->IsHeapObject()) {
     return 0;
   }
 
+  if (FLAG_write_protect_code && obj->IsInstructions() && !OnImagePage(obj)) {
+    // A non-writable alias mapping may exist for instruction pages.
+    obj = OldPage::ToWritable(obj);
+  }
+
   CountingPage* counting_page = FindCountingPage(obj);
+  intptr_t id;
   if (counting_page != nullptr) {
     // Likely: object on an ordinary page.
-    return counting_page->Lookup(RawObject::ToAddr(obj));
+    id = counting_page->Lookup(ObjectLayout::ToAddr(obj));
   } else {
     // Unlikely: new space object, or object on a large or image page.
-    return thread()->heap()->GetObjectId(obj);
+    id = thread()->heap()->GetObjectId(obj);
   }
+  ASSERT(id != 0);
+  return id;
 }
 
 void HeapSnapshotWriter::ClearObjectIds() {
@@ -741,18 +761,18 @@ class Pass1Visitor : public ObjectVisitor,
  public:
   explicit Pass1Visitor(HeapSnapshotWriter* writer)
       : ObjectVisitor(),
-        ObjectPointerVisitor(Isolate::Current()),
+        ObjectPointerVisitor(IsolateGroup::Current()),
         HandleVisitor(Thread::Current()),
         writer_(writer) {}
 
-  void VisitObject(RawObject* obj) {
+  void VisitObject(ObjectPtr obj) {
     if (obj->IsPseudoObject()) return;
 
     writer_->AssignObjectId(obj);
-    obj->VisitPointers(this);
+    obj->ptr()->VisitPointers(this);
   }
 
-  void VisitPointers(RawObject** from, RawObject** to) {
+  void VisitPointers(ObjectPtr* from, ObjectPtr* to) {
     intptr_t count = to - from + 1;
     ASSERT(count >= 0);
     writer_->CountReferences(count);
@@ -794,34 +814,35 @@ class Pass2Visitor : public ObjectVisitor,
  public:
   explicit Pass2Visitor(HeapSnapshotWriter* writer)
       : ObjectVisitor(),
-        ObjectPointerVisitor(Isolate::Current()),
+        ObjectPointerVisitor(IsolateGroup::Current()),
         HandleVisitor(Thread::Current()),
+        isolate_(thread()->isolate()),
         writer_(writer) {}
 
-  void VisitObject(RawObject* obj) {
+  void VisitObject(ObjectPtr obj) {
     if (obj->IsPseudoObject()) return;
 
     intptr_t cid = obj->GetClassId();
     writer_->WriteUnsigned(cid);
-    writer_->WriteUnsigned(discount_sizes_ ? 0 : obj->HeapSize());
+    writer_->WriteUnsigned(discount_sizes_ ? 0 : obj->ptr()->HeapSize());
 
     if (cid == kNullCid) {
       writer_->WriteUnsigned(kNullData);
     } else if (cid == kBoolCid) {
       writer_->WriteUnsigned(kBoolData);
       writer_->WriteUnsigned(
-          static_cast<uintptr_t>(static_cast<RawBool*>(obj)->ptr()->value_));
+          static_cast<uintptr_t>(static_cast<BoolPtr>(obj)->ptr()->value_));
     } else if (cid == kSmiCid) {
       UNREACHABLE();
     } else if (cid == kMintCid) {
       writer_->WriteUnsigned(kIntData);
-      writer_->WriteSigned(static_cast<RawMint*>(obj)->ptr()->value_);
+      writer_->WriteSigned(static_cast<MintPtr>(obj)->ptr()->value_);
     } else if (cid == kDoubleCid) {
       writer_->WriteUnsigned(kDoubleData);
-      writer_->WriteBytes(&(static_cast<RawDouble*>(obj)->ptr()->value_),
+      writer_->WriteBytes(&(static_cast<DoublePtr>(obj)->ptr()->value_),
                           sizeof(double));
     } else if (cid == kOneByteStringCid) {
-      RawOneByteString* str = static_cast<RawOneByteString*>(obj);
+      OneByteStringPtr str = static_cast<OneByteStringPtr>(obj);
       intptr_t len = Smi::Value(str->ptr()->length_);
       intptr_t trunc_len = Utils::Minimum(len, kMaxStringElements);
       writer_->WriteUnsigned(kLatin1Data);
@@ -829,8 +850,7 @@ class Pass2Visitor : public ObjectVisitor,
       writer_->WriteUnsigned(trunc_len);
       writer_->WriteBytes(&str->ptr()->data()[0], trunc_len);
     } else if (cid == kExternalOneByteStringCid) {
-      RawExternalOneByteString* str =
-          static_cast<RawExternalOneByteString*>(obj);
+      ExternalOneByteStringPtr str = static_cast<ExternalOneByteStringPtr>(obj);
       intptr_t len = Smi::Value(str->ptr()->length_);
       intptr_t trunc_len = Utils::Minimum(len, kMaxStringElements);
       writer_->WriteUnsigned(kLatin1Data);
@@ -838,7 +858,7 @@ class Pass2Visitor : public ObjectVisitor,
       writer_->WriteUnsigned(trunc_len);
       writer_->WriteBytes(&str->ptr()->external_data_[0], trunc_len);
     } else if (cid == kTwoByteStringCid) {
-      RawTwoByteString* str = static_cast<RawTwoByteString*>(obj);
+      TwoByteStringPtr str = static_cast<TwoByteStringPtr>(obj);
       intptr_t len = Smi::Value(str->ptr()->length_);
       intptr_t trunc_len = Utils::Minimum(len, kMaxStringElements);
       writer_->WriteUnsigned(kUTF16Data);
@@ -846,8 +866,7 @@ class Pass2Visitor : public ObjectVisitor,
       writer_->WriteUnsigned(trunc_len);
       writer_->WriteBytes(&str->ptr()->data()[0], trunc_len * 2);
     } else if (cid == kExternalTwoByteStringCid) {
-      RawExternalTwoByteString* str =
-          static_cast<RawExternalTwoByteString*>(obj);
+      ExternalTwoByteStringPtr str = static_cast<ExternalTwoByteStringPtr>(obj);
       intptr_t len = Smi::Value(str->ptr()->length_);
       intptr_t trunc_len = Utils::Minimum(len, kMaxStringElements);
       writer_->WriteUnsigned(kUTF16Data);
@@ -857,63 +876,63 @@ class Pass2Visitor : public ObjectVisitor,
     } else if (cid == kArrayCid || cid == kImmutableArrayCid) {
       writer_->WriteUnsigned(kLengthData);
       writer_->WriteUnsigned(
-          Smi::Value(static_cast<RawArray*>(obj)->ptr()->length_));
+          Smi::Value(static_cast<ArrayPtr>(obj)->ptr()->length_));
     } else if (cid == kGrowableObjectArrayCid) {
       writer_->WriteUnsigned(kLengthData);
-      writer_->WriteUnsigned(Smi::Value(
-          static_cast<RawGrowableObjectArray*>(obj)->ptr()->length_));
+      writer_->WriteUnsigned(
+          Smi::Value(static_cast<GrowableObjectArrayPtr>(obj)->ptr()->length_));
     } else if (cid == kLinkedHashMapCid) {
       writer_->WriteUnsigned(kLengthData);
       writer_->WriteUnsigned(
-          Smi::Value(static_cast<RawLinkedHashMap*>(obj)->ptr()->used_data_));
+          Smi::Value(static_cast<LinkedHashMapPtr>(obj)->ptr()->used_data_));
     } else if (cid == kObjectPoolCid) {
       writer_->WriteUnsigned(kLengthData);
-      writer_->WriteUnsigned(static_cast<RawObjectPool*>(obj)->ptr()->length_);
-    } else if (RawObject::IsTypedDataClassId(cid)) {
+      writer_->WriteUnsigned(static_cast<ObjectPoolPtr>(obj)->ptr()->length_);
+    } else if (IsTypedDataClassId(cid)) {
       writer_->WriteUnsigned(kLengthData);
       writer_->WriteUnsigned(
-          Smi::Value(static_cast<RawTypedData*>(obj)->ptr()->length_));
-    } else if (RawObject::IsExternalTypedDataClassId(cid)) {
+          Smi::Value(static_cast<TypedDataPtr>(obj)->ptr()->length_));
+    } else if (IsExternalTypedDataClassId(cid)) {
       writer_->WriteUnsigned(kLengthData);
       writer_->WriteUnsigned(
-          Smi::Value(static_cast<RawExternalTypedData*>(obj)->ptr()->length_));
+          Smi::Value(static_cast<ExternalTypedDataPtr>(obj)->ptr()->length_));
     } else if (cid == kFunctionCid) {
       writer_->WriteUnsigned(kNameData);
-      ScrubAndWriteUtf8(static_cast<RawFunction*>(obj)->ptr()->name_);
+      ScrubAndWriteUtf8(static_cast<FunctionPtr>(obj)->ptr()->name_);
     } else if (cid == kCodeCid) {
-      RawObject* owner = static_cast<RawCode*>(obj)->ptr()->owner_;
+      ObjectPtr owner = static_cast<CodePtr>(obj)->ptr()->owner_;
       if (owner->IsFunction()) {
         writer_->WriteUnsigned(kNameData);
-        ScrubAndWriteUtf8(static_cast<RawFunction*>(owner)->ptr()->name_);
+        ScrubAndWriteUtf8(static_cast<FunctionPtr>(owner)->ptr()->name_);
       } else if (owner->IsClass()) {
         writer_->WriteUnsigned(kNameData);
-        ScrubAndWriteUtf8(static_cast<RawClass*>(owner)->ptr()->name_);
+        ScrubAndWriteUtf8(static_cast<ClassPtr>(owner)->ptr()->name_);
       } else {
         writer_->WriteUnsigned(kNoData);
       }
     } else if (cid == kFieldCid) {
       writer_->WriteUnsigned(kNameData);
-      ScrubAndWriteUtf8(static_cast<RawField*>(obj)->ptr()->name_);
+      ScrubAndWriteUtf8(static_cast<FieldPtr>(obj)->ptr()->name_);
     } else if (cid == kClassCid) {
       writer_->WriteUnsigned(kNameData);
-      ScrubAndWriteUtf8(static_cast<RawClass*>(obj)->ptr()->name_);
+      ScrubAndWriteUtf8(static_cast<ClassPtr>(obj)->ptr()->name_);
     } else if (cid == kLibraryCid) {
       writer_->WriteUnsigned(kNameData);
-      ScrubAndWriteUtf8(static_cast<RawLibrary*>(obj)->ptr()->url_);
+      ScrubAndWriteUtf8(static_cast<LibraryPtr>(obj)->ptr()->url_);
     } else if (cid == kScriptCid) {
       writer_->WriteUnsigned(kNameData);
-      ScrubAndWriteUtf8(static_cast<RawScript*>(obj)->ptr()->url_);
+      ScrubAndWriteUtf8(static_cast<ScriptPtr>(obj)->ptr()->url_);
     } else {
       writer_->WriteUnsigned(kNoData);
     }
 
     DoCount();
-    obj->VisitPointersPrecise(this);
+    obj->ptr()->VisitPointersPrecise(isolate_, this);
     DoWrite();
-    obj->VisitPointersPrecise(this);
+    obj->ptr()->VisitPointersPrecise(isolate_, this);
   }
 
-  void ScrubAndWriteUtf8(RawString* str) {
+  void ScrubAndWriteUtf8(StringPtr str) {
     if (str == String::null()) {
       writer_->WriteUtf8("null");
     } else {
@@ -937,10 +956,10 @@ class Pass2Visitor : public ObjectVisitor,
     writer_->WriteUnsigned(counted_);
   }
 
-  void VisitPointers(RawObject** from, RawObject** to) {
+  void VisitPointers(ObjectPtr* from, ObjectPtr* to) {
     if (writing_) {
-      for (RawObject** ptr = from; ptr <= to; ptr++) {
-        RawObject* target = *ptr;
+      for (ObjectPtr* ptr = from; ptr <= to; ptr++) {
+        ObjectPtr target = *ptr;
         written_++;
         total_++;
         writer_->WriteUnsigned(writer_->GetObjectId(target));
@@ -962,15 +981,19 @@ class Pass2Visitor : public ObjectVisitor,
     writer_->WriteUnsigned(writer_->GetObjectId(weak_persistent_handle->raw()));
     writer_->WriteUnsigned(weak_persistent_handle->external_size());
     // Attempt to include a native symbol name.
-    char* name = NativeSymbolResolver::LookupSymbolName(
-        reinterpret_cast<uintptr_t>(weak_persistent_handle->callback()), NULL);
-    writer_->WriteUtf8((name == NULL) ? "Unknown native function" : name);
-    if (name != NULL) {
+    auto const name = NativeSymbolResolver::LookupSymbolName(
+        reinterpret_cast<uword>(weak_persistent_handle->callback()), nullptr);
+    writer_->WriteUtf8((name == nullptr) ? "Unknown native function" : name);
+    if (name != nullptr) {
       NativeSymbolResolver::FreeSymbolName(name);
     }
   }
 
  private:
+  // TODO(dartbug.com/36097): Once the shared class table contains more
+  // information than just the size (i.e. includes an immutable class
+  // descriptor), we can remove this dependency on the current isolate.
+  Isolate* isolate_;
   HeapSnapshotWriter* const writer_;
   bool writing_ = false;
   intptr_t counted_ = 0;
@@ -1085,7 +1108,7 @@ void HeapSnapshotWriter::Write() {
                 if (field.is_instance()) {
                   intptr_t flags = 1;  // Strong.
                   WriteUnsigned(flags);
-                  intptr_t index = field.Offset() / kWordSize - 1;
+                  intptr_t index = field.HostOffset() / kWordSize - 1;
                   ASSERT(index >= 0);
                   WriteUnsigned(index);
                   str = field.name();
@@ -1117,7 +1140,7 @@ void HeapSnapshotWriter::Write() {
     iteration.IterateObjects(&visitor);
 
     // External properties.
-    isolate()->VisitWeakPersistentHandles(&visitor);
+    isolate()->group()->VisitWeakPersistentHandles(&visitor);
   }
 
   {
@@ -1145,36 +1168,7 @@ void HeapSnapshotWriter::Write() {
 
     // External properties.
     WriteUnsigned(external_property_count_);
-    isolate()->VisitWeakPersistentHandles(&visitor);
-  }
-
-  {
-    WriteUtf8("RSS");
-    WriteUnsigned(Service::CurrentRSS());
-
-    WriteUtf8("Dart Profiler Samples");
-    WriteUnsigned(Profiler::Size());
-
-    WriteUtf8("Dart Timeline Events");
-    WriteUnsigned(Timeline::recorder()->Size());
-
-    class WriteIsolateHeaps : public IsolateVisitor {
-     public:
-      explicit WriteIsolateHeaps(HeapSnapshotWriter* writer)
-          : writer_(writer) {}
-
-      virtual void VisitIsolate(Isolate* isolate) {
-        writer_->WriteUtf8(isolate->name());
-        writer_->WriteUnsigned((isolate->heap()->TotalCapacityInWords() +
-                                isolate->heap()->TotalExternalInWords()) *
-                               kWordSize);
-      }
-
-     private:
-      HeapSnapshotWriter* const writer_;
-    };
-    WriteIsolateHeaps visitor(this);
-    Isolate::VisitIsolates(&visitor);
+    isolate()->group()->VisitWeakPersistentHandles(&visitor);
   }
 
   ClearObjectIds();
@@ -1198,9 +1192,9 @@ CountObjectsVisitor::CountObjectsVisitor(Thread* thread, intptr_t class_count)
   memset(old_external_size_.get(), 0, class_count * sizeof(intptr_t));
 }
 
-void CountObjectsVisitor::VisitObject(RawObject* obj) {
+void CountObjectsVisitor::VisitObject(ObjectPtr obj) {
   intptr_t cid = obj->GetClassId();
-  intptr_t size = obj->HeapSize();
+  intptr_t size = obj->ptr()->HeapSize();
   if (obj->IsNewObject()) {
     new_count_[cid] += 1;
     new_size_[cid] += size;
@@ -1213,7 +1207,7 @@ void CountObjectsVisitor::VisitObject(RawObject* obj) {
 void CountObjectsVisitor::VisitHandle(uword addr) {
   FinalizablePersistentHandle* handle =
       reinterpret_cast<FinalizablePersistentHandle*>(addr);
-  RawObject* obj = handle->raw();
+  ObjectPtr obj = handle->raw();
   if (!obj->IsHeapObject()) {
     return;
   }

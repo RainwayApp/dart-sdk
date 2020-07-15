@@ -23,6 +23,7 @@ namespace dart {
 
 // Forward declarations.
 class Isolate;
+class IsolateGroup;
 class ObjectPointerVisitor;
 class ObjectSet;
 class ServiceEvent;
@@ -54,15 +55,16 @@ class Heap {
   };
 
   enum GCReason {
-    kNewSpace,   // New space is full.
-    kPromotion,  // Old space limit crossed after a scavenge.
-    kOldSpace,   // Old space limit crossed.
-    kFinalize,   // Concurrent marking finished.
-    kFull,       // Heap::CollectAllGarbage
-    kExternal,   // Dart_NewWeakPersistentHandle
-    kIdle,       // Dart_NotifyIdle
-    kLowMemory,  // Dart_NotifyLowMemory
-    kDebugging,  // service request, --gc_at_instance_allocation, etc.
+    kNewSpace,     // New space is full.
+    kPromotion,    // Old space limit crossed after a scavenge.
+    kOldSpace,     // Old space limit crossed.
+    kFinalize,     // Concurrent marking finished.
+    kFull,         // Heap::CollectAllGarbage
+    kExternal,     // Dart_NewWeakPersistentHandle
+    kIdle,         // Dart_NotifyIdle
+    kLowMemory,    // Dart_NotifyLowMemory
+    kDebugging,    // service request, etc.
+    kSendAndExit,  // SendPort.sendAndExit
   };
 
   // Pattern for unused new space and swept old space.
@@ -79,13 +81,13 @@ class Heap {
       case kNew:
         // Do not attempt to allocate very large objects in new space.
         if (!IsAllocatableInNewSpace(size)) {
-          return AllocateOld(size, HeapPage::kData);
+          return AllocateOld(size, OldPage::kData);
         }
         return AllocateNew(size);
       case kOld:
-        return AllocateOld(size, HeapPage::kData);
+        return AllocateOld(size, OldPage::kData);
       case kCode:
-        return AllocateOld(size, HeapPage::kExecutable);
+        return AllocateOld(size, OldPage::kExecutable);
       default:
         UNREACHABLE();
     }
@@ -93,10 +95,10 @@ class Heap {
   }
 
   // Track external data.
-  void AllocateExternal(intptr_t cid, intptr_t size, Space space);
-  void FreeExternal(intptr_t size, Space space);
+  void AllocatedExternal(intptr_t size, Space space);
+  void FreedExternal(intptr_t size, Space space);
   // Move external size from new to old space. Does not by itself trigger GC.
-  void PromoteExternal(intptr_t cid, intptr_t size);
+  void PromotedExternal(intptr_t size);
 
   // Heap contains the specified address.
   bool Contains(uword addr) const;
@@ -113,10 +115,10 @@ class Heap {
   // The 'visitor' function should return false if the object is not found,
   // traversal through the heap space continues.
   // Returns null object if nothing is found.
-  RawInstructions* FindObjectInCodeSpace(FindObjectVisitor* visitor) const;
-  RawObject* FindOldObject(FindObjectVisitor* visitor) const;
-  RawObject* FindNewObject(FindObjectVisitor* visitor) const;
-  RawObject* FindObject(FindObjectVisitor* visitor) const;
+  InstructionsPtr FindObjectInCodeSpace(FindObjectVisitor* visitor) const;
+  ObjectPtr FindOldObject(FindObjectVisitor* visitor) const;
+  ObjectPtr FindNewObject(FindObjectVisitor* visitor);
+  ObjectPtr FindObject(FindObjectVisitor* visitor);
 
   void NotifyIdle(int64_t deadline);
   void NotifyLowMemory();
@@ -138,20 +140,16 @@ class Heap {
   // those in inter-generational cycles or stored during incremental marking.
   void CollectAllGarbage(GCReason reason = kFull);
 
-  bool NeedsGarbageCollection() const {
-    return old_space_.NeedsGarbageCollection();
-  }
-
   void CheckStartConcurrentMarking(Thread* thread, GCReason reason);
   void StartConcurrentMarking(Thread* thread);
   void CheckFinishConcurrentMarking(Thread* thread);
   void WaitForMarkerTasks(Thread* thread);
   void WaitForSweeperTasks(Thread* thread);
+  void WaitForSweeperTasksAtSafepoint(Thread* thread);
 
   // Enables growth control on the page space heaps.  This should be
   // called before any user code is executed.
   void InitGrowthControl();
-  void EnableGrowthControl() { SetGrowthControlState(true); }
   void DisableGrowthControl() { SetGrowthControlState(false); }
   void SetGrowthControlState(bool state);
   bool GrowthControlState();
@@ -164,7 +162,7 @@ class Heap {
   }
 
   // Initialize the heap and register it with the isolate.
-  static void Init(Isolate* isolate,
+  static void Init(IsolateGroup* isolate_group,
                    intptr_t max_new_gen_words,
                    intptr_t max_old_gen_words);
 
@@ -172,7 +170,7 @@ class Heap {
   static const char* RegionName(Space space);
 
   // Verify that all pointers in the heap point to the heap.
-  bool Verify(MarkExpectation mark_expectation = kForbidMarked) const;
+  bool Verify(MarkExpectation mark_expectation = kForbidMarked);
 
   // Print heap sizes.
   void PrintSizes() const;
@@ -191,16 +189,16 @@ class Heap {
   intptr_t Collections(Space space) const;
 
   ObjectSet* CreateAllocatedObjectSet(Zone* zone,
-                                      MarkExpectation mark_expectation) const;
+                                      MarkExpectation mark_expectation);
 
   static const char* GCTypeToString(GCType type);
   static const char* GCReasonToString(GCReason reason);
 
   // Associate a peer with an object.  A non-existent peer is equal to NULL.
-  void SetPeer(RawObject* raw_obj, void* peer) {
+  void SetPeer(ObjectPtr raw_obj, void* peer) {
     SetWeakEntry(raw_obj, kPeers, reinterpret_cast<intptr_t>(peer));
   }
-  void* GetPeer(RawObject* raw_obj) const {
+  void* GetPeer(ObjectPtr raw_obj) const {
     return reinterpret_cast<void*>(GetWeakEntry(raw_obj, kPeers));
   }
   int64_t PeerCount() const;
@@ -208,37 +206,37 @@ class Heap {
 #if !defined(HASH_IN_OBJECT_HEADER)
   // Associate an identity hashCode with an object. An non-existent hashCode
   // is equal to 0.
-  void SetHash(RawObject* raw_obj, intptr_t hash) {
+  void SetHash(ObjectPtr raw_obj, intptr_t hash) {
     SetWeakEntry(raw_obj, kIdentityHashes, hash);
   }
-  intptr_t GetHash(RawObject* raw_obj) const {
+  intptr_t GetHash(ObjectPtr raw_obj) const {
     return GetWeakEntry(raw_obj, kIdentityHashes);
   }
 #endif
 
-  void SetCanonicalHash(RawObject* raw_obj, intptr_t hash) {
+  void SetCanonicalHash(ObjectPtr raw_obj, intptr_t hash) {
     SetWeakEntry(raw_obj, kCanonicalHashes, hash);
   }
-  intptr_t GetCanonicalHash(RawObject* raw_obj) const {
+  intptr_t GetCanonicalHash(ObjectPtr raw_obj) const {
     return GetWeakEntry(raw_obj, kCanonicalHashes);
   }
   void ResetCanonicalHashTable();
 
   // Associate an id with an object (used when serializing an object).
   // A non-existant id is equal to 0.
-  void SetObjectId(RawObject* raw_obj, intptr_t object_id) {
+  void SetObjectId(ObjectPtr raw_obj, intptr_t object_id) {
     ASSERT(Thread::Current()->IsMutatorThread());
     SetWeakEntry(raw_obj, kObjectIds, object_id);
   }
-  intptr_t GetObjectId(RawObject* raw_obj) const {
+  intptr_t GetObjectId(ObjectPtr raw_obj) const {
     ASSERT(Thread::Current()->IsMutatorThread());
     return GetWeakEntry(raw_obj, kObjectIds);
   }
   void ResetObjectIdTable();
 
   // Used by the GC algorithms to propagate weak entries.
-  intptr_t GetWeakEntry(RawObject* raw_obj, WeakSelector sel) const;
-  void SetWeakEntry(RawObject* raw_obj, WeakSelector sel, intptr_t val);
+  intptr_t GetWeakEntry(ObjectPtr raw_obj, WeakSelector sel) const;
+  void SetWeakEntry(ObjectPtr raw_obj, WeakSelector sel, intptr_t val);
 
   WeakTable* GetWeakTable(Space space, WeakSelector selector) const {
     if (space == kNew) {
@@ -256,7 +254,7 @@ class Heap {
     }
   }
 
-  void ForwardWeakEntries(RawObject* before_object, RawObject* after_object);
+  void ForwardWeakEntries(ObjectPtr before_object, ObjectPtr after_object);
   void ForwardWeakTables(ObjectPointerVisitor* visitor);
 
   // Stats collection.
@@ -275,6 +273,9 @@ class Heap {
   static bool IsAllocatableInNewSpace(intptr_t size) {
     return size <= kNewAllocatableSize;
   }
+  static bool IsAllocatableViaFreeLists(intptr_t size) {
+    return size < kAllocatablePageSize;
+  }
 
 #ifndef PRODUCT
   void PrintToJSONObject(Space space, JSONObject* object) const;
@@ -290,7 +291,7 @@ class Heap {
   }
 #endif  // PRODUCT
 
-  Isolate* isolate() const { return isolate_; }
+  IsolateGroup* isolate_group() const { return isolate_group_; }
 
   Monitor* barrier() const { return &barrier_; }
   Monitor* barrier_done() const { return &barrier_done_; }
@@ -300,18 +301,13 @@ class Heap {
   }
 
   static const intptr_t kNewAllocatableSize = 256 * KB;
+  static const intptr_t kAllocatablePageSize = 64 * KB;
 
-  intptr_t GetTLABSize() {
-    // Inspired by V8 tlab size. More than threshold for old space allocation,
-    // less then minimal(initial) new semi-space.
-    const intptr_t size = 512 * KB;
-    return Utils::RoundDown(size, kObjectAlignment);
-  }
-  void MakeTLABIterable(Thread* thread);
-  void AbandonRemainingTLAB(Thread* thread);
   Space SpaceForExternal(intptr_t size) const;
 
   void CollectOnNthAllocation(intptr_t num_allocations);
+
+  void MergeFrom(Heap* donor);
 
  private:
   class GCStats : public ValueObject {
@@ -344,26 +340,26 @@ class Heap {
     DISALLOW_COPY_AND_ASSIGN(GCStats);
   };
 
-  Heap(Isolate* isolate,
+  Heap(IsolateGroup* isolate_group,
        intptr_t max_new_gen_semi_words,  // Max capacity of new semi-space.
        intptr_t max_old_gen_words);
 
   uword AllocateNew(intptr_t size);
-  uword AllocateOld(intptr_t size, HeapPage::PageType type);
+  uword AllocateOld(intptr_t size, OldPage::PageType type);
 
   // Visit all pointers. Caller must ensure concurrent sweeper is not running,
   // and the visitor must not allocate.
-  void VisitObjectPointers(ObjectPointerVisitor* visitor) const;
+  void VisitObjectPointers(ObjectPointerVisitor* visitor);
 
   // Visit all objects, including FreeListElement "objects". Caller must ensure
   // concurrent sweeper is not running, and the visitor must not allocate.
-  void VisitObjects(ObjectVisitor* visitor) const;
-  void VisitObjectsNoImagePages(ObjectVisitor* visitor) const;
+  void VisitObjects(ObjectVisitor* visitor);
+  void VisitObjectsNoImagePages(ObjectVisitor* visitor);
   void VisitObjectsImagePages(ObjectVisitor* visitor) const;
 
   // Like Verify, but does not wait for concurrent sweeper, so caller must
   // ensure thread-safety.
-  bool VerifyGC(MarkExpectation mark_expectation = kForbidMarked) const;
+  bool VerifyGC(MarkExpectation mark_expectation = kForbidMarked);
 
   // Helper functions for garbage collection.
   void CollectNewSpaceGarbage(Thread* thread, GCReason reason);
@@ -387,7 +383,7 @@ class Heap {
   // Trigger major GC if 'gc_on_nth_allocation_' is set.
   void CollectForDebugging();
 
-  Isolate* isolate_;
+  IsolateGroup* isolate_group_;
 
   // The different spaces used for allocation.
   Scavenger new_space_;
@@ -409,6 +405,7 @@ class Heap {
   Monitor gc_in_progress_monitor_;
   bool gc_new_space_in_progress_;
   bool gc_old_space_in_progress_;
+  bool last_gc_was_old_space_;
 
   static const intptr_t kNoForcedGarbageCollection = -1;
 
@@ -484,26 +481,6 @@ class WritableCodePages : StackResource {
 
  private:
   Isolate* isolate_;
-};
-
-// This scope forces heap growth, forces use of the bump allocator, and
-// takes the page lock. It is useful e.g. at program startup when allocating
-// many objects into old gen (like libraries, classes, and functions).
-class BumpAllocateScope : ThreadStackResource {
- public:
-  explicit BumpAllocateScope(Thread* thread);
-  ~BumpAllocateScope();
-
- private:
-  // This is needed to avoid a GC while we hold the page lock, which would
-  // trigger a deadlock.
-  NoHeapGrowthControlScope no_growth_control_;
-
-  // A reload will try to allocate into new gen, which could trigger a
-  // scavenge and deadlock.
-  NoReloadScope no_reload_scope_;
-
-  DISALLOW_COPY_AND_ASSIGN(BumpAllocateScope);
 };
 
 #if defined(TESTING)

@@ -6,10 +6,16 @@
 // on the dart2js internals.
 library compiler.src.kernel.dart2js_target;
 
+import 'package:_fe_analyzer_shared/src/messages/codes.dart'
+    show Message, LocatedMessage;
+import 'package:_js_interop_checks/js_interop_checks.dart';
 import 'package:kernel/ast.dart' as ir;
-import 'package:kernel/core_types.dart';
 import 'package:kernel/class_hierarchy.dart';
+import 'package:kernel/core_types.dart';
+import 'package:kernel/reference_from_index.dart';
+import 'package:kernel/target/changed_structure_notifier.dart';
 import 'package:kernel/target/targets.dart';
+
 import 'invocation_mirror_constants.dart';
 
 const Iterable<String> _allowedDartSchemePaths = const <String>[
@@ -29,9 +35,14 @@ const Iterable<String> _allowedDartSchemePaths = const <String>[
 bool maybeEnableNative(Uri uri) {
   bool allowedTestLibrary() {
     String scriptName = uri.path;
-    return scriptName.contains('tests/compiler/dart2js_native') ||
-        scriptName.contains('tests/compiler/dart2js_extra') ||
-        scriptName.contains('generated_tests/dart2js_native/native_test');
+    return scriptName
+            .contains(RegExp(r'(?<!generated_)tests/dart2js/native')) ||
+        scriptName.contains(RegExp(r'(?<!generated_)tests/dart2js/internal')) ||
+        scriptName.contains('generated_tests/dart2js/native/native_test') ||
+        scriptName.contains(RegExp(r'(?<!generated_)tests/dart2js_2/native')) ||
+        scriptName
+            .contains(RegExp(r'(?<!generated_)tests/dart2js_2/internal')) ||
+        scriptName.contains('generated_tests/dart2js_2/native/native_test');
   }
 
   bool allowedDartLibrary() {
@@ -44,6 +55,7 @@ bool maybeEnableNative(Uri uri) {
 
 /// A kernel [Target] to configure the Dart Front End for dart2js.
 class Dart2jsTarget extends Target {
+  @override
   final TargetFlags flags;
   @override
   final String name;
@@ -55,6 +67,11 @@ class Dart2jsTarget extends Target {
 
   @override
   bool get supportsLateFields => false;
+
+  // TODO(johnniwinther,sigmund): Remove this when js-interop handles getter
+  //  calls encoded with an explicit property get or disallows getter calls.
+  @override
+  bool get supportsExplicitGetterCalls => false;
 
   @override
   List<String> get extraRequiredLibraries => _requiredLibraries[name];
@@ -86,7 +103,15 @@ class Dart2jsTarget extends Target {
       List<ir.Library> libraries,
       Map<String, String> environmentDefines,
       DiagnosticReporter diagnosticReporter,
-      {void logger(String msg)}) {}
+      ReferenceFromIndex referenceFromIndex,
+      {void logger(String msg),
+      ChangedStructureNotifier changedStructureNotifier}) {
+    for (var library in libraries) {
+      JsInteropChecks(
+              diagnosticReporter as DiagnosticReporter<Message, LocatedMessage>)
+          .visitLibrary(library);
+    }
+  }
 
   @override
   ir.Expression instantiateInvocation(
@@ -120,7 +145,7 @@ class Dart2jsTarget extends Target {
                 new ir.StringLiteral(arg.name)..fileOffset = arg.fileOffset,
                 arg.value)
               ..fileOffset = arg.fileOffset;
-          })), keyType: coreTypes.stringLegacyRawType)
+          })), keyType: coreTypes.stringNonNullableRawType)
             ..isConst = (arguments.named.length == 0)
             ..fileOffset = arguments.fileOffset,
           new ir.IntLiteral(kind)..fileOffset = offset,
@@ -157,6 +182,7 @@ const _requiredLibraries = const <String, List<String>>{
     'dart:_foreign_helper',
     'dart:_interceptors',
     'dart:_internal',
+    'dart:_js_annotations',
     'dart:_js_embedded_names',
     'dart:_js_helper',
     'dart:_js_names',
@@ -169,7 +195,6 @@ const _requiredLibraries = const <String, List<String>>{
     'dart:io',
     'dart:js',
     'dart:js_util',
-    'dart:mirrors',
     'dart:svg',
     'dart:web_audio',
     'dart:web_gl',
@@ -179,6 +204,7 @@ const _requiredLibraries = const <String, List<String>>{
     'dart:_foreign_helper',
     'dart:_interceptors',
     'dart:_internal',
+    'dart:_js_annotations',
     'dart:_js_embedded_names',
     'dart:_js_helper',
     'dart:_js_names',
@@ -188,7 +214,6 @@ const _requiredLibraries = const <String, List<String>>{
     'dart:io',
     'dart:js',
     'dart:js_util',
-    'dart:mirrors',
   ]
 };
 

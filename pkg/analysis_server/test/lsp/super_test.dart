@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'server_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(SuperTest);
   });
@@ -16,7 +16,7 @@ main() {
 
 @reflectiveTest
 class SuperTest extends AbstractLspAnalysisServerTest {
-  test_className() async {
+  Future<void> test_className() async {
     final content = '''
 class A {}
 
@@ -31,11 +31,13 @@ class C^ extends B {}
       positionFromMarker(content),
     );
 
-    expect(res,
-        equals(Location(mainFileUri.toString(), rangeFromMarkers(content))));
+    expect(
+        res,
+        equals(Location(
+            uri: mainFileUri.toString(), range: rangeFromMarkers(content))));
   }
 
-  test_insideClass() async {
+  Future<void> test_insideClass() async {
     final content = '''
 class A {}
 
@@ -52,11 +54,13 @@ class C extends B {
       positionFromMarker(content),
     );
 
-    expect(res,
-        equals(Location(mainFileUri.toString(), rangeFromMarkers(content))));
+    expect(
+        res,
+        equals(Location(
+            uri: mainFileUri.toString(), range: rangeFromMarkers(content))));
   }
 
-  test_insideMethod() async {
+  Future<void> test_insideMethod() async {
     final content = '''
 class A {
   void [[foo]]() {}
@@ -78,11 +82,13 @@ class C extends B {
       positionFromMarker(content),
     );
 
-    expect(res,
-        equals(Location(mainFileUri.toString(), rangeFromMarkers(content))));
+    expect(
+        res,
+        equals(Location(
+            uri: mainFileUri.toString(), range: rangeFromMarkers(content))));
   }
 
-  test_methodName() async {
+  Future<void> test_methodName() async {
     final content = '''
 class A {
   void [[foo]]() {}
@@ -104,11 +110,13 @@ class C extends B {
       positionFromMarker(content),
     );
 
-    expect(res,
-        equals(Location(mainFileUri.toString(), rangeFromMarkers(content))));
+    expect(
+        res,
+        equals(Location(
+            uri: mainFileUri.toString(), range: rangeFromMarkers(content))));
   }
 
-  test_methodReturnType() async {
+  Future<void> test_methodReturnType() async {
     final content = '''
 class A {
   void [[foo]]() {}
@@ -130,7 +138,9 @@ class C extends B {
       positionFromMarker(content),
     );
 
-    expect(res,
-        equals(Location(mainFileUri.toString(), rangeFromMarkers(content))));
+    expect(
+        res,
+        equals(Location(
+            uri: mainFileUri.toString(), range: rangeFromMarkers(content))));
   }
 }

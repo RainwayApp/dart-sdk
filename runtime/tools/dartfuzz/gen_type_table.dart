@@ -866,6 +866,20 @@ void filterOperators(Set<InterfaceType> allTypes) {
   }
 }
 
+// Filters methods based on a manually maintained exclude list.
+//
+// Excluded methods should be associated with an issue number so they can be
+// re-enabled after the issue is resolved.
+bool isExcludedMethod(InterfaceType tp, MethodElement method) {
+  // TODO(bkonyi): Enable operator / for these types after we resolve
+  // https://github.com/dart-lang/sdk/issues/39890
+  if (((tp.displayName == 'Float32x4') && (method.name == '/')) ||
+      ((tp.displayName == 'Float64x2') && (method.name == '/'))) {
+    return true;
+  }
+  return false;
+}
+
 // Extract all binary and unary operators for tp.
 // Operators are stored by return type in the following way:
 // return type: { operator: { parameter types } }
@@ -874,6 +888,9 @@ void filterOperators(Set<InterfaceType> allTypes) {
 // Does not recurse into interfaces and superclasses of tp.
 void getOperatorsForTyp(String typName, InterfaceType tp, fromLiteral) {
   for (MethodElement method in tp.methods) {
+    // If the method is manually excluded, skip it.
+    if (isExcludedMethod(tp, method)) continue;
+
     // Detect whether tp can be parsed from a literal (dartfuzz.dart can
     // already handle that).
     // This is usually indicated by the presence of the static constructor
@@ -1018,7 +1035,7 @@ bool shouldFilterConstructor(InterfaceType tp, ConstructorElement cons) {
   if (cons.name.startsWith('_')) {
     return true;
   }
-  // Constructor blacklist
+  // Constructor exclude list
   // TODO(bkonyi): Enable Float32x4.fromInt32x4Bits after we resolve
   // https://github.com/dart-lang/sdk/issues/39890
   if ((tp.displayName == 'Float32x4') && (cons.name == 'fromInt32x4Bits')) {
@@ -1306,7 +1323,8 @@ visitCompilationUnit(CompilationUnitElement unit, Set<InterfaceType> allTypes) {
           (classElement.name == 'Comparable') ||
           (classElement.name == 'BidirectionalIterator') ||
           (classElement.name == 'Iterator') ||
-          (classElement.name == 'Stopwatch')) {
+          (classElement.name == 'Stopwatch') ||
+          (classElement.name == 'OutOfMemoryError')) {
         continue;
       }
       allTypes.add(classElement.thisType);

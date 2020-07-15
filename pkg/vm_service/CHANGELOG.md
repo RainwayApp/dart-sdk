@@ -1,11 +1,58 @@
 # Changelog
 
+## 4.1.0
+- Update to version `3.35.0` of the spec.
+- Expose more `@required` parameters on the named constructors of VM service objects.
+
+## 4.0.4
+- Update to version `3.34.0` of the spec.
+- Fixed issue where `TimelineEvents` was not a valid service event kind.
+- Fixed issue where invoking a service extension with no arguments would result
+  in a TypeError during request routing.
+- Added `TimelineStreamSubscriptionsUpdate` event, which is broadcast when
+  `setVMTimelineFlags` is used to change the set of currently recording timeline
+  streams.
+
+## 4.0.3
+- Update to version `3.33.0` of the spec.
+- Add static error code constants to `RPCError`.
+- Update the toString() method or `RPCError` and add a toMap() method.
+
+## 4.0.2
+- Fixed issue where RPC format did not conform to the JSON-RPC 2.0
+  specification.
+- Added `getClassList` RPC.
+
+## 4.0.1
+- Improved documentation.
+- Fixed analysis issues.
+
+## 4.0.0
+- **breaking**: RPCs which can return a `Sentinel` will now throw a `SentinelException`
+  if a `Sential` is received as a response.
+- **breaking**: RPCs which can return multiple values now return
+  `Future<Response>` rather than `Future<dynamic>`.
+- `RPCError` now implements `Exception`.
+
+## 3.0.0
+- **breaking**: RPCs which have an isolateId parameter now return
+  `Future<dynamic>` as a `Sentinel` can be returned if the target isolate no
+  longer exists.
+
+## 2.3.3
+- Classes now implement their corresponding reference types to handle cases
+  where the service returns a more specific type than promised.
+
+## 2.3.2
+- Added `getClientName`, `setClientName`, and `requireResumePermission` methods.
+- Added `ClientName` class.
+
 ## 2.3.1
 - Fixed issue where `dart:io` extensions were not being exported.
 
 ## 2.3.0
 - Added `getHttpEnableTimelineLogging` and `setHttpEnableTimelineLogging` methods.
-- Added `HttpTimelineLoggingState` class.`
+- Added `HttpTimelineLoggingState` class.
 
 ## 2.2.1
 - Fixed issue where `TimelineEvent.toJson` always returned an empty map.

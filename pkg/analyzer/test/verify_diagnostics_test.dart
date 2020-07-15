@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/analysis/session.dart';
 import 'package:analyzer/dart/ast/ast.dart';
@@ -37,14 +38,30 @@ class DocumentationValidator {
   /// ony include docs that cannot be verified because of missing support in the
   /// verifier.
   static const List<String> unverifiedDocs = [
+    // Produces two diagnostics when it should only produce one.
+    'CompileTimeErrorCode.BUILT_IN_IDENTIFIER_AS_TYPE',
+    // Produces two diagnostics when it should only produce one. We could get
+    // rid of the invalid error by adding a declaration of a top-level variable
+    // (such as `JSBool b;`), but that would complicate the example.
+    'CompileTimeErrorCode.IMPORT_INTERNAL_LIBRARY',
+    // Produces two diagnostics when it should only produce one.
+    'CompileTimeErrorCode.INVALID_URI',
     // Need a way to make auxiliary files that (a) are not included in the
     // generated docs or (b) can be made persistent for fixes.
     'CompileTimeErrorCode.PART_OF_NON_PART',
     // The code has been replaced but is not yet removed.
     'HintCode.DEPRECATED_MEMBER_USE',
-    // Needs two expected errors.
+    // Needs to be able to specify two expected diagnostics.
     'StaticWarningCode.AMBIGUOUS_IMPORT',
+    // Produces two diagnostics when it should only produce one.
+    'StaticWarningCode.INVALID_USE_OF_NULL_VALUE',
+    // Produces the diagnostic HintCode.UNUSED_LOCAL_VARIABLE when it shouldn't.
+    'StaticWarningCode.UNDEFINED_IDENTIFIER_AWAIT',
   ];
+
+  /// The prefix used on directive lines to specify the experiments that should
+  /// be enabled for a snippet.
+  static const String experimentsPrefix = '%experiments=';
 
   /// The prefix used on directive lines to indicate the uri of an auxiliary
   /// file that is needed for testing purposes.
@@ -64,12 +81,15 @@ class DocumentationValidator {
   /// buffer.
   bool hasWrittenFilePath = false;
 
+  /// The name of the variable currently being verified.
+  String variableName;
+
   /// The name of the error code currently being verified.
   String codeName;
 
-  /// A flag indicating whether the [codeName] has already been written to the
-  /// buffer.
-  bool hasWrittenCodeName = false;
+  /// A flag indicating whether the [variableName] has already been written to
+  /// the buffer.
+  bool hasWrittenVariableName = false;
 
   /// Initialize a newly created documentation validator.
   DocumentationValidator(this.codePaths);
@@ -86,6 +106,16 @@ class DocumentationValidator {
     if (buffer.isNotEmpty) {
       fail(buffer.toString());
     }
+  }
+
+  /// Return the name of the code as defined in the [initializer].
+  String _extractCodeName(VariableDeclaration variable) {
+    Expression initializer = variable.initializer;
+    if (initializer is MethodInvocation) {
+      var firstArgument = initializer.argumentList.arguments[0];
+      return (firstArgument as StringLiteral).stringValue;
+    }
+    return variable.name.name;
   }
 
   /// Extract documentation from the given [field] declaration.
@@ -112,19 +142,19 @@ class DocumentationValidator {
     return docs;
   }
 
-  _SnippetData _extractSnippetData(
-      String snippet, bool errorRequired, Map<String, String> auxiliaryFiles) {
+  _SnippetData _extractSnippetData(String snippet, bool errorRequired,
+      Map<String, String> auxiliaryFiles, List<String> experiments) {
     int rangeStart = snippet.indexOf(errorRangeStart);
     if (rangeStart < 0) {
       if (errorRequired) {
         _reportProblem('No error range in example');
       }
-      return _SnippetData(snippet, -1, 0, auxiliaryFiles);
+      return _SnippetData(snippet, -1, 0, auxiliaryFiles, experiments);
     }
     int rangeEnd = snippet.indexOf(errorRangeEnd, rangeStart + 1);
     if (rangeEnd < 0) {
       _reportProblem('No end of error range in example');
-      return _SnippetData(snippet, -1, 0, auxiliaryFiles);
+      return _SnippetData(snippet, -1, 0, auxiliaryFiles, experiments);
     } else if (snippet.indexOf(errorRangeStart, rangeEnd) > 0) {
       _reportProblem('More than one error range in example');
     }
@@ -134,33 +164,43 @@ class DocumentationValidator {
             snippet.substring(rangeEnd + errorRangeEnd.length),
         rangeStart,
         rangeEnd - rangeStart - 2,
-        auxiliaryFiles);
+        auxiliaryFiles,
+        experiments);
   }
 
   /// Extract the snippets of Dart code between the start (inclusive) and end
   /// (exclusive) indexes.
   List<_SnippetData> _extractSnippets(
       List<String> lines, int start, int end, bool errorRequired) {
-    List<_SnippetData> snippets = [];
-    Map<String, String> auxiliaryFiles = <String, String>{};
-    int currentStart = -1;
-    for (int i = start; i < end; i++) {
-      String line = lines[i];
+    var snippets = <_SnippetData>[];
+    var auxiliaryFiles = <String, String>{};
+    List<String> experiments;
+    var currentStart = -1;
+    for (var i = start; i < end; i++) {
+      var line = lines[i];
       if (line == '```') {
         if (currentStart < 0) {
           _reportProblem('Snippet without file type on line $i.');
           return snippets;
         }
-        String secondLine = lines[currentStart + 1];
+        var secondLine = lines[currentStart + 1];
         if (secondLine.startsWith(uriDirectivePrefix)) {
-          String name = secondLine.substring(
+          var name = secondLine.substring(
               uriDirectivePrefix.length, secondLine.length - 1);
-          String content = lines.sublist(currentStart + 2, i).join('\n');
+          var content = lines.sublist(currentStart + 2, i).join('\n');
           auxiliaryFiles[name] = content;
         } else if (lines[currentStart] == '```dart') {
-          String content = lines.sublist(currentStart + 1, i).join('\n');
-          snippets
-              .add(_extractSnippetData(content, errorRequired, auxiliaryFiles));
+          if (secondLine.startsWith(experimentsPrefix)) {
+            experiments = secondLine
+                .substring(experimentsPrefix.length)
+                .split(',')
+                .map((e) => e.trim())
+                .toList();
+            currentStart++;
+          }
+          var content = lines.sublist(currentStart + 1, i).join('\n');
+          snippets.add(_extractSnippetData(
+              content, errorRequired, auxiliaryFiles, experiments));
           auxiliaryFiles = <String, String>{};
         }
         currentStart = -1;
@@ -196,9 +236,9 @@ class DocumentationValidator {
       buffer.writeln('In $filePath');
       hasWrittenFilePath = true;
     }
-    if (!hasWrittenCodeName) {
-      buffer.writeln('  $codeName');
-      hasWrittenCodeName = true;
+    if (!hasWrittenVariableName) {
+      buffer.writeln('  $variableName');
+      hasWrittenVariableName = true;
     }
     buffer.writeln('    $problem');
     for (AnalysisError error in errors) {
@@ -227,14 +267,17 @@ class DocumentationValidator {
             List<String> docs = _extractDoc(member);
             if (docs != null) {
               VariableDeclaration variable = member.fields.variables[0];
-              String variableName = variable.name.name;
-              codeName = '$className.$variableName';
-              if (unverifiedDocs.contains(codeName)) {
+              codeName = _extractCodeName(variable);
+              if (codeName == 'NULLABLE_TYPE_IN_CATCH_CLAUSE') {
+                DateTime.now();
+              }
+              variableName = '$className.${variable.name.name}';
+              if (unverifiedDocs.contains(variableName)) {
                 continue;
               }
-              hasWrittenCodeName = false;
+              hasWrittenVariableName = false;
 
-              int exampleStart = docs.indexOf('#### Example');
+              int exampleStart = docs.indexOf('#### Examples');
               int fixesStart = docs.indexOf('#### Common fixes');
 
               List<_SnippetData> exampleSnippets =
@@ -287,7 +330,7 @@ class DocumentationValidator {
         _reportProblem('Expected one error but found none ($section $index).');
       } else if (errorCount == 1) {
         AnalysisError error = errors[0];
-        if (error.errorCode.uniqueName != codeName) {
+        if (error.errorCode.name != codeName) {
           _reportProblem('Expected an error with code $codeName, '
               'found ${error.errorCode} ($section $index).');
         }
@@ -348,8 +391,10 @@ class _SnippetData {
   final int offset;
   final int length;
   final Map<String, String> auxiliaryFiles;
+  final List<String> experiments;
 
-  _SnippetData(this.content, this.offset, this.length, this.auxiliaryFiles);
+  _SnippetData(this.content, this.offset, this.length, this.auxiliaryFiles,
+      this.experiments);
 }
 
 /// A test class that creates an environment suitable for analyzing the
@@ -363,7 +408,8 @@ class _SnippetTest extends DriverResolutionTest with PackageMixin {
 
   /// Initialize a newly created test to test the given [snippet].
   _SnippetTest(this.snippet) {
-    analysisOptions.enabledExperiments = ['extension-methods'];
+    analysisOptions.contextFeatures =
+        FeatureSet.fromEnableFlags(snippet.experiments ?? []);
     String pubspecContent = snippet.auxiliaryFiles['pubspec.yaml'];
     if (pubspecContent != null) {
       for (String line in pubspecContent.split('\n')) {

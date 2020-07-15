@@ -26,20 +26,14 @@ Element _getEnclosingElement(CompilationUnitElement unitElement, int offset) {
   return element;
 }
 
-/**
- * Search support for an [AnalysisDriver].
- */
+/// Search support for an [AnalysisDriver].
 class Search {
   final AnalysisDriver _driver;
 
   Search(this._driver);
 
-  /**
-   * Returns class or mixin members with the given [name].
-   */
+  /// Returns class or mixin members with the given [name].
   Future<List<Element>> classMembers(String name) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<Element> elements = <Element>[];
 
     void addElement(Element element) {
@@ -65,13 +59,9 @@ class Search {
     return elements;
   }
 
-  /**
-   * Returns references to the [element].
-   */
+  /// Returns references to the [element].
   Future<List<SearchResult>> references(
       Element element, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     if (element == null) {
       return const <SearchResult>[];
     }
@@ -114,17 +104,13 @@ class Search {
     return const <SearchResult>[];
   }
 
-  /**
-   * Returns subtypes of the given [type].
-   *
-   * The [searchedFiles] are consulted to see if a file is "owned" by this
-   * [Search] object, so should be only searched by it to avoid duplicate
-   * results; and updated to take ownership if the file is not owned yet.
-   */
+  /// Returns subtypes of the given [type].
+  ///
+  /// The [searchedFiles] are consulted to see if a file is "owned" by this
+  /// [Search] object, so should be only searched by it to avoid duplicate
+  /// results; and updated to take ownership if the file is not owned yet.
   Future<List<SearchResult>> subTypes(
       ClassElement type, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     if (type == null) {
       return const <SearchResult>[];
     }
@@ -137,9 +123,7 @@ class Search {
     return results;
   }
 
-  /**
-   * Return direct [SubtypeResult]s for either the [type] or [subtype].
-   */
+  /// Return direct [SubtypeResult]s for either the [type] or [subtype].
   Future<List<SubtypeResult>> subtypes(SearchedFiles searchedFiles,
       {ClassElement type, SubtypeResult subtype}) async {
     String name;
@@ -174,12 +158,8 @@ class Search {
     return results;
   }
 
-  /**
-   * Returns top-level elements with names matching the given [regExp].
-   */
+  /// Returns top-level elements with names matching the given [regExp].
   Future<List<Element>> topLevelElements(RegExp regExp) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<Element> elements = <Element>[];
 
     void addElement(Element element) {
@@ -206,13 +186,9 @@ class Search {
     return elements;
   }
 
-  /**
-   * Returns unresolved references to the given [name].
-   */
+  /// Returns unresolved references to the given [name].
   Future<List<SearchResult>> unresolvedMemberReferences(
       String name, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     if (name == null) {
       return const <SearchResult>[];
     }
@@ -250,8 +226,6 @@ class Search {
       Element element,
       SearchedFiles searchedFiles,
       Map<IndexRelationKind, SearchResultKind> relationToResultKind) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     // Prepare the element name.
     String name = element.displayName;
     if (element is ConstructorElement) {
@@ -286,16 +260,12 @@ class Search {
     }
   }
 
-  /**
-   * Add results for [element] usage in the given [file].
-   */
+  /// Add results for [element] usage in the given [file].
   Future<void> _addResultsInFile(
       List<SearchResult> results,
       Element element,
       Map<IndexRelationKind, SearchResultKind> relationToResultKind,
       String file) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     AnalysisDriverUnitIndex index = await _driver.getIndex(file);
     if (index != null) {
       _IndexRequest request = _IndexRequest(index);
@@ -309,16 +279,12 @@ class Search {
   }
 
   Future<CompilationUnitElement> _getUnitElement(String file) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     UnitElementResult result = await _driver.getUnitElement(file);
     return result?.element;
   }
 
   Future<List<SearchResult>> _searchReferences(
       Element element, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<SearchResult> results = <SearchResult>[];
     await _addResults(results, element, searchedFiles,
         const {IndexRelationKind.IS_REFERENCED_BY: SearchResultKind.REFERENCE});
@@ -327,8 +293,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_CompilationUnit(
       CompilationUnitElement element) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     String path = element.source.fullName;
 
     // If the path is not known, then the file is not referenced.
@@ -357,8 +321,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Field(
       PropertyInducingElement field, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<SearchResult> results = <SearchResult>[];
     PropertyAccessorElement getter = field.getter;
     PropertyAccessorElement setter = field.setter;
@@ -393,8 +355,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Getter(
       PropertyAccessorElement getter, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<SearchResult> results = <SearchResult>[];
     await _addResults(results, getter, searchedFiles, const {
       IndexRelationKind.IS_REFERENCED_BY: SearchResultKind.REFERENCE,
@@ -405,8 +365,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Import(
       ImportElement element, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     String path = element.source.fullName;
     if (!searchedFiles.add(path, this)) {
       return const <SearchResult>[];
@@ -427,8 +385,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Library(
       LibraryElement element, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     String path = element.source.fullName;
     if (!searchedFiles.add(path, this)) {
       return const <SearchResult>[];
@@ -456,8 +412,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Local(Element element,
       bool Function(AstNode n) isRootNode, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     String path = element.source.fullName;
     if (!searchedFiles.add(path, this)) {
       return const <SearchResult>[];
@@ -491,8 +445,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Parameter(
       ParameterElement parameter, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     List<SearchResult> results = <SearchResult>[];
     results.addAll(await _searchReferences_Local(
       parameter,
@@ -510,8 +462,6 @@ class Search {
 
   Future<List<SearchResult>> _searchReferences_Prefix(
       PrefixElement element, SearchedFiles searchedFiles) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     String path = element.source.fullName;
     if (!searchedFiles.add(path, this)) {
       return const <SearchResult>[];
@@ -531,9 +481,7 @@ class Search {
   }
 }
 
-/**
- * Container that keeps track of file owners.
- */
+/// Container that keeps track of file owners.
 class SearchedFiles {
   final Map<String, Search> pathOwners = {};
   final Map<Uri, Search> uriOwners = {};
@@ -557,38 +505,24 @@ class SearchedFiles {
   }
 }
 
-/**
- * A single search result.
- */
+/// A single search result.
 class SearchResult {
-  /**
-   * The deep most element that contains this result.
-   */
+  /// The deep most element that contains this result.
   final Element enclosingElement;
 
-  /**
-   * The kind of the [element] usage.
-   */
+  /// The kind of the [element] usage.
   final SearchResultKind kind;
 
-  /**
-   * The offset relative to the beginning of the containing file.
-   */
+  /// The offset relative to the beginning of the containing file.
   final int offset;
 
-  /**
-   * The length of the usage in the containing file context.
-   */
+  /// The length of the usage in the containing file context.
   final int length;
 
-  /**
-   * Is `true` if a field or a method is using with a qualifier.
-   */
+  /// Is `true` if a field or a method is using with a qualifier.
   final bool isResolved;
 
-  /**
-   * Is `true` if the result is a resolved reference to [element].
-   */
+  /// Is `true` if the result is a resolved reference to [element].
   final bool isQualified;
 
   SearchResult._(this.enclosingElement, this.kind, this.offset, this.length,
@@ -615,33 +549,21 @@ class SearchResult {
   }
 }
 
-/**
- * The kind of reference in a [SearchResult].
- */
+/// The kind of reference in a [SearchResult].
 enum SearchResultKind { READ, READ_WRITE, WRITE, INVOCATION, REFERENCE }
 
-/**
- * A single subtype of a type.
- */
+/// A single subtype of a type.
 class SubtypeResult {
-  /**
-   * The URI of the library.
-   */
+  /// The URI of the library.
   final String libraryUri;
 
-  /**
-   * The identifier of the subtype.
-   */
+  /// The identifier of the subtype.
   final String id;
 
-  /**
-   * The name of the subtype.
-   */
+  /// The name of the subtype.
   final String name;
 
-  /**
-   * The names of instance members declared in the class.
-   */
+  /// The names of instance members declared in the class.
   final List<String> members;
 
   SubtypeResult(this.libraryUri, this.id, this.name, this.members);
@@ -650,17 +572,15 @@ class SubtypeResult {
   String toString() => id;
 }
 
-/**
- * A visitor that finds the deep-most [Element] that contains the [offset].
- */
-class _ContainingElementFinder extends GeneralizingElementVisitor {
+/// A visitor that finds the deep-most [Element] that contains the [offset].
+class _ContainingElementFinder extends GeneralizingElementVisitor<void> {
   final int offset;
   Element containingElement;
 
   _ContainingElementFinder(this.offset);
 
   @override
-  visitElement(Element element) {
+  void visitElement(Element element) {
     if (element is ElementImpl) {
       if (element.codeOffset != null &&
           element.codeOffset <= offset &&
@@ -672,10 +592,8 @@ class _ContainingElementFinder extends GeneralizingElementVisitor {
   }
 }
 
-/**
- * Visitor that adds [SearchResult]s for references to the [importElement].
- */
-class _ImportElementReferencesVisitor extends RecursiveAstVisitor {
+/// Visitor that adds [SearchResult]s for references to the [importElement].
+class _ImportElementReferencesVisitor extends RecursiveAstVisitor<void> {
   final List<SearchResult> results = <SearchResult>[];
 
   final ImportElement importElement;
@@ -690,13 +608,13 @@ class _ImportElementReferencesVisitor extends RecursiveAstVisitor {
   }
 
   @override
-  visitExportDirective(ExportDirective node) {}
+  void visitExportDirective(ExportDirective node) {}
 
   @override
-  visitImportDirective(ImportDirective node) {}
+  void visitImportDirective(ImportDirective node) {}
 
   @override
-  visitSimpleIdentifier(SimpleIdentifier node) {
+  void visitSimpleIdentifier(SimpleIdentifier node) {
     if (node.inDeclarationContext()) {
       return;
     }
@@ -704,18 +622,21 @@ class _ImportElementReferencesVisitor extends RecursiveAstVisitor {
       if (node.staticElement == importElement.prefix) {
         AstNode parent = node.parent;
         if (parent is PrefixedIdentifier && parent.prefix == node) {
-          if (importedElements.contains(parent.staticElement)) {
+          var element = parent.staticElement?.declaration;
+          if (importedElements.contains(element)) {
             _addResultForPrefix(node, parent.identifier);
           }
         }
         if (parent is MethodInvocation && parent.target == node) {
-          if (importedElements.contains(parent.methodName.staticElement)) {
+          var element = parent.methodName.staticElement?.declaration;
+          if (importedElements.contains(element)) {
             _addResultForPrefix(node, parent.methodName);
           }
         }
       }
     } else {
-      if (importedElements.contains(node.staticElement)) {
+      var element = node.staticElement?.declaration;
+      if (importedElements.contains(element)) {
         _addResult(node.offset, 0);
       }
     }
@@ -765,10 +686,8 @@ class _IndexRequest {
     }
   }
 
-  /**
-   * Return the [element]'s identifier in the [index] or `-1` if the
-   * [element] is not referenced in the [index].
-   */
+  /// Return the [element]'s identifier in the [index] or `-1` if the
+  /// [element] is not referenced in the [index].
   int findElementId(Element element) {
     IndexElementInfo info = IndexElementInfo(element);
     element = info.element;
@@ -778,18 +697,20 @@ class _IndexRequest {
       return -1;
     }
     // Prepare information about the element.
-    int unitMemberId = getElementUnitMemberId(element);
+    var components = ElementNameComponents(element);
+    int unitMemberId = getStringId(components.unitMemberName);
     if (unitMemberId == -1) {
       return -1;
     }
-    int classMemberId = getElementClassMemberId(element);
+    int classMemberId = getStringId(components.classMemberName);
     if (classMemberId == -1) {
       return -1;
     }
-    int parameterId = getElementParameterId(element);
+    int parameterId = getStringId(components.parameterName);
     if (parameterId == -1) {
       return -1;
     }
+
     // Try to find the element id using classMemberId, parameterId, and kind.
     int elementId =
         _findFirstOccurrence(index.elementNameUnitMemberIds, unitMemberId);
@@ -810,60 +731,16 @@ class _IndexRequest {
     return -1;
   }
 
-  /**
-   * Return the [element]'s class member name identifier, `null` is not a class
-   * member, or `-1` if the [element] is not referenced in the [index].
-   */
-  int getElementClassMemberId(Element element) {
-    for (; element != null; element = element.enclosingElement) {
-      if (element.enclosingElement is ClassElement ||
-          element.enclosingElement is ExtensionElement) {
-        return getStringId(element.name);
-      }
-    }
-    return index.nullStringId;
-  }
-
-  /**
-   * Return the [element]'s class member name identifier, `null` is not a class
-   * member, or `-1` if the [element] is not referenced in the [index].
-   */
-  int getElementParameterId(Element element) {
-    for (; element != null; element = element.enclosingElement) {
-      if (element is ParameterElement) {
-        return getStringId(element.name);
-      }
-    }
-    return index.nullStringId;
-  }
-
-  /**
-   * Return the [element]'s top-level name identifier, `0` is the unit, or
-   * `-1` if the [element] is not referenced in the [index].
-   */
-  int getElementUnitMemberId(Element element) {
-    for (; element != null; element = element.enclosingElement) {
-      if (element.enclosingElement is CompilationUnitElement) {
-        return getStringId(element.name);
-      }
-    }
-    return index.nullStringId;
-  }
-
-  /**
-   * Return a list of results where an element with the given [elementId] has
-   * a relation with the kind from [relationToResultKind].
-   *
-   * The function [getEnclosingUnitElement] is used to lazily compute the
-   * enclosing [CompilationUnitElement] if there is a relation of an
-   * interesting kind.
-   */
+  /// Return a list of results where an element with the given [elementId] has
+  /// a relation with the kind from [relationToResultKind].
+  ///
+  /// The function [getEnclosingUnitElement] is used to lazily compute the
+  /// enclosing [CompilationUnitElement] if there is a relation of an
+  /// interesting kind.
   Future<List<SearchResult>> getRelations(
       int elementId,
       Map<IndexRelationKind, SearchResultKind> relationToResultKind,
       Future<CompilationUnitElement> Function() getEnclosingUnitElement) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     // Find the first usage of the element.
     int i = _findFirstOccurrence(index.usedElements, elementId);
     if (i == -1) {
@@ -896,18 +773,18 @@ class _IndexRequest {
     return results;
   }
 
-  /**
-   * Return the identifier of [str] in the [index] or `-1` if [str] is not
-   * used in the [index].
-   */
+  /// Return the identifier of [str] in the [index] or `-1` if [str] is not
+  /// used in the [index].
   int getStringId(String str) {
+    if (str == null) {
+      return index.nullStringId;
+    }
+
     return binarySearch(index.strings, str);
   }
 
-  /**
-   * Return the identifier of the [CompilationUnitElement] containing the
-   * [element] in the [index] or `-1` if not found.
-   */
+  /// Return the identifier of the [CompilationUnitElement] containing the
+  /// [element] in the [index] or `-1` if not found.
   int getUnitId(Element element) {
     CompilationUnitElement unitElement = getUnitElement(element);
     int libraryUriId = getUriId(unitElement.library.source.uri);
@@ -927,16 +804,12 @@ class _IndexRequest {
     return -1;
   }
 
-  /**
-   * Return a list of results where a class members with the given [name] is
-   * referenced with a qualifier, but is not resolved.
-   */
+  /// Return a list of results where a class members with the given [name] is
+  /// referenced with a qualifier, but is not resolved.
   Future<List<SearchResult>> getUnresolvedMemberReferences(
       String name,
       Map<IndexRelationKind, SearchResultKind> relationToResultKind,
       Future<CompilationUnitElement> Function() getEnclosingUnitElement) async {
-    // TODO(brianwilkerson) Determine whether this await is necessary.
-    await null;
     // Find the name identifier.
     int nameId = getStringId(name);
     if (nameId == -1) {
@@ -970,19 +843,15 @@ class _IndexRequest {
     return results;
   }
 
-  /**
-   * Return the identifier of the [uri] in the [index] or `-1` if the [uri] is
-   * not used in the [index].
-   */
+  /// Return the identifier of the [uri] in the [index] or `-1` if the [uri] is
+  /// not used in the [index].
   int getUriId(Uri uri) {
     String str = uri.toString();
     return getStringId(str);
   }
 
-  /**
-   * Return the index of the first occurrence of the [value] in the [sortedList],
-   * or `-1` if the [value] is not in the list.
-   */
+  /// Return the index of the first occurrence of the [value] in the
+  /// [sortedList], or `-1` if the [value] is not in the list.
   int _findFirstOccurrence(List<int> sortedList, int value) {
     // Find an occurrence.
     int i = binarySearch(sortedList, value);
@@ -997,12 +866,10 @@ class _IndexRequest {
   }
 }
 
-/**
- * Visitor that adds [SearchResult]s for local elements of a block, method,
- * class or a library - labels, local functions, local variables and parameters,
- * type parameters, import prefixes.
- */
-class _LocalReferencesVisitor extends RecursiveAstVisitor {
+/// Visitor that adds [SearchResult]s for local elements of a block, method,
+/// class or a library - labels, local functions, local variables and
+/// parameters, type parameters, import prefixes.
+class _LocalReferencesVisitor extends RecursiveAstVisitor<void> {
   final List<SearchResult> results = <SearchResult>[];
 
   final Element element;
@@ -1011,7 +878,7 @@ class _LocalReferencesVisitor extends RecursiveAstVisitor {
   _LocalReferencesVisitor(this.element, this.enclosingUnitElement);
 
   @override
-  visitSimpleIdentifier(SimpleIdentifier node) {
+  void visitSimpleIdentifier(SimpleIdentifier node) {
     if (node.inDeclarationContext()) {
       return;
     }

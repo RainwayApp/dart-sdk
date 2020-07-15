@@ -8,10 +8,8 @@ import "package:expect/expect.dart";
 
 void main() {
   // Growable lists. Initial length 0.
-  testConcurrentModification(new List());
-  testConcurrentModification(new List<int>().toList());
-  testConcurrentModification(new List<int?>(0).toList());
-  testConcurrentModification(new List.filled(0, null, growable: true));
+  testConcurrentModification(<int>[].toList());
+  testConcurrentModification(new List.filled(0, 0, growable: true));
   testConcurrentModification([]);
   testConcurrentModification(new List.from(const []));
   testConcurrentModification(new MyList([]));
@@ -28,7 +26,7 @@ void main() {
   testConcurrentAddSelf([1, 2, 3]);
 }
 
-void testConcurrentModification(List<int?> list) {
+void testConcurrentModification(List<int> list) {
   // add, removeLast.
   list.clear();
   list.addAll([1, 2, 3, 2, 7, 9, 9, 7, 2, 3, 2, 1]);
@@ -36,8 +34,8 @@ void testConcurrentModification(List<int?> list) {
   // Operations that change the length cause ConcurrentModificationError.
   void testModification(action()) {
     testIterator(int when) {
-      list.length = 4;
-      list.setAll(0, [0, 1, 2, 3]);
+      list.clear();
+      list.addAll([0, 1, 2, 3]);
       Expect.throws(() {
         for (var element in list) {
           if (element == when) action();
@@ -46,8 +44,8 @@ void testConcurrentModification(List<int?> list) {
     }
 
     testForEach(int when) {
-      list.length = 4;
-      list.setAll(0, [0, 1, 2, 3]);
+      list.clear();
+      list.addAll([0, 1, 2, 3]);
       Expect.throws(() {
         list.forEach((var element) {
           if (element == when) action();
@@ -86,14 +84,21 @@ testConcurrentAddSelf(List list) {
 }
 
 class MyList<E> extends ListBase<E> {
-  List<E> _source;
+  // TODO(42496): Use a nullable list because insert() is implemented in terms
+  // of length=. Change this back to `E` and remove the `as E` below when that
+  // issue is fixed.
+  List<E?> _source;
   MyList(this._source);
   int get length => _source.length;
   void set length(int length) {
     _source.length = length;
   }
 
-  E operator [](int index) => _source[index];
+  void add(E element) {
+    _source.add(element);
+  }
+
+  E operator [](int index) => _source[index] as E;
   void operator []=(int index, E value) {
     _source[index] = value;
   }

@@ -15,6 +15,14 @@
 #define FALL_THROUGH ((void)0)
 #endif
 
+#if defined(GOOGLE3)
+// google3 builds use NDEBUG to indicate non-debug builds which is different
+// from the way the Dart project expects it: DEBUG indicating a debug build.
+#if !defined(NDEBUG) && !defined(DEBUG)
+#define DEBUG
+#endif  // !NDEBUG && !DEBUG
+#endif  // GOOGLE3
+
 // __STDC_FORMAT_MACROS has to be defined before including <inttypes.h> to
 // enable platform independent printf format specifiers.
 #ifndef __STDC_FORMAT_MACROS
@@ -126,6 +134,12 @@
 #define DEBUG_ONLY(code) code
 #else  // defined(DEBUG)
 #define DEBUG_ONLY(code)
+#endif  // defined(DEBUG)
+
+#if defined(DEBUG)
+#define UNLESS_DEBUG(code)
+#else  // defined(DEBUG)
+#define UNLESS_DEBUG(code) code
 #endif  // defined(DEBUG)
 
 namespace dart {
@@ -241,14 +255,6 @@ typedef simd128_value_t fpu_register_t;
 #define DART_NOINLINE __declspec(noinline)
 #elif __GNUC__
 #define DART_NOINLINE __attribute__((noinline))
-#else
-#error Automatic compiler detection failed.
-#endif
-
-#ifdef _MSC_VER
-#define DART_FLATTEN
-#elif __GNUC__
-#define DART_FLATTEN __attribute__((flatten))
 #else
 #error Automatic compiler detection failed.
 #endif
@@ -374,19 +380,6 @@ typedef simd128_value_t fpu_register_t;
 #define TARGET_ARCH_IS_64_BIT 1
 #endif
 
-// Determine whether HOST_ARCH equals TARGET_ARCH.
-#if defined(HOST_ARCH_ARM) && defined(TARGET_ARCH_ARM)
-#define HOST_ARCH_EQUALS_TARGET_ARCH 1
-#elif defined(HOST_ARCH_ARM64) && defined(TARGET_ARCH_ARM64)
-#define HOST_ARCH_EQUALS_TARGET_ARCH 1
-#elif defined(HOST_ARCH_IA32) && defined(TARGET_ARCH_IA32)
-#define HOST_ARCH_EQUALS_TARGET_ARCH 1
-#elif defined(HOST_ARCH_X64) && defined(TARGET_ARCH_X64)
-#define HOST_ARCH_EQUALS_TARGET_ARCH 1
-#else
-// HOST_ARCH != TARGET_ARCH.
-#endif
-
 #if !defined(TARGET_OS_ANDROID) && !defined(TARGET_OS_FUCHSIA) &&              \
     !defined(TARGET_OS_MACOS_IOS) && !defined(TARGET_OS_LINUX) &&              \
     !defined(TARGET_OS_MACOS) && !defined(TARGET_OS_WINDOWS)
@@ -415,6 +408,10 @@ typedef simd128_value_t fpu_register_t;
     (defined(TARGET_OS_LINUX) && defined(TARGET_ARCH_X64) ||                   \
      defined(TARGET_OS_FUCHSIA))
 #define DUAL_MAPPING_SUPPORTED 1
+#endif
+
+#if defined(DART_PRECOMPILED_RUNTIME) || defined(DART_PRECOMPILER)
+#define SUPPORT_UNBOXED_INSTANCE_FIELDS
 #endif
 
 // Short form printf format specifiers
@@ -470,6 +467,10 @@ const int32_t kMaxInt32 = 0x7FFFFFFF;
 const uint32_t kMaxUint32 = 0xFFFFFFFF;
 const int64_t kMinInt64 = DART_INT64_C(0x8000000000000000);
 const int64_t kMaxInt64 = DART_INT64_C(0x7FFFFFFFFFFFFFFF);
+const int kMinInt = INT_MIN;
+const int kMaxInt = INT_MAX;
+const int64_t kMinInt64RepresentableAsDouble = kMinInt64;
+const int64_t kMaxInt64RepresentableAsDouble = DART_INT64_C(0x7FFFFFFFFFFFFC00);
 const uint64_t kMaxUint64 = DART_2PART_UINT64_C(0xFFFFFFFF, FFFFFFFF);
 const int64_t kSignBitDouble = DART_INT64_C(0x8000000000000000);
 
@@ -478,8 +479,10 @@ const int64_t kSignBitDouble = DART_INT64_C(0x8000000000000000);
 typedef intptr_t word;
 typedef uintptr_t uword;
 
-// Size of a class id.
-typedef uint16_t classid_t;
+// Size of a class id assigned to concrete, abstract and top-level classes.
+//
+// We use a signed integer type here to make it comparable with intptr_t.
+typedef int32_t classid_t;
 
 // Byte sizes.
 const int kWordSize = sizeof(word);
@@ -624,9 +627,8 @@ static inline void USE(T) {}
 // type to another thus avoiding the warning.
 template <class D, class S>
 inline D bit_cast(const S& source) {
-  // Compile time assertion: sizeof(D) == sizeof(S). A compile error
-  // here means your D and S have different sizes.
-  DART_UNUSED typedef char VerifySizesAreEqual[sizeof(D) == sizeof(S) ? 1 : -1];
+  static_assert(sizeof(D) == sizeof(S),
+                "Source and destination must have the same size");
 
   D destination;
   // This use of memcpy is safe: source and destination cannot overlap.
@@ -647,36 +649,6 @@ inline D bit_copy(const S& source) {
          sizeof(destination));
   return destination;
 }
-
-#if defined(HOST_ARCH_ARM) || defined(HOST_ARCH_ARM64)
-// Similar to bit_copy and bit_cast, but does take the type from the argument.
-template <typename T>
-static inline T ReadUnaligned(const T* ptr) {
-  T value;
-  memcpy(reinterpret_cast<void*>(&value), reinterpret_cast<const void*>(ptr),
-         sizeof(value));
-  return value;
-}
-
-// Similar to bit_copy and bit_cast, but does take the type from the argument.
-template <typename T>
-static inline void StoreUnaligned(T* ptr, T value) {
-  memcpy(reinterpret_cast<void*>(ptr), reinterpret_cast<const void*>(&value),
-         sizeof(value));
-}
-#else   // !(HOST_ARCH_ARM || HOST_ARCH_ARM64)
-// Similar to bit_copy and bit_cast, but does take the type from the argument.
-template <typename T>
-static inline T ReadUnaligned(const T* ptr) {
-  return *ptr;
-}
-
-// Similar to bit_copy and bit_cast, but does take the type from the argument.
-template <typename T>
-static inline void StoreUnaligned(T* ptr, T value) {
-  *ptr = value;
-}
-#endif  // !(HOST_ARCH_ARM || HOST_ARCH_ARM64)
 
 // On Windows the reentrent version of strtok is called
 // strtok_s. Unify on the posix name strtok_r.
@@ -718,6 +690,9 @@ static inline void StoreUnaligned(T* ptr, T value) {
 // Most platforms use PATH_MAX, but in Windows it's called MAX_PATH.
 #define PATH_MAX MAX_PATH
 #endif
+
+// Undefine math.h definition which clashes with our condition names.
+#undef OVERFLOW
 
 }  // namespace dart
 

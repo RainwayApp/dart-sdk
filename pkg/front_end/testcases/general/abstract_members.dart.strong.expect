@@ -140,6 +140,16 @@ class Interface1 extends core::Object {
     : super core::Object::•()
     ;
   method interfaceMethod1() → void {}
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class Interface2 extends core::Object {
   field dynamic interfaceMethod1 = null;
@@ -147,12 +157,32 @@ class Interface2 extends core::Object {
     : super core::Object::•()
     ;
   method interfaceMethod2() → void {}
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class Interface3 extends core::Object {
   synthetic constructor •() → self::Interface3*
     : super core::Object::•()
     ;
   method interfaceMethod3() → void {}
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class A extends core::Object implements self::Interface1, self::Interface2, self::Interface3 {
   synthetic constructor •() → self::A*
@@ -163,6 +193,16 @@ abstract class A extends core::Object implements self::Interface1, self::Interfa
   abstract set property1(dynamic _) → void;
   abstract set property2(dynamic _) → void;
   abstract set property3(dynamic _) → void;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class B extends self::A {
   final field dynamic property1 = null;
@@ -181,14 +221,6 @@ class MyClass extends self::B {
   method aMethod() → dynamic {}
   method bMethod() → dynamic {}
   method cMethod() → dynamic {}
-  no-such-method-forwarder get interfaceMethod1() → dynamic
-    return this.{core::Object::noSuchMethod}(new core::_InvocationMirror::_withType(#C1, 1, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4))) as{TypeError} dynamic;
-  no-such-method-forwarder set property3(dynamic _) → void
-    return this.{core::Object::noSuchMethod}(new core::_InvocationMirror::_withType(#C5, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder set interfaceMethod1(dynamic value) → void
-    return this.{core::Object::noSuchMethod}(new core::_InvocationMirror::_withType(#C6, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[value]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder set property1(dynamic _) → void
-    return this.{core::Object::noSuchMethod}(new core::_InvocationMirror::_withType(#C7, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
 }
 class MyMock1 extends self::B {
   synthetic constructor •() → self::MyMock1*
@@ -197,19 +229,19 @@ class MyMock1 extends self::B {
   method noSuchMethod(core::Invocation* _) → dynamic
     return null;
   no-such-method-forwarder method interfaceMethod2() → void
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C8, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder method abstractMethod() → dynamic
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C9, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4))) as{TypeError} dynamic;
-  no-such-method-forwarder method interfaceMethod1() → void
     return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C1, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
+  no-such-method-forwarder method abstractMethod() → dynamic
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C5, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4))) as{TypeError,ForDynamic} dynamic;
+  no-such-method-forwarder method interfaceMethod1() → void
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C6, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
   no-such-method-forwarder method interfaceMethod3() → void
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C10, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C7, 0, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
   no-such-method-forwarder set property3(dynamic _) → void
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C5, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C8, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
   no-such-method-forwarder set interfaceMethod1(dynamic value) → void
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C6, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[value]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C9, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[value]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
   no-such-method-forwarder set property1(dynamic _) → void
-    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C7, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
+    return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C10, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
   no-such-method-forwarder set property2(dynamic _) → void
     return this.{self::MyMock1::noSuchMethod}(new core::_InvocationMirror::_withType(#C11, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
 }
@@ -224,22 +256,22 @@ class MyMock3 extends self::B {
     : super self::B::•()
     ;
   abstract method noSuchMethod(core::Invocation* _) → dynamic;
-  no-such-method-forwarder get interfaceMethod1() → dynamic
-    return this.{self::MyMock3::noSuchMethod}(new core::_InvocationMirror::_withType(#C1, 1, #C2, #C3, core::Map::unmodifiable<core::Symbol*, dynamic>(#C4))) as{TypeError} dynamic;
-  no-such-method-forwarder set property3(dynamic _) → void
-    return this.{self::MyMock3::noSuchMethod}(new core::_InvocationMirror::_withType(#C5, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder set interfaceMethod1(dynamic value) → void
-    return this.{self::MyMock3::noSuchMethod}(new core::_InvocationMirror::_withType(#C6, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[value]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder set property1(dynamic _) → void
-    return this.{self::MyMock3::noSuchMethod}(new core::_InvocationMirror::_withType(#C7, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
-  no-such-method-forwarder set property2(dynamic _) → void
-    return this.{self::MyMock3::noSuchMethod}(new core::_InvocationMirror::_withType(#C11, 2, #C2, core::List::unmodifiable<dynamic>(<dynamic>[_]), core::Map::unmodifiable<core::Symbol*, dynamic>(#C4)));
 }
 class C extends core::Object {
   synthetic constructor •() → self::C*
     : super core::Object::•()
     ;
   method interfaceMethod1(dynamic _) → void {}
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class D extends self::C implements self::Interface2 {
   synthetic constructor •() → self::D*
@@ -251,6 +283,16 @@ class E extends core::Object {
     : super core::Object::•()
     ;
   set interfaceMethod1(dynamic _) → void {}
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class F extends self::E implements self::Interface1 {
   synthetic constructor •() → self::F*
@@ -262,6 +304,16 @@ class Foo extends core::Object {
     : super core::Object::•()
     ;
   method foo() → void {}
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class G extends core::Object {
   synthetic constructor •() → self::G*
@@ -269,6 +321,16 @@ class G extends core::Object {
     ;
   get foo() → core::Object*
     return null;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class H extends self::G implements self::Foo {
   synthetic constructor •() → self::H*
@@ -281,12 +343,32 @@ class Bar extends core::Object {
     ;
   get foo() → core::Object*
     return null;
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 class I extends core::Object {
   synthetic constructor •() → self::I*
     : super core::Object::•()
     ;
   method foo() → core::Object* {}
+  abstract member-signature get _identityHashCode() → core::int*;
+  abstract member-signature method _instanceOf(dynamic instantiatorTypeArguments, dynamic functionTypeArguments, dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOf(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfTrue(dynamic type) → core::bool*;
+  abstract member-signature method _simpleInstanceOfFalse(dynamic type) → core::bool*;
+  abstract member-signature operator ==(dynamic other) → core::bool*;
+  abstract member-signature get hashCode() → core::int*;
+  abstract member-signature method toString() → core::String*;
+  abstract member-signature method noSuchMethod(core::Invocation* invocation) → dynamic;
+  abstract member-signature get runtimeType() → core::Type*;
 }
 abstract class J extends self::I implements self::Bar {
   synthetic constructor •() → self::J*
@@ -296,15 +378,15 @@ abstract class J extends self::I implements self::Bar {
 static method main() → dynamic {}
 
 constants  {
-  #C1 = #interfaceMethod1
+  #C1 = #interfaceMethod2
   #C2 = <core::Type*>[]
   #C3 = <dynamic>[]
   #C4 = core::_ImmutableMap<core::Symbol*, dynamic> {_kvPairs:#C3}
-  #C5 = #property3=
-  #C6 = #interfaceMethod1=
-  #C7 = #property1=
-  #C8 = #interfaceMethod2
-  #C9 = #abstractMethod
-  #C10 = #interfaceMethod3
+  #C5 = #abstractMethod
+  #C6 = #interfaceMethod1
+  #C7 = #interfaceMethod3
+  #C8 = #property3=
+  #C9 = #interfaceMethod1=
+  #C10 = #property1=
   #C11 = #property2=
 }

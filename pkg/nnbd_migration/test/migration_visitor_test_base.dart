@@ -8,10 +8,11 @@ import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
-import 'package:analyzer/src/generated/resolver.dart' show TypeSystemImpl;
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/generated/source.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
 import 'package:meta/meta.dart';
+import 'package:nnbd_migration/instrumentation.dart';
 import 'package:nnbd_migration/src/conditional_discard.dart';
 import 'package:nnbd_migration/src/decorated_class_hierarchy.dart';
 import 'package:nnbd_migration/src/decorated_type.dart';
@@ -19,6 +20,7 @@ import 'package:nnbd_migration/src/edge_builder.dart';
 import 'package:nnbd_migration/src/expression_checks.dart';
 import 'package:nnbd_migration/src/node_builder.dart';
 import 'package:nnbd_migration/src/nullability_node.dart';
+import 'package:nnbd_migration/src/nullability_node_target.dart';
 import 'package:nnbd_migration/src/variables.dart';
 import 'package:test/test.dart';
 
@@ -34,10 +36,7 @@ class AnyNodeMatcher extends _RecordingNodeMatcher {
 
 /// Mixin allowing unit tests to create decorated types easily.
 mixin DecoratedTypeTester implements DecoratedTypeTesterBase {
-  int _offset = 0;
-
-  Map<TypeParameterElement, DecoratedType> _decoratedTypeParameterBounds =
-      Map.identity();
+  int nodeId = 0;
 
   NullabilityNode get always => graph.always;
 
@@ -74,9 +73,6 @@ mixin DecoratedTypeTester implements DecoratedTypeTesterBase {
           nullabilitySuffix: NullabilitySuffix.star,
         ),
         node ?? newNode(),
-        typeFormalBounds: typeFormals
-            .map((formal) => _decoratedTypeParameterBounds[formal])
-            .toList(),
         returnType: returnType,
         positionalParameters: required.toList()..addAll(positional),
         namedParameters: named);
@@ -106,7 +102,11 @@ mixin DecoratedTypeTester implements DecoratedTypeTesterBase {
       DecoratedType(typeProvider.listType2(elementType.type), node ?? newNode(),
           typeArguments: [elementType]);
 
-  NullabilityNode newNode() => NullabilityNode.forTypeAnnotation(_offset++);
+  NullabilityNode newNode() => NullabilityNode.forTypeAnnotation(
+      NullabilityNodeTarget.text('node ${nodeId++}'));
+
+  DecoratedType num_({NullabilityNode node}) =>
+      DecoratedType(typeProvider.numType, node ?? newNode());
 
   DecoratedType object({NullabilityNode node}) =>
       DecoratedType(typeProvider.objectType, node ?? newNode());
@@ -114,7 +114,7 @@ mixin DecoratedTypeTester implements DecoratedTypeTesterBase {
   TypeParameterElement typeParameter(String name, DecoratedType bound) {
     var element = TypeParameterElementImpl.synthetic(name);
     element.bound = bound.type;
-    _decoratedTypeParameterBounds[element] = bound;
+    decoratedTypeParameterBounds.put(element, bound);
     return element;
   }
 
@@ -132,6 +132,8 @@ mixin DecoratedTypeTester implements DecoratedTypeTesterBase {
 /// Base functionality that must be implemented by classes mixing in
 /// [DecoratedTypeTester].
 abstract class DecoratedTypeTesterBase {
+  DecoratedTypeParameterBounds get decoratedTypeParameterBounds;
+
   NullabilityGraph get graph;
 
   TypeProvider get typeProvider;
@@ -191,14 +193,22 @@ mixin EdgeTester {
     return {for (var edge in getEdges(anyNode, graph.never)) edge.sourceNode};
   }
 
+  /// Asserts that a dummy edge exists from [source] to always.
+  NullabilityEdge assertDummyEdge(Object source) =>
+      assertEdge(source, graph.always, hard: false, checkable: false);
+
   /// Asserts that an edge exists with a node matching [source] and a node
   /// matching [destination], and with the given [hard]ness and [guards].
   ///
   /// [source] and [destination] are converted to [NodeMatcher] objects if they
   /// aren't already.  In practice this means that the caller can pass in either
-  //  /// a [NodeMatcher] or a [NullabilityNode].
+  /// a [NodeMatcher] or a [NullabilityNode].
   NullabilityEdge assertEdge(Object source, Object destination,
-      {@required bool hard, List<NullabilityNode> guards = const []}) {
+      {@required bool hard,
+      bool checkable = true,
+      bool isSetupAssignment = false,
+      Object guards = isEmpty,
+      Object codeReference}) {
     var edges = getEdges(source, destination);
     if (edges.length == 0) {
       fail('Expected edge $source -> $destination, found none');
@@ -207,7 +217,12 @@ mixin EdgeTester {
     } else {
       var edge = edges[0];
       expect(edge.isHard, hard);
-      expect(edge.guards, unorderedEquals(guards));
+      expect(edge.isCheckable, checkable);
+      expect(edge.isSetupAssignment, isSetupAssignment);
+      expect(edge.guards, guards);
+      if (codeReference != null) {
+        expect(edge.codeReference, codeReference);
+      }
       return edge;
     }
   }
@@ -283,10 +298,9 @@ class InstrumentedVariables extends Variables {
 
   final _expressionChecks = <Expression, ExpressionChecksOrigin>{};
 
-  final _possiblyOptional = <DefaultFormalParameter, NullabilityNode>{};
-
-  InstrumentedVariables(NullabilityGraph graph, TypeProvider typeProvider)
-      : super(graph, typeProvider);
+  InstrumentedVariables(NullabilityGraph graph, TypeProvider typeProvider,
+      LineInfo Function(String) getLineInfo)
+      : super(graph, typeProvider, getLineInfo);
 
   /// Gets the [ExpressionChecks] associated with the given [expression].
   ExpressionChecksOrigin checkExpression(Expression expression) =>
@@ -299,11 +313,6 @@ class InstrumentedVariables extends Variables {
   /// Gets the [DecoratedType] associated with the given [expression].
   DecoratedType decoratedExpressionType(Expression expression) =>
       _decoratedExpressionTypes[_normalizeExpression(expression)];
-
-  /// Gets the [NullabilityNode] associated with the possibility that
-  /// [parameter] may be optional.
-  NullabilityNode possiblyOptionalParameter(DefaultFormalParameter parameter) =>
-      _possiblyOptional[parameter];
 
   @override
   void recordConditionalDiscard(
@@ -324,13 +333,6 @@ class InstrumentedVariables extends Variables {
     _expressionChecks[_normalizeExpression(expression)] = origin;
   }
 
-  @override
-  void recordPossiblyOptional(
-      Source source, DefaultFormalParameter parameter, NullabilityNode node) {
-    _possiblyOptional[parameter] = node;
-    super.recordPossiblyOptional(source, parameter, node);
-  }
-
   /// Unwraps any parentheses surrounding [expression].
   Expression _normalizeExpression(Expression expression) {
     while (expression is ParenthesizedExpression) {
@@ -344,6 +346,8 @@ class MigrationVisitorTestBase extends AbstractSingleUnitTest with EdgeTester {
   InstrumentedVariables variables;
 
   final NullabilityGraphForTesting graph;
+
+  final decoratedTypeParameterBounds = DecoratedTypeParameterBounds();
 
   MigrationVisitorTestBase() : this._(NullabilityGraphForTesting());
 
@@ -360,9 +364,9 @@ class MigrationVisitorTestBase extends AbstractSingleUnitTest with EdgeTester {
 
   Future<CompilationUnit> analyze(String code) async {
     await resolveTestUnit(code);
-    variables = InstrumentedVariables(graph, typeProvider);
-    testUnit
-        .accept(NodeBuilder(variables, testSource, null, graph, typeProvider));
+    variables = InstrumentedVariables(graph, typeProvider, getLineInfo);
+    testUnit.accept(NodeBuilder(
+        variables, testSource, null, graph, typeProvider, getLineInfo));
     return testUnit;
   }
 
@@ -394,8 +398,26 @@ class MigrationVisitorTestBase extends AbstractSingleUnitTest with EdgeTester {
         testSource, findNode.typeAnnotation(text));
   }
 
-  NullabilityNode possiblyOptionalParameter(String text) {
-    return variables.possiblyOptionalParameter(findNode.defaultParameter(text));
+  /// Gets the [ConditionalDiscard] information associated with the collection
+  /// element whose text is [text].
+  ConditionalDiscard elementDiscard(String text) {
+    return variables.conditionalDiscard(findNode.collectionElement(text));
+  }
+
+  /// Returns a [Matcher] that matches a [CodeReference] pointing to the given
+  /// file [offset], with the given [function] name.
+  TypeMatcher<CodeReference> matchCodeRef(
+      {@required int offset, @required String function}) {
+    var location = testUnit.lineInfo.getLocation(offset);
+    return TypeMatcher<CodeReference>()
+        .having((cr) => cr.line, 'line', location.lineNumber)
+        .having((cr) => cr.column, 'column', location.columnNumber)
+        .having((cr) => cr.function, 'function', function);
+  }
+
+  void setUp() {
+    DecoratedTypeParameterBounds.current = decoratedTypeParameterBounds;
+    super.setUp();
   }
 
   /// Gets the [ConditionalDiscard] information associated with the statement
@@ -404,10 +426,9 @@ class MigrationVisitorTestBase extends AbstractSingleUnitTest with EdgeTester {
     return variables.conditionalDiscard(findNode.statement(text));
   }
 
-  /// Gets the [ConditionalDiscard] information associated with the collection
-  /// element whose text is [text].
-  ConditionalDiscard elementDiscard(String text) {
-    return variables.conditionalDiscard(findNode.collectionElement(text));
+  void tearDown() {
+    DecoratedTypeParameterBounds.current = null;
+    super.tearDown();
   }
 }
 

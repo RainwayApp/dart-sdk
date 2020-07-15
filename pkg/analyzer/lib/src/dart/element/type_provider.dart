@@ -8,6 +8,7 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/src/dart/constant/value.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:meta/meta.dart';
 
 /// Provide common functionality shared by the various TypeProvider
@@ -26,7 +27,7 @@ abstract class TypeProviderBase implements TypeProvider {
   @override
   bool isObjectGetter(String id) {
     PropertyAccessorElement element = objectType.element.getGetter(id);
-    return (element != null && !element.isStatic);
+    return element != null && !element.isStatic;
   }
 
   @override
@@ -37,7 +38,7 @@ abstract class TypeProviderBase implements TypeProvider {
   @override
   bool isObjectMethod(String id) {
     MethodElement element = objectType.element.getMethod(id);
-    return (element != null && !element.isStatic);
+    return element != null && !element.isStatic;
   }
 }
 
@@ -345,7 +346,9 @@ class TypeProviderImpl extends TypeProviderBase {
   }
 
   @override
-  DartType get neverType => NeverTypeImpl.instance;
+  DartType get neverType => isNonNullableByDefault
+      ? NeverTypeImpl.instance
+      : NeverTypeImpl.instanceLegacy;
 
   @override
   Set<ClassElement> get nonSubtypableClasses => _nonSubtypableClasses ??= {
@@ -363,12 +366,19 @@ class TypeProviderImpl extends TypeProviderBase {
     return _nullElement ??= _getClassElement(_coreLibrary, 'Null');
   }
 
+  @deprecated
   @override
   DartObjectImpl get nullObject {
-    if (_nullObject == null) {
-      _nullObject = DartObjectImpl(nullType, NullState.NULL_STATE);
-    }
-    return _nullObject;
+    return _nullObject ??= DartObjectImpl(
+      TypeSystemImpl(
+        implicitCasts: false,
+        isNonNullableByDefault: false,
+        strictInference: false,
+        typeProvider: this,
+      ),
+      nullType,
+      NullState.NULL_STATE,
+    );
   }
 
   InterfaceTypeImpl get nullStar {
@@ -563,7 +573,7 @@ class TypeProviderImpl extends TypeProviderBase {
     if (typeParameters.isNotEmpty) {
       typeArguments = typeParameters.map((e) {
         return TypeParameterTypeImpl(
-          e,
+          element: e,
           nullabilitySuffix: _nullabilitySuffix,
         );
       }).toList(growable: false);

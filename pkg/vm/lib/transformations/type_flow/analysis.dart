@@ -18,6 +18,7 @@ import 'package:kernel/type_environment.dart';
 
 import 'calls.dart';
 import 'native_code.dart';
+import 'protobuf_handler.dart' show ProtobufHandler;
 import 'summary.dart';
 import 'summary_collector.dart';
 import 'types.dart';
@@ -162,6 +163,12 @@ class _DirectInvocation extends _Invocation {
     if (selector.member.function != null) {
       typeChecksNeeded = selector.member.function.typeParameters
           .any((t) => t.isGenericCovariantImpl);
+    } else {
+      Field field = selector.member;
+      if (selector.callKind == CallKind.PropertySet) {
+        // TODO(dartbug.com/40615): Use TFA results to improve this criterion.
+        typeChecksNeeded = field.isGenericCovariantImpl;
+      }
     }
   }
 
@@ -185,12 +192,17 @@ class _DirectInvocation extends _Invocation {
       case CallKind.PropertyGet:
         assertx(args.values.length == firstParamIndex);
         assertx(args.names.isEmpty);
+        fieldValue.isGetterUsed = true;
         return fieldValue.getValue(
             typeFlowAnalysis, field.isStatic ? null : args.values[0]);
 
       case CallKind.PropertySet:
+      case CallKind.SetFieldInConstructor:
         assertx(args.values.length == firstParamIndex + 1);
         assertx(args.names.isEmpty);
+        if (selector.callKind == CallKind.PropertySet) {
+          fieldValue.isSetterUsed = true;
+        }
         final Type setterArg = args.values[firstParamIndex];
         fieldValue.setValue(
             setterArg, typeFlowAnalysis, field.isStatic ? null : args.receiver);
@@ -200,6 +212,7 @@ class _DirectInvocation extends _Invocation {
         // Call via field.
         // TODO(alexmarkov): support function types and use inferred type
         // to get more precise return type.
+        fieldValue.isGetterUsed = true;
         final receiver = fieldValue.getValue(
             typeFlowAnalysis, field.isStatic ? null : args.values[0]);
         if (receiver != const EmptyType()) {
@@ -223,6 +236,9 @@ class _DirectInvocation extends _Invocation {
           // TODO(alexmarkov): Try to prove that static field initializer
           // does not throw exception.
           initializerResult = new Type.nullable(initializerResult);
+        }
+        if (kPrintTrace) {
+          tracePrint("Result of ${field} initializer: $initializerResult");
         }
         fieldValue.setValue(initializerResult, typeFlowAnalysis,
             field.isStatic ? null : args.receiver);
@@ -399,11 +415,15 @@ class _DispatchableInvocation extends _Invocation {
 
           if (selector.callKind != CallKind.PropertyGet) {
             if (selector is DynamicSelector) {
-              typeFlowAnalysis._calledViaDynamicSelector.add(target);
+              typeFlowAnalysis._methodsAndSettersCalledDynamically.add(target);
             } else if (selector is VirtualSelector) {
               typeFlowAnalysis._calledViaThis.add(target);
             } else {
               typeFlowAnalysis._calledViaInterfaceSelector.add(target);
+            }
+          } else {
+            if (selector is DynamicSelector) {
+              typeFlowAnalysis._gettersCalledDynamically.add(target);
             }
           }
 
@@ -762,6 +782,12 @@ class _FieldValue extends _DependencyTracker {
   /// Flag indicating if field initializer was executed.
   bool isInitialized = false;
 
+  /// Flag indicating if field getter was executed.
+  bool isGetterUsed = false;
+
+  /// Flag indicating if field setter was executed.
+  bool isSetterUsed = false;
+
   _FieldValue(this.field, this.typeGuardSummary, TypesBuilder typesBuilder)
       : staticType = typesBuilder.fromStaticType(field.type, true) {
     if (field.initializer == null && _isDefaultValueOfFieldObservable()) {
@@ -810,7 +836,10 @@ class _FieldValue extends _DependencyTracker {
   Type getValue(TypeFlowAnalysis typeFlowAnalysis, Type receiverType) {
     ensureInitialized(typeFlowAnalysis, receiverType);
     addDependentInvocation(typeFlowAnalysis.currentInvocation);
-    return value;
+    return (typeGuardSummary != null)
+        ? typeGuardSummary.apply(Args([receiverType, value]),
+            typeFlowAnalysis.hierarchyCache, typeFlowAnalysis)
+        : value;
   }
 
   void setValue(
@@ -938,8 +967,9 @@ class GenericInterfacesInfoImpl implements GenericInterfacesInfo {
     final cached = useCache ? cachedFlattenedTypeArgs[klass] : null;
     if (cached != null) return cached;
 
-    final flattenedTypeArguments = List<DartType>.from(klass.typeParameters
-        .map((t) => new TypeParameterType(t, Nullability.legacy)));
+    final flattenedTypeArguments = List<DartType>.from(klass.typeParameters.map(
+        (t) => new TypeParameterType(
+            t, TypeParameterType.computeNullabilityFromBound(t))));
 
     for (final Supertype intf in hierarchy.genericSupertypesOf(klass)) {
       int offset = findOverlap(flattenedTypeArguments, intf.typeArguments);
@@ -978,7 +1008,7 @@ class GenericInterfacesInfoImpl implements GenericInterfacesInfo {
     result = new List<Type>(flattenedTypeArgs.length);
     for (int i = 0; i < flattenedTypeArgs.length; ++i) {
       final translated = closedTypeTranslator.translate(flattenedTypeArgs[i]);
-      assertx(translated is RuntimeType || translated is AnyType);
+      assertx(translated is RuntimeType || translated is UnknownType);
       result[i] = translated;
     }
     cachedFlattenedTypeArgsForNonGeneric[klass] = result;
@@ -1012,10 +1042,10 @@ class _ClassHierarchyCache extends TypeHierarchy {
       <DynamicSelector, _DynamicTargetSet>{};
 
   _ClassHierarchyCache(this._typeFlowAnalysis, this.hierarchy,
-      this.genericInterfacesInfo, this.environment)
+      this.genericInterfacesInfo, this.environment, bool nullSafety)
       : objectNoSuchMethod = hierarchy.getDispatchTarget(
             environment.coreTypes.objectClass, noSuchMethodName),
-        super(environment.coreTypes) {
+        super(environment.coreTypes, nullSafety) {
     assertx(objectNoSuchMethod != null);
   }
 
@@ -1070,11 +1100,6 @@ class _ClassHierarchyCache extends TypeHierarchy {
       return true;
     }
 
-    // TODO(alexmarkov): handle FutureOr more precisely.
-    if (sup == coreTypes.futureOrClass) {
-      return true;
-    }
-
     _TFClassImpl subClassData = getTFClass(sub);
     _TFClassImpl superClassData = getTFClass(sup);
 
@@ -1091,10 +1116,7 @@ class _ClassHierarchyCache extends TypeHierarchy {
     // TODO(alexmarkov): consider approximating type if number of allocated
     // subtypes is too large
 
-    // TODO(alexmarkov): handle FutureOr more precisely.
-
-    if (baseClass.classNode == coreTypes.objectClass ||
-        baseClass.classNode == coreTypes.futureOrClass) {
+    if (baseClass.classNode == coreTypes.objectClass) {
       return const AnyType();
     }
 
@@ -1204,8 +1226,34 @@ class _WorkList {
     enqueueInvocation(invocation);
   }
 
+  bool invalidateProtobufFields() {
+    if (_typeFlowAnalysis.protobufHandler == null) {
+      return false;
+    }
+    final fields = _typeFlowAnalysis.protobufHandler.getInvalidatedFields();
+    if (fields.isEmpty) {
+      return false;
+    }
+    // Protobuf handler replaced contents of static field initializers.
+    for (var field in fields) {
+      assertx(field.isStatic);
+      // Reset summary in order to rebuild it.
+      _typeFlowAnalysis._summaries[field] = null;
+      // Invalidate (and enqueue) field initializer invocation.
+      final initializerInvocation = _typeFlowAnalysis._invocationsCache
+          .getInvocation(
+              DirectSelector(field, callKind: CallKind.FieldInitializer),
+              Args<Type>(const <Type>[]));
+      invalidateInvocation(initializerInvocation);
+    }
+    return true;
+  }
+
   void process() {
-    while (pending.isNotEmpty) {
+    for (;;) {
+      if (pending.isEmpty && !invalidateProtobufFields()) {
+        break;
+      }
       assertx(callStack.isEmpty && processing.isEmpty);
       Statistics.iterationsOverInvocationsWorkList++;
       processInvocation(pending.first);
@@ -1302,6 +1350,7 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
   final TypeEnvironment environment;
   final LibraryIndex libraryIndex;
   final PragmaAnnotationParser annotationMatcher;
+  final ProtobufHandler protobufHandler;
   NativeCodeOracle nativeCodeOracle;
   _ClassHierarchyCache hierarchyCache;
   SummaryCollector summaryCollector;
@@ -1312,7 +1361,8 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
   final Map<Member, Summary> _summaries = <Member, Summary>{};
   final Map<Field, _FieldValue> _fieldValues = <Field, _FieldValue>{};
   final Set<Member> _tearOffTaken = new Set<Member>();
-  final Set<Member> _calledViaDynamicSelector = new Set<Member>();
+  final Set<Member> _methodsAndSettersCalledDynamically = new Set<Member>();
+  final Set<Member> _gettersCalledDynamically = new Set<Member>();
   final Set<Member> _calledViaInterfaceSelector = new Set<Member>();
   final Set<Member> _calledViaThis = new Set<Member>();
 
@@ -1324,14 +1374,22 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
       this._genericInterfacesInfo,
       this.environment,
       this.libraryIndex,
-      {PragmaAnnotationParser matcher})
+      this.protobufHandler,
+      PragmaAnnotationParser matcher)
       : annotationMatcher =
             matcher ?? new ConstantPragmaAnnotationParser(coreTypes) {
     nativeCodeOracle = new NativeCodeOracle(libraryIndex, annotationMatcher);
-    hierarchyCache = new _ClassHierarchyCache(
-        this, hierarchy, _genericInterfacesInfo, environment);
-    summaryCollector = new SummaryCollector(target, environment, hierarchy,
-        this, hierarchyCache, nativeCodeOracle, hierarchyCache);
+    hierarchyCache = new _ClassHierarchyCache(this, hierarchy,
+        _genericInterfacesInfo, environment, target.flags.enableNullSafety);
+    summaryCollector = new SummaryCollector(
+        target,
+        environment,
+        hierarchy,
+        this,
+        hierarchyCache,
+        nativeCodeOracle,
+        hierarchyCache,
+        protobufHandler);
     _invocationsCache = new _InvocationsCache(this);
     workList = new _WorkList(this);
 
@@ -1346,13 +1404,17 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
   }
 
   _FieldValue getFieldValue(Field field) {
-    Summary setterSummary = null;
-    if (field.isGenericCovariantImpl) {
-      setterSummary = summaryCollector.createSummary(field,
-          fieldSummaryType: FieldSummaryType.kFieldGuard);
+    _FieldValue fieldValue = _fieldValues[field];
+    if (fieldValue == null) {
+      Summary typeGuardSummary = null;
+      if (field.isGenericCovariantImpl) {
+        typeGuardSummary = summaryCollector.createSummary(field,
+            fieldSummaryType: FieldSummaryType.kFieldGuard);
+      }
+      fieldValue = _FieldValue(field, typeGuardSummary, hierarchyCache);
+      _fieldValues[field] = fieldValue;
     }
-    return _fieldValues[field] ??=
-        new _FieldValue(field, setterSummary, hierarchyCache);
+    return fieldValue;
   }
 
   void process() {
@@ -1380,12 +1442,34 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
     return false;
   }
 
+  /// Returns true if analysis found that getter corresponding to the given
+  /// [field] could be executed.
+  bool isFieldGetterUsed(Field field) {
+    final fieldValue = _fieldValues[field];
+    if (fieldValue != null) {
+      return fieldValue.isGetterUsed;
+    }
+    return false;
+  }
+
+  /// Returns true if analysis found that setter corresponding to the given
+  /// [field] could be executed.
+  bool isFieldSetterUsed(Field field) {
+    final fieldValue = _fieldValues[field];
+    if (fieldValue != null) {
+      return fieldValue.isSetterUsed;
+    }
+    return false;
+  }
+
   bool isClassAllocated(Class c) => hierarchyCache.allocatedClasses.contains(c);
 
   Call callSite(TreeNode node) => summaryCollector.callSites[node];
 
   TypeCheck explicitCast(AsExpression cast) =>
       summaryCollector.explicitCasts[cast];
+
+  NarrowNotNull nullTest(TreeNode node) => summaryCollector.nullTests[node];
 
   Type fieldType(Field field) => _fieldValues[field]?.value;
 
@@ -1394,12 +1478,22 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
   List<VariableDeclaration> uncheckedParameters(Member member) =>
       _summaries[member]?.uncheckedParameters;
 
+  // The set of optional and named parameters to this procedure which
+  // are passed at all call-sites.
+  Set<String> alwaysPassedOptionalParameters(Member member) =>
+      _summaries[member]?.alwaysPassedOptionalParameters() ?? const {};
+
   bool isTearOffTaken(Member member) => _tearOffTaken.contains(member);
 
-  /// Returns true if this member is called dynamically.
-  /// Getters are not tracked. For fields, only setter is tracked.
+  /// Returns true if this member is called on a receiver with static type
+  /// dynamic. Getters are not tracked. For fields, only setter is tracked.
   bool isCalledDynamically(Member member) =>
-      _calledViaDynamicSelector.contains(member);
+      _methodsAndSettersCalledDynamically.contains(member);
+
+  /// Returns true if this getter (or implicit getter for field) is called
+  /// on a receiver with static type dynamic.
+  bool isGetterCalledDynamically(Member member) =>
+      _gettersCalledDynamically.contains(member);
 
   /// Returns true if this member is called via this call.
   /// Getters are not tracked. For fields, only setter is tracked.
@@ -1408,7 +1502,7 @@ class TypeFlowAnalysis implements EntryPointsListener, CallHandler {
   /// Returns true if this member is called via non-this call.
   /// Getters are not tracked. For fields, only setter is tracked.
   bool isCalledNotViaThis(Member member) =>
-      _calledViaDynamicSelector.contains(member) ||
+      _methodsAndSettersCalledDynamically.contains(member) ||
       _calledViaInterfaceSelector.contains(member);
 
   /// ---- Implementation of [CallHandler] interface. ----

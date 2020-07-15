@@ -9,7 +9,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ConvertToIfNullTest);
   });
@@ -23,28 +23,28 @@ class ConvertToIfNullTest extends FixProcessorLintTest {
   @override
   String get lintCode => LintNames.prefer_if_null_operators;
 
-  test_equalEqual() async {
+  Future<void> test_equalEqual() async {
     await resolveTestUnit('''
 void f(String s) {
-  print(/*LINT*/s == null ? 'default' : s);
+  print(s == null ? 'default' : s);
 }
 ''');
     await assertHasFix('''
 void f(String s) {
-  print(/*LINT*/s ?? 'default');
+  print(s ?? 'default');
 }
 ''');
   }
 
-  test_notEqual() async {
+  Future<void> test_notEqual() async {
     await resolveTestUnit('''
 void f(String s) {
-  print(/*LINT*/s != null ? s : 'default');
+  print(s != null ? s : 'default');
 }
 ''');
     await assertHasFix('''
 void f(String s) {
-  print(/*LINT*/s ?? 'default');
+  print(s ?? 'default');
 }
 ''');
   }

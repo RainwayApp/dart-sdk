@@ -52,7 +52,7 @@ class WorkspaceSymbolHandler
     // huge numbers on large projects.
     var remainingResults = 500;
 
-    final filePathsHashSet = LinkedHashSet<String>();
+    final filePathsHashSet = <String>{};
     final tracker = server.declarationsTracker;
     final declarations = search.WorkspaceSymbols(tracker).declarations(
       regex,
@@ -93,8 +93,8 @@ class WorkspaceSymbolHandler
       declaration.codeLength,
     );
     final location = Location(
-      Uri.file(filePath).toString(),
-      range,
+      uri: Uri.file(filePath).toString(),
+      range: range,
     );
 
     final hasParameters =
@@ -103,10 +103,10 @@ class WorkspaceSymbolHandler
         hasParameters ? (declaration.parameters == '()' ? '()' : '(…)') : '';
 
     return SymbolInformation(
-        '${declaration.name}$nameSuffix',
-        kind,
-        null, // We don't have easy access to isDeprecated here.
-        location,
-        declaration.className ?? declaration.mixinName);
+        name: '${declaration.name}$nameSuffix',
+        kind: kind,
+        deprecated: null, // We don't have easy access to isDeprecated here.
+        location: location,
+        containerName: declaration.className ?? declaration.mixinName);
   }
 }

@@ -161,7 +161,8 @@ def GenerateFromDatabase(common_database,
         template_loader = TemplateLoader(template_dir, template_paths, {
             'DARTIUM': False,
             'DART2JS': True,
-            'JSINTEROP': False
+            'JSINTEROP': False,
+            'NNBD': True,
         })
         backend_options = GeneratorOptions(template_loader, webkit_database,
                                            type_registry, renamer, metadata,
@@ -173,6 +174,9 @@ def GenerateFromDatabase(common_database,
         dart_libraries = DartLibraries(HTML_LIBRARY_NAMES, template_loader,
                                        'dart2js', dart2js_output_dir,
                                        dart_js_interop)
+        for file in generator._auxiliary_files.values():
+            if file.endswith('darttemplate'):
+                dart_libraries._libraries['html'].AddFile(file)
 
         print '\nGenerating dart2js:\n'
         start_time = time.time()
@@ -344,15 +348,8 @@ def main():
             source = os.path.join(dart2js_output_dir,
                                   '%s_dart2js.dart' % library_name)
             GenerateSingleFile(
-                source,
-                os.path.join('..', '..', '..', 'sdk', 'lib', library_name, 'dart2js'))
-            # TODO(Issue 38701): We won't need two copies once the NNBD SDK is
-            # unforked.
-            GenerateSingleFile(
-                source,
-                os.path.join('..', '..', '..', 'sdk_nnbd', 'lib', library_name, 'dart2js'),
-                None,
-                '// @dart = 2.5')
+                source, os.path.join('..', '..', '..', 'sdk', 'lib',
+                                     library_name, 'dart2js'))
 
     print '\nGenerating single file %s seconds' % round(
         time.time() - file_generation_start_time, 2)

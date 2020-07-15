@@ -10,45 +10,29 @@ import 'package:analyzer_plugin/protocol/protocol_common.dart' as protocol;
 import 'package:analyzer_plugin/src/utilities/completion/suggestion_builder.dart';
 import 'package:analyzer_plugin/utilities/completion/relevance.dart';
 
-/**
- * Common mixin for sharing behavior.
- */
+/// Common mixin for sharing behavior.
 mixin ElementSuggestionBuilder {
   // Copied from analysis_server/lib/src/services/completion/dart/suggestion_builder.dart
-  /**
-   * A collection of completion suggestions.
-   */
+  /// A collection of completion suggestions.
   final List<CompletionSuggestion> suggestions = <CompletionSuggestion>[];
 
-  /**
-   * A set of existing completions used to prevent duplicate suggestions.
-   */
-  final Set<String> _completions = Set<String>();
+  /// A set of existing completions used to prevent duplicate suggestions.
+  final Set<String> _completions = <String>{};
 
-  /**
-   * A map of element names to suggestions for synthetic getters and setters.
-   */
+  /// A map of element names to suggestions for synthetic getters and setters.
   final Map<String, CompletionSuggestion> _syntheticMap =
       <String, CompletionSuggestion>{};
 
-  /**
-   * Return the library in which the completion is requested.
-   */
+  /// Return the library in which the completion is requested.
   LibraryElement get containingLibrary;
 
-  /**
-   * Return the kind of suggestions that should be built.
-   */
+  /// Return the kind of suggestions that should be built.
   CompletionSuggestionKind get kind;
 
-  /**
-   * Return the resource provider used to access the file system.
-   */
+  /// Return the resource provider used to access the file system.
   ResourceProvider get resourceProvider;
 
-  /**
-   * Add a suggestion based upon the given element.
-   */
+  /// Add a suggestion based upon the given element.
   void addSuggestion(Element element,
       {String prefix, int relevance = DART_RELEVANCE_DEFAULT}) {
     if (element.isPrivate) {
@@ -56,7 +40,7 @@ mixin ElementSuggestionBuilder {
         return;
       }
     }
-    String completion = element.displayName;
+    var completion = element.displayName;
     if (prefix != null && prefix.isNotEmpty) {
       if (completion == null || completion.isEmpty) {
         completion = prefix;
@@ -67,8 +51,8 @@ mixin ElementSuggestionBuilder {
     if (completion == null || completion.isEmpty) {
       return;
     }
-    SuggestionBuilderImpl builder = SuggestionBuilderImpl(resourceProvider);
-    CompletionSuggestion suggestion = builder.forElement(element,
+    var builder = SuggestionBuilderImpl(resourceProvider);
+    var suggestion = builder.forElement(element,
         completion: completion, kind: kind, relevance: relevance);
     if (suggestion != null) {
       if (element.isSynthetic && element is PropertyAccessorElement) {
@@ -81,16 +65,14 @@ mixin ElementSuggestionBuilder {
           cacheKey = cacheKey.substring(0, cacheKey.length - 1);
         }
         if (cacheKey != null) {
-          CompletionSuggestion existingSuggestion = _syntheticMap[cacheKey];
+          var existingSuggestion = _syntheticMap[cacheKey];
 
           // Pair getter/setter by updating the existing suggestion
           if (existingSuggestion != null) {
-            CompletionSuggestion getter =
-                element.isGetter ? suggestion : existingSuggestion;
-            protocol.ElementKind elemKind =
-                element.enclosingElement is ClassElement
-                    ? protocol.ElementKind.FIELD
-                    : protocol.ElementKind.TOP_LEVEL_VARIABLE;
+            var getter = element.isGetter ? suggestion : existingSuggestion;
+            var elemKind = element.enclosingElement is ClassElement
+                ? protocol.ElementKind.FIELD
+                : protocol.ElementKind.TOP_LEVEL_VARIABLE;
             existingSuggestion.element = protocol.Element(
                 elemKind,
                 existingSuggestion.element.name,

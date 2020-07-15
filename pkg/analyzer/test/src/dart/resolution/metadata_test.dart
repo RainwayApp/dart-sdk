@@ -2,7 +2,13 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/constant/value.dart';
+import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/src/generated/engine.dart';
+import 'package:analyzer/src/test_utilities/find_element.dart';
+import 'package:meta/meta.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -12,6 +18,7 @@ import 'driver_resolution.dart';
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(MetadataResolutionTest);
+    defineReflectiveTests(MetadataResolutionWithNnbdTest);
   });
 }
 
@@ -172,5 +179,299 @@ class B {}
       ),
     );
     return buffer.toString();
+  }
+}
+
+@reflectiveTest
+class MetadataResolutionWithNnbdTest extends DriverResolutionTest {
+  @override
+  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
+    ..contextFeatures = FeatureSet.forTesting(
+        sdkVersion: '2.7.0', additionalFeatures: [Feature.non_nullable]);
+
+  ImportFindElement get import_a {
+    return findElement.importFind('package:test/a.dart');
+  }
+
+  @override
+  bool get typeToStringWithNullability => true;
+
+  test_optIn_fromOptOut_class() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  const A(int a);
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart';
+
+@A(0)
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A('),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@A'),
+      declaration: import_a.unnamedConstructor('A'),
+      isLegacy: true,
+    );
+  }
+
+  test_optIn_fromOptOut_class_constructor() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  final int a;
+  const A.named(this.a);
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart';
+
+@A.named(42)
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A.named('),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@A'),
+      declaration: import_a.constructor('named', of: 'A'),
+      isLegacy: true,
+    );
+
+    _assertConstantValue(
+      findElement.function('f').metadata[0].computeConstantValue(),
+      type: 'A*',
+      fieldMap: {'a': 42},
+    );
+  }
+
+  test_optIn_fromOptOut_class_constructor_withDefault() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  final int a;
+  const A.named({this.a = 42});
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart';
+
+@A.named()
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A.named('),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@A'),
+      declaration: import_a.constructor('named', of: 'A'),
+      isLegacy: true,
+    );
+
+    _assertConstantValue(
+      findElement.function('f').metadata[0].computeConstantValue(),
+      type: 'A*',
+      fieldMap: {'a': 42},
+    );
+  }
+
+  test_optIn_fromOptOut_class_getter() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  static const foo = 42;
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart';
+
+@A.foo
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A.foo'),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@A.foo'),
+      declaration: import_a.getter('foo'),
+      isLegacy: true,
+    );
+
+    _assertIntValue(findElement.function('f').metadata[0], 42);
+  }
+
+  test_optIn_fromOptOut_getter() async {
+    newFile('/test/lib/a.dart', content: r'''
+const foo = 42;
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart';
+
+@foo
+void f() {}
+''');
+
+    assertElement2(
+      findNode.annotation('@foo'),
+      declaration: import_a.topGet('foo'),
+      isLegacy: true,
+    );
+
+    _assertIntValue(findElement.function('f').metadata[0], 42);
+  }
+
+  test_optIn_fromOptOut_prefix_class() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  const A(int a);
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart' as a;
+
+@a.A(0)
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A('),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@a.A'),
+      declaration: import_a.unnamedConstructor('A'),
+      isLegacy: true,
+    );
+  }
+
+  test_optIn_fromOptOut_prefix_class_constructor() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  const A.named(int a);
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart' as a;
+
+@a.A.named(0)
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A.named('),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@a.A'),
+      declaration: import_a.constructor('named', of: 'A'),
+      isLegacy: true,
+    );
+  }
+
+  test_optIn_fromOptOut_prefix_class_getter() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {
+  static const foo = 0;
+}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart' as a;
+
+@a.A.foo
+void f() {}
+''');
+
+    assertElement2(
+      findNode.simple('A.foo'),
+      declaration: import_a.class_('A'),
+    );
+
+    assertElement2(
+      findNode.annotation('@a.A'),
+      declaration: import_a.getter('foo'),
+      isLegacy: true,
+    );
+  }
+
+  test_optIn_fromOptOut_prefix_getter() async {
+    newFile('/test/lib/a.dart', content: r'''
+const foo = 0;
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart' as a;
+
+@a.foo
+void f() {}
+''');
+
+    assertElement2(
+      findNode.annotation('@a.foo'),
+      declaration: import_a.topGet('foo'),
+      isLegacy: true,
+    );
+  }
+
+  void _assertConstantValue(
+    DartObject object, {
+    @required String type,
+    Map<String, Object> fieldMap,
+    int intValue,
+  }) {
+    assertType(object.type, type);
+    if (fieldMap != null) {
+      for (var entry in fieldMap.entries) {
+        var actual = object.getField(entry.key);
+        var expected = entry.value;
+        if (expected is int) {
+          expect(actual.toIntValue(), expected);
+        } else {
+          fail('Unsupported expected type: ${expected.runtimeType} $expected');
+        }
+      }
+    } else if (intValue != null) {
+      expect(object.toIntValue(), intValue);
+    } else {
+      fail('No expectations.');
+    }
+  }
+
+  void _assertIntValue(ElementAnnotation annotation, int intValue) {
+    _assertConstantValue(
+      annotation.computeConstantValue(),
+      type: 'int',
+      intValue: intValue,
+    );
   }
 }

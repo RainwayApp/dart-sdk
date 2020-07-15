@@ -5,6 +5,10 @@
 #ifndef RUNTIME_VM_COMPILER_BACKEND_LOOPS_H_
 #define RUNTIME_VM_COMPILER_BACKEND_LOOPS_H_
 
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
+
 #include <utility>
 
 #include "vm/allocation.h"
@@ -44,7 +48,9 @@ class InductionVar : public ZoneAllocated {
 
   // Constructor for an invariant.
   InductionVar(int64_t offset, int64_t mult, Definition* def)
-      : kind_(kInvariant), offset_(offset), mult_(mult), def_(def), bounds_() {}
+      : kind_(kInvariant), offset_(offset), mult_(mult), def_(def), bounds_() {
+    ASSERT(mult_ == 0 || def != nullptr);
+  }
 
   // Constructor for a constant.
   explicit InductionVar(int64_t offset) : InductionVar(offset, 0, nullptr) {}

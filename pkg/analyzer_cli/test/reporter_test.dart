@@ -11,7 +11,7 @@ import 'package:test/test.dart' hide ErrorFormatter;
 
 import 'mocks.dart';
 
-main() {
+void main() {
   group('reporter', () {
     StringBuffer out;
     AnalysisStats stats;
@@ -39,8 +39,7 @@ main() {
     });
 
     test('error', () {
-      ErrorsResultImpl error =
-          mockResult(ErrorType.SYNTACTIC_ERROR, ErrorSeverity.ERROR);
+      var error = mockResult(ErrorType.SYNTACTIC_ERROR, ErrorSeverity.ERROR);
       reporter.formatErrors([error]);
       reporter.flush();
 
@@ -49,7 +48,7 @@ main() {
     });
 
     test('hint', () {
-      ErrorsResultImpl error = mockResult(ErrorType.HINT, ErrorSeverity.INFO);
+      var error = mockResult(ErrorType.HINT, ErrorSeverity.INFO);
       reporter.formatErrors([error]);
       reporter.flush();
 
@@ -58,7 +57,7 @@ main() {
     });
 
     test('stats', () {
-      ErrorsResultImpl error = mockResult(ErrorType.HINT, ErrorSeverity.INFO);
+      var error = mockResult(ErrorType.HINT, ErrorSeverity.INFO);
       reporter.formatErrors([error]);
       reporter.flush();
       stats.print(out);

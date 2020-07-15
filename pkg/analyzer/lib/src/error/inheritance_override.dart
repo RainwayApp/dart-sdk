@@ -10,13 +10,15 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
-import 'package:analyzer/src/dart/constant/value.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/inheritance_manager3.dart';
 import 'package:analyzer/src/dart/element/type.dart';
+import 'package:analyzer/src/dart/element/type_system.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/resolver.dart' show TypeSystemImpl;
-import 'package:analyzer/src/generated/type_system.dart';
+import 'package:analyzer/src/error/correct_override.dart';
+import 'package:analyzer/src/error/getter_setter_types_verifier.dart';
+import 'package:analyzer/src/summary/idl.dart';
+import 'package:meta/meta.dart';
 
 class InheritanceOverrideVerifier {
   static const _missingOverridesKey = 'missingOverrides';
@@ -102,12 +104,7 @@ class _ClassVerifier {
   final TypeName superclass;
   final WithClause withClause;
 
-  /// The set of unique supertypes of the current class.
-  /// It is used to decide when to add a new element to [allSuperinterfaces].
-  final Set<InterfaceType> allSupertypes = <InterfaceType>{};
-
-  /// The list of all superinterfaces, collected so far.
-  final List<Interface> allSuperinterfaces = [];
+  final List<InterfaceType> directSuperInterfaces = [];
 
   _ClassVerifier({
     this.typeSystem,
@@ -125,6 +122,8 @@ class _ClassVerifier {
   })  : libraryUri = library.source.uri,
         classElement = classNameNode.staticElement;
 
+  bool get _isNonNullableByDefault => typeSystem.isNonNullableByDefault;
+
   void verify() {
     if (_checkDirectSuperTypes()) {
       return;
@@ -134,12 +133,18 @@ class _ClassVerifier {
       return;
     }
 
-    InterfaceTypeImpl type = classElement.thisType;
+    // Compute the interface of the class.
+    var interface = inheritance.getInterface(classElement);
 
-    // Add all superinterfaces of the direct supertype.
-    if (type.superclass != null) {
-      _addSuperinterfaces(type.superclass);
+    // Report conflicts between direct superinterfaces of the class.
+    for (var conflict in interface.conflicts) {
+      _reportInconsistentInheritance(classNameNode, conflict);
     }
+
+    if (classElement.supertype != null) {
+      directSuperInterfaces.add(classElement.supertype);
+    }
+    directSuperInterfaces.addAll(classElement.superclassConstraints);
 
     // Each mixin in `class C extends S with M0, M1, M2 {}` is equivalent to:
     //   class S&M0 extends S { ...members of M0... }
@@ -149,17 +154,14 @@ class _ClassVerifier {
     // So, we need to check members of each mixin against superinterfaces
     // of `S`, and superinterfaces of all previous mixins.
     var mixinNodes = withClause?.mixinTypes;
-    var mixinTypes = type.mixins;
+    var mixinTypes = classElement.mixins;
     for (var i = 0; i < mixinTypes.length; i++) {
       var mixinType = mixinTypes[i];
-      _checkDeclaredMembers(mixinNodes[i], mixinType);
-      _addSuperinterfaces(mixinType);
+      _checkDeclaredMembers(mixinNodes[i], mixinType, mixinIndex: i);
+      directSuperInterfaces.add(mixinType);
     }
 
-    // Add all superinterfaces of the direct class interfaces.
-    for (var interface in type.interfaces) {
-      _addSuperinterfaces(interface);
-    }
+    directSuperInterfaces.addAll(classElement.interfaces);
 
     // Check the members if the class itself, against all the previously
     // collected superinterfaces of the supertype, mixins, and interfaces.
@@ -172,20 +174,20 @@ class _ClassVerifier {
           _checkDeclaredMember(field.name, libraryUri, fieldElement.setter);
         }
       } else if (member is MethodDeclaration) {
+        var hasError = _reportNoCombinedSuperSignature(member);
+        if (hasError) {
+          continue;
+        }
+
         _checkDeclaredMember(member.name, libraryUri, member.declaredElement,
             methodParameterNodes: member.parameters?.parameters);
       }
     }
 
-    // Compute the interface of the class.
-    var interface = inheritance.getInterface(type);
-
-    // Report conflicts between direct superinterfaces of the class.
-    for (var conflict in interface.conflicts) {
-      _reportInconsistentInheritance(classNameNode, conflict);
-    }
-
-    _checkForMismatchedAccessorTypes(interface);
+    GetterSetterTypesVerifier(
+      typeSystem: typeSystem,
+      errorReporter: reporter,
+    ).checkInterface(classElement, interface);
 
     if (!classElement.isAbstract) {
       List<ExecutableElement> inheritedAbstract;
@@ -227,93 +229,91 @@ class _ClassVerifier {
         //  diagnostic should be reported on the name of the mixin defining the
         //  method. In other cases, it should be reported on the name of the
         //  overriding method. The classNameNode is always wrong.
-        if (!typeSystem.isOverrideSubtypeOf(
-            concreteElement.type, interfaceElement.type)) {
-          reporter.reportErrorForNode(
-            CompileTimeErrorCode.INVALID_OVERRIDE,
-            classNameNode,
-            [
-              name.name,
-              interfaceElement.enclosingElement.name,
-              interfaceElement.type,
-              concreteElement.enclosingElement.name,
-              concreteElement.type,
-            ],
-          );
-        }
+        concreteElement = library.toLegacyElementIfOptOut(concreteElement);
+        CorrectOverrideHelper(
+          library: library,
+          thisMember: concreteElement,
+        ).verify(
+          superMember: interfaceElement,
+          errorReporter: reporter,
+          errorNode: classNameNode,
+        );
       }
 
       _reportInheritedAbstractMembers(inheritedAbstract);
     }
   }
 
-  void _addSuperinterfaces(InterfaceType startingType) {
-    var supertypes = <InterfaceType>[];
-    ClassElementImpl.collectAllSupertypes(supertypes, startingType, null);
-    for (int i = 0; i < supertypes.length; i++) {
-      var supertype = supertypes[i];
-      if (allSupertypes.add(supertype)) {
-        var interface = inheritance.getInterface(supertype);
-        allSuperinterfaces.add(interface);
-      }
-    }
-  }
-
   /// Check that the given [member] is a valid override of the corresponding
-  /// instance members in each of [allSuperinterfaces].  The [libraryUri] is
+  /// instance members in each of [directSuperInterfaces].  The [libraryUri] is
   /// the URI of the library containing the [member].
   void _checkDeclaredMember(
     AstNode node,
     Uri libraryUri,
     ExecutableElement member, {
-    List<AstNode> methodParameterNodes,
+    List<FormalParameter> methodParameterNodes,
+    int mixinIndex = -1,
   }) {
     if (member == null) return;
     if (member.isStatic) return;
 
     var name = Name(libraryUri, member.name);
-    for (var superInterface in allSuperinterfaces) {
-      var superMember = superInterface.declared[name];
-      if (superMember != null) {
-        // The case when members have different kinds is reported in verifier.
-        // TODO(scheglov) Do it here?
-        if (member.kind != superMember.kind) {
-          continue;
-        }
+    var correctOverrideHelper = CorrectOverrideHelper(
+      library: library,
+      thisMember: member,
+    );
 
-        if (!typeSystem.isOverrideSubtypeOf(member.type, superMember.type)) {
-          reporter.reportErrorForNode(
-            CompileTimeErrorCode.INVALID_OVERRIDE,
-            node,
-            [
-              name.name,
-              member.enclosingElement.name,
-              member.type,
-              superMember.enclosingElement.name,
-              superMember.type,
-            ],
-          );
-        }
-        if (methodParameterNodes != null) {
-          _checkForOptionalParametersDifferentDefaultValues(
-            superMember,
-            member,
-            methodParameterNodes,
-          );
-        }
+    for (var superType in directSuperInterfaces) {
+      var superMember = inheritance.getMember(
+        superType,
+        name,
+        forMixinIndex: mixinIndex,
+      );
+      if (superMember == null) {
+        continue;
       }
+
+      // The case when members have different kinds is reported in verifier.
+      // TODO(scheglov) Do it here?
+      if (member.kind != superMember.kind) {
+        continue;
+      }
+
+      correctOverrideHelper.verify(
+        superMember: superMember,
+        errorReporter: reporter,
+        errorNode: node,
+      );
+
+      if (superMember is MethodElement &&
+          member is MethodElement &&
+          methodParameterNodes != null) {
+        _checkForOptionalParametersDifferentDefaultValues(
+          superMember,
+          member,
+          methodParameterNodes,
+        );
+      }
+    }
+
+    if (mixinIndex == -1) {
+      CovariantParametersVerifier(thisMember: member).verify(
+        errorReporter: reporter,
+        errorNode: node,
+      );
     }
   }
 
   /// Check that instance members of [type] are valid overrides of the
-  /// corresponding instance members in each of [allSuperinterfaces].
-  void _checkDeclaredMembers(AstNode node, InterfaceTypeImpl type) {
+  /// corresponding instance members in each of [directSuperInterfaces].
+  void _checkDeclaredMembers(AstNode node, InterfaceTypeImpl type,
+      {@required int mixinIndex}) {
     var libraryUri = type.element.library.source.uri;
     for (var method in type.methods) {
-      _checkDeclaredMember(node, libraryUri, method);
+      _checkDeclaredMember(node, libraryUri, method, mixinIndex: mixinIndex);
     }
     for (var accessor in type.accessors) {
-      _checkDeclaredMember(node, libraryUri, accessor);
+      _checkDeclaredMember(node, libraryUri, accessor, mixinIndex: mixinIndex);
     }
   }
 
@@ -386,55 +386,13 @@ class _ClassVerifier {
     return hasError;
   }
 
-  void _checkForMismatchedAccessorTypes(Interface interface) {
-    for (var name in interface.map.keys) {
-      if (!name.isAccessibleFor(libraryUri)) continue;
-
-      var getter = interface.map[name];
-      if (getter.kind == ElementKind.GETTER) {
-        // TODO(scheglov) We should separate getters and setters.
-        var setter = interface.map[Name(libraryUri, '${name.name}=')];
-        if (setter != null && setter.parameters.length == 1) {
-          var getterType = getter.returnType;
-          var setterType = setter.parameters[0].type;
-          if (!typeSystem.isAssignableTo(getterType, setterType)) {
-            Element errorElement;
-            if (getter.enclosingElement == classElement) {
-              errorElement = getter;
-            } else if (setter.enclosingElement == classElement) {
-              errorElement = setter;
-            } else {
-              errorElement = classElement;
-            }
-
-            String getterName = getter.displayName;
-            if (getter.enclosingElement != classElement) {
-              var getterClassName = getter.enclosingElement.displayName;
-              getterName = '$getterClassName.$getterName';
-            }
-
-            String setterName = setter.displayName;
-            if (setter.enclosingElement != classElement) {
-              var setterClassName = setter.enclosingElement.displayName;
-              setterName = '$setterClassName.$setterName';
-            }
-
-            reporter.reportErrorForElement(
-                StaticWarningCode.MISMATCHED_GETTER_AND_SETTER_TYPES,
-                errorElement,
-                [getterName, getterType, setterType, setterName]);
-          }
-        }
-      }
-    }
-  }
-
   void _checkForOptionalParametersDifferentDefaultValues(
-    ExecutableElement baseExecutable,
-    ExecutableElement derivedExecutable,
-    List<AstNode> derivedParameterNodes,
+    MethodElement baseExecutable,
+    MethodElement derivedExecutable,
+    List<FormalParameter> derivedParameterNodes,
   ) {
-    var derivedOptionalNodes = <AstNode>[];
+    var derivedIsAbstract = derivedExecutable.isAbstract;
+    var derivedOptionalNodes = <FormalParameter>[];
     var derivedOptionalElements = <ParameterElementImpl>[];
     var derivedParameterElements = derivedExecutable.parameters;
     for (var i = 0; i < derivedParameterElements.length; i++) {
@@ -462,6 +420,11 @@ class _ClassVerifier {
     if (derivedOptionalElements[0].isNamed) {
       for (int i = 0; i < derivedOptionalElements.length; i++) {
         var derivedElement = derivedOptionalElements[i];
+        if (_isNonNullableByDefault &&
+            derivedIsAbstract &&
+            derivedElement.initializer == null) {
+          continue;
+        }
         var name = derivedElement.name;
         for (var j = 0; j < baseOptionalElements.length; j++) {
           var baseParameter = baseOptionalElements[j];
@@ -487,10 +450,16 @@ class _ClassVerifier {
       for (var i = 0;
           i < derivedOptionalElements.length && i < baseOptionalElements.length;
           i++) {
+        var derivedElement = derivedOptionalElements[i];
+        if (_isNonNullableByDefault &&
+            derivedIsAbstract &&
+            derivedElement.initializer == null) {
+          continue;
+        }
         var baseElement = baseOptionalElements[i];
         if (baseElement.initializer != null) {
           var baseValue = baseElement.computeConstantValue();
-          var derivedResult = derivedOptionalElements[i].evaluationResult;
+          var derivedResult = derivedElement.evaluationResult;
           if (!_constantValuesEqual(derivedResult.value, baseValue)) {
             reporter.reportErrorForNode(
               StaticWarningCode
@@ -633,7 +602,7 @@ class _ClassVerifier {
   void _reportInconsistentInheritance(AstNode node, Conflict conflict) {
     var name = conflict.name;
 
-    if (conflict.getter != null && conflict.method != null) {
+    if (conflict is GetterMethodConflict) {
       reporter.reportErrorForNode(
         CompileTimeErrorCode.INCONSISTENT_INHERITANCE_GETTER_AND_METHOD,
         node,
@@ -643,10 +612,13 @@ class _ClassVerifier {
           conflict.method.enclosingElement.name
         ],
       );
-    } else {
+    } else if (conflict is CandidatesConflict) {
       var candidatesStr = conflict.candidates.map((candidate) {
         var className = candidate.enclosingElement.name;
-        return '$className.${name.name} (${candidate.displayName})';
+        var typeStr = candidate.type.getDisplayString(
+          withNullability: _isNonNullableByDefault,
+        );
+        return '$className.${name.name} ($typeStr)';
       }).join(', ');
 
       reporter.reportErrorForNode(
@@ -654,6 +626,8 @@ class _ClassVerifier {
         node,
         [name.name, candidatesStr],
       );
+    } else {
+      throw StateError('${conflict.runtimeType}');
     }
   }
 
@@ -731,11 +705,31 @@ class _ClassVerifier {
     }
   }
 
+  bool _reportNoCombinedSuperSignature(MethodDeclaration node) {
+    var element = node.declaredElement;
+    if (element is MethodElementImpl) {
+      var inferenceError = element.typeInferenceError;
+      if (inferenceError?.kind ==
+          TopLevelInferenceErrorKind.overrideNoCombinedSuperSignature) {
+        reporter.reportErrorForNode(
+          CompileTimeErrorCode.NO_COMBINED_SUPER_SIGNATURE,
+          node.name,
+          [
+            classElement.name,
+            inferenceError.arguments[0],
+          ],
+        );
+        return true;
+      }
+    }
+    return false;
+  }
+
   static bool _constantValuesEqual(DartObject x, DartObject y) {
     // If either constant value couldn't be computed due to an error, the
     // corresponding DartObject will be `null`.  Since an error has already been
     // reported, there's no need to report another.
     if (x == null || y == null) return true;
-    return (x as DartObjectImpl).isEqualIgnoringTypesRecursively(y);
+    return x == y;
   }
 }

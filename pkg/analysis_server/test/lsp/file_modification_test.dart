@@ -3,12 +3,13 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analysis_server/lsp_protocol/protocol_generated.dart';
+import 'package:analysis_server/lsp_protocol/protocol_special.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'server_abstract.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(FileModificationTest);
   });
@@ -16,7 +17,7 @@ main() {
 
 @reflectiveTest
 class FileModificationTest extends AbstractLspAnalysisServerTest {
-  test_change_badPosition() async {
+  Future<void> test_change_badPosition() async {
     final contents = '';
     await initialize();
     await openFile(mainFileUri, contents);
@@ -26,18 +27,20 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     // to alert the user to something failing.
     final error = await expectErrorNotification<ShowMessageParams>(() async {
       await changeFile(222, mainFileUri, [
-        TextDocumentContentChangeEvent(
-          Range(Position(999, 999), Position(999, 999)),
-          null,
-          '   ',
-        )
+        Either2<TextDocumentContentChangeEvent1,
+            TextDocumentContentChangeEvent2>.t1(TextDocumentContentChangeEvent1(
+          range: Range(
+              start: Position(line: 999, character: 999),
+              end: Position(line: 999, character: 999)),
+          text: '   ',
+        ))
       ]);
     });
 
     expect(error.message, contains('Invalid line'));
   }
 
-  test_change_fullContents() async {
+  Future<void> test_change_fullContents() async {
     final initialContent = 'int a = 1;';
     final updatedContent = 'int a = 2;';
 
@@ -50,7 +53,7 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     expect(documentVersion.version, equals(222));
   }
 
-  test_change_incremental() async {
+  Future<void> test_change_incremental() async {
     final initialContent = '0123456789\n0123456789';
     final expectedUpdatedContent = '0123456789\n01234   89';
 
@@ -58,11 +61,13 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     await openFile(mainFileUri, initialContent);
     await changeFile(222, mainFileUri, [
       // Replace line1:5-1:8 with spaces.
-      TextDocumentContentChangeEvent(
-        Range(Position(1, 5), Position(1, 8)),
-        null,
-        '   ',
-      )
+      Either2<TextDocumentContentChangeEvent1,
+          TextDocumentContentChangeEvent2>.t1(TextDocumentContentChangeEvent1(
+        range: Range(
+            start: Position(line: 1, character: 5),
+            end: Position(line: 1, character: 8)),
+        text: '   ',
+      ))
     ]);
     expect(_getOverlay(mainFilePath), equals(expectedUpdatedContent));
 
@@ -70,15 +75,17 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     expect(documentVersion.version, equals(222));
   }
 
-  test_change_unopenedFile() async {
+  Future<void> test_change_unopenedFile() async {
     // It's not valid for a client to send a request to modify a file that it
     // has not opened, but Visual Studio has done it in the past so we should
     // ensure it generates an obvious error that the user can understand.
-    final simpleEdit = TextDocumentContentChangeEvent(
-      Range(Position(1, 1), Position(1, 1)),
-      null,
-      'test',
-    );
+    final simpleEdit = Either2<TextDocumentContentChangeEvent1,
+        TextDocumentContentChangeEvent2>.t1(TextDocumentContentChangeEvent1(
+      range: Range(
+          start: Position(line: 1, character: 1),
+          end: Position(line: 1, character: 1)),
+      text: 'test',
+    ));
     await initialize();
     final notificationParams = await expectErrorNotification<ShowMessageParams>(
       () => changeFile(222, mainFileUri, [simpleEdit]),
@@ -93,7 +100,7 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     );
   }
 
-  test_close() async {
+  Future<void> test_close() async {
     final initialContent = 'int a = 1;';
     final updatedContent = 'int a = 2;';
 
@@ -109,7 +116,7 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     expect(documentVersion.version, isNull);
   }
 
-  test_open() async {
+  Future<void> test_open() async {
     const testContent = 'CONTENT';
 
     await initialize();
@@ -123,7 +130,7 @@ class FileModificationTest extends AbstractLspAnalysisServerTest {
     expect(documentVersion.version, 2);
   }
 
-  test_open_invalidPath() async {
+  Future<void> test_open_invalidPath() async {
     await initialize();
 
     final notificationParams = await expectErrorNotification<ShowMessageParams>(

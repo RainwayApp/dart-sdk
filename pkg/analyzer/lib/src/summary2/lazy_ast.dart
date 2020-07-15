@@ -3,6 +3,7 @@
 // BSD-style license that can be found in the LICENSE file.
 
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
 import 'package:analyzer/src/summary/format.dart';
@@ -10,6 +11,7 @@ import 'package:analyzer/src/summary/idl.dart';
 import 'package:analyzer/src/summary2/ast_binary_flags.dart';
 import 'package:analyzer/src/summary2/ast_binary_reader.dart';
 import 'package:analyzer/src/summary2/linked_unit_context.dart';
+import 'package:pub_semver/pub_semver.dart';
 
 /// Accessor for reading AST lazily, or read data that is stored in IDL, but
 /// cannot be stored in AST, like inferred types.
@@ -380,36 +382,27 @@ class LazyCompilationUnit {
 
   final LinkedNode data;
 
-  LazyCompilationUnit(this.data);
+  LazyCompilationUnit(CompilationUnit node, this.data) {
+    node.setProperty(_key, this);
+  }
 
   static LazyCompilationUnit get(CompilationUnit node) {
     return node.getProperty(_key);
   }
 
-  static int getCodeLength(
-    LinkedUnitContext context,
-    CompilationUnit node,
-  ) {
+  static LibraryLanguageVersion getLanguageVersion(CompilationUnit node) {
     var lazy = get(node);
     if (lazy != null) {
-      return context.getInformativeData(lazy.data)?.codeLength ?? 0;
+      var package = lazy.data.compilationUnit_languageVersion.package;
+      var override = lazy.data.compilationUnit_languageVersion.override2;
+      return LibraryLanguageVersion(
+        package: Version(package.major, package.minor, 0),
+        override: override != null
+            ? Version(override.major, override.minor, 0)
+            : null,
+      );
     }
-    return node.length;
-  }
-
-  static int getCodeOffset(
-    LinkedUnitContext context,
-    CompilationUnit node,
-  ) {
-    var lazy = get(node);
-    if (lazy != null) {
-      return context.getInformativeData(lazy.data)?.codeOffset ?? 0;
-    }
-    return node.offset;
-  }
-
-  static void setData(CompilationUnit node, LinkedNode data) {
-    node.setProperty(_key, LazyCompilationUnit(data));
+    return (node as CompilationUnitImpl).languageVersion;
   }
 }
 
@@ -1440,6 +1433,7 @@ class LazyMethodDeclaration {
   bool _hasMetadata = false;
   bool _hasReturnType = false;
   bool _hasReturnTypeNode = false;
+  bool _hasTypeInferenceError = false;
 
   LazyMethodDeclaration(this.data);
 
@@ -1480,6 +1474,16 @@ class LazyMethodDeclaration {
       lazy._hasReturnType = true;
     }
     return LazyAst.getReturnType(node);
+  }
+
+  static TopLevelInferenceError getTypeInferenceError(MethodDeclaration node) {
+    var lazy = get(node);
+    if (lazy != null && !lazy._hasTypeInferenceError) {
+      var error = lazy.data.topLevelTypeInferenceError;
+      LazyAst.setTypeInferenceError(node, error);
+      lazy._hasTypeInferenceError = true;
+    }
+    return LazyAst.getTypeInferenceError(node);
   }
 
   static bool isAbstract(MethodDeclaration node) {

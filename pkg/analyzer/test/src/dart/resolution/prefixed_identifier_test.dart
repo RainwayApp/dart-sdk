@@ -18,6 +18,22 @@ main() {
 
 @reflectiveTest
 class PrefixedIdentifierResolutionTest extends DriverResolutionTest {
+  test_dynamic_explicitCore_withPrefix() async {
+    await assertNoErrorsInCode(r'''
+import 'dart:core' as mycore;
+
+main() {
+  mycore.dynamic;
+}
+''');
+
+    assertPrefixedIdentifier(
+      findNode.prefixed('mycore.dynamic'),
+      element: dynamicElement,
+      type: 'Type',
+    );
+  }
+
   test_implicitCall_tearOff() async {
     newFile('/test/lib/a.dart', content: r'''
 class A {
@@ -53,6 +69,32 @@ class PrefixedIdentifierResolutionWithNnbdTest
 
   @override
   bool get typeToStringWithNullability => true;
+
+  test_deferredImportPrefix_loadLibrary_optIn_fromOptOut() async {
+    newFile('/test/lib/a.dart', content: r'''
+class A {}
+''');
+
+    await assertNoErrorsInCode(r'''
+// @dart = 2.7
+import 'a.dart' deferred as a;
+
+main() {
+  a.loadLibrary;
+}
+''');
+
+    var import = findElement.importFind('package:test/a.dart');
+
+    assertPrefixedIdentifier(
+      findNode.prefixed('a.loadLibrary'),
+      element: elementMatcher(
+        import.importedLibrary.loadLibraryFunction,
+        isLegacy: true,
+      ),
+      type: 'Future<dynamic>* Function()*',
+    );
+  }
 
   test_implicitCall_tearOff_nullable() async {
     newFile('/test/lib/a.dart', content: r'''

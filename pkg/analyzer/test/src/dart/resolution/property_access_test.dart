@@ -18,90 +18,6 @@ main() {
 
 @reflectiveTest
 class PropertyAccessResolutionTest extends DriverResolutionTest {
-  test_get_error_abstractSuperMemberReference_mixinHasNoSuchMethod() async {
-    await assertErrorsInCode('''
-class A {
-  int get foo;
-  noSuchMethod(im) => 1;
-}
-
-class B extends Object with A {
-  get foo => super.foo; // ref
-  noSuchMethod(im) => 2;
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 104, 3),
-    ]);
-
-    var access = findNode.propertyAccess('foo; // ref');
-    assertPropertyAccess(access, findElement.getter('foo', of: 'A'), 'int');
-    assertSuperExpression(access.target);
-  }
-
-  test_get_error_abstractSuperMemberReference_OK_superHasNoSuchMethod() async {
-    await assertNoErrorsInCode(r'''
-class A {
-  int get foo;
-  noSuchMethod(im) => 1;
-}
-
-class B extends A {
-  get foo => super.foo; // ref
-  noSuchMethod(im) => 2;
-}
-''');
-
-    var access = findNode.propertyAccess('super.foo; // ref');
-    assertPropertyAccess(access, findElement.getter('foo', of: 'A'), 'int');
-    assertSuperExpression(access.target);
-  }
-
-  test_set_error_abstractSuperMemberReference_mixinHasNoSuchMethod() async {
-    await assertErrorsInCode('''
-class A {
-  set foo(int a);
-  noSuchMethod(im) {}
-}
-
-class B extends Object with A {
-  set foo(v) => super.foo = v; // ref
-  noSuchMethod(im) {}
-}
-''', [
-      error(CompileTimeErrorCode.ABSTRACT_SUPER_MEMBER_REFERENCE, 107, 3),
-    ]);
-
-    var access = findNode.propertyAccess('foo = v; // ref');
-    assertPropertyAccess(
-      access,
-      findElement.setter('foo', of: 'A'),
-      'int',
-    );
-    assertSuperExpression(access.target);
-  }
-
-  test_set_error_abstractSuperMemberReference_OK_superHasNoSuchMethod() async {
-    await assertNoErrorsInCode(r'''
-class A {
-  set foo(int a);
-  noSuchMethod(im) => 1;
-}
-
-class B extends A {
-  set foo(v) => super.foo = v; // ref
-  noSuchMethod(im) => 2;
-}
-''');
-
-    var access = findNode.propertyAccess('foo = v; // ref');
-    assertPropertyAccess(
-      access,
-      findElement.setter('foo', of: 'A'),
-      'int',
-    );
-    assertSuperExpression(access.target);
-  }
-
   test_tearOff_method() async {
     await assertNoErrorsInCode('''
 class A {
@@ -150,5 +66,136 @@ int Function() foo() {
     var identifier = findNode.simple('a; // ref');
     assertElement(identifier, findElement.getter('a'));
     assertType(identifier, 'A?');
+  }
+
+  test_nullShorting_cascade() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  int get foo => 0;
+  int get bar => 0;
+}
+
+main(A? a) {
+  a?..foo..bar;
+}
+''');
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('..foo'),
+      element: findElement.getter('foo'),
+      type: 'int',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('..bar'),
+      element: findElement.getter('bar'),
+      type: 'int',
+    );
+
+    assertType(findNode.cascade('a?'), 'A?');
+  }
+
+  test_nullShorting_cascade2() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  int? get foo => 0;
+}
+
+main() {
+  A a = A()..foo?.isEven;
+  a;
+}
+''');
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('..foo?'),
+      element: findElement.getter('foo'),
+      type: 'int?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.isEven'),
+      element: intElement.getGetter('isEven'),
+      type: 'bool',
+    );
+
+    assertType(findNode.cascade('A()'), 'A');
+  }
+
+  test_nullShorting_cascade3() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  A? get foo => this;
+  A? get bar => this;
+  A? get baz => this;
+}
+
+main() {
+  A a = A()..foo?.bar?.baz;
+  a;
+}
+''');
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.foo'),
+      element: findElement.getter('foo'),
+      type: 'A?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.bar'),
+      element: findElement.getter('bar'),
+      type: 'A?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.baz'),
+      element: findElement.getter('baz'),
+      type: 'A?',
+    );
+
+    assertType(findNode.cascade('A()'), 'A');
+  }
+
+  test_nullShorting_cascade4() async {
+    await assertNoErrorsInCode(r'''
+A? get foo => A();
+
+class A {
+  A get bar => this;
+  A? get baz => this;
+  A get baq => this;
+}
+
+main() {
+  foo?.bar?..baz?.baq;
+}
+''');
+
+    assertSimpleIdentifier(
+      findNode.simple('foo?'),
+      element: findElement.topGet('foo'),
+      type: 'A?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.bar'),
+      element: findElement.getter('bar'),
+      type: 'A?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.baz'),
+      element: findElement.getter('baz'),
+      type: 'A?',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('.baq'),
+      element: findElement.getter('baq'),
+      type: 'A',
+    );
+
+    assertType(findNode.cascade('foo?'), 'A?');
   }
 }

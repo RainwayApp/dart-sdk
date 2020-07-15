@@ -7,6 +7,7 @@
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
 
+#include "platform/unaligned.h"
 #include "vm/kernel.h"
 #include "vm/object.h"
 
@@ -19,8 +20,8 @@ namespace kernel {
 static const uint32_t kMagicProgramFile = 0x90ABCDEFu;
 
 // Both version numbers are inclusive.
-static const uint32_t kMinSupportedKernelFormatVersion = 29;
-static const uint32_t kMaxSupportedKernelFormatVersion = 36;
+static const uint32_t kMinSupportedKernelFormatVersion = 43;
+static const uint32_t kMaxSupportedKernelFormatVersion = 43;
 
 // Keep in sync with package:kernel/lib/binary/tag.dart
 #define KERNEL_TAG_LIST(V)                                                     \
@@ -163,6 +164,14 @@ enum ConstantTag {
 };
 
 // Keep in sync with package:kernel/lib/ast.dart
+enum class KernelNullability : int8_t {
+  kUndetermined = 0,
+  kNullable = 1,
+  kNonNullable = 2,
+  kLegacy = 3,
+};
+
+// Keep in sync with package:kernel/lib/ast.dart
 enum Variance {
   kUnrelated = 0,
   kCovariant = 1,
@@ -171,9 +180,29 @@ enum Variance {
   kLegacyCovariant = 4,
 };
 
+// Keep in sync with package:kernel/lib/ast.dart
+enum AsExpressionFlags {
+  kAsExpressionFlagTypeError = 1 << 0,
+  kAsExpressionFlagCovarianceCheck = 1 << 1,
+  kAsExpressionFlagForDynamic = 1 << 2,
+  kAsExpressionFlagForNonNullableByDefault = 1 << 3,
+};
+
+// Keep in sync with package:kernel/lib/ast.dart
+enum IsExpressionFlags {
+  kIsExpressionFlagForNonNullableByDefault = 1 << 0,
+};
+
+// Keep in sync with package:kernel/lib/ast.dart
+enum class NamedTypeFlags : uint8_t {
+  kIsRequired = 1 << 0,
+};
+
 static const int SpecializedIntLiteralBias = 3;
 static const int LibraryCountFieldCountFromEnd = 1;
-static const int SourceTableFieldCountFromFirstLibraryOffset = 6;
+static const int KernelFormatVersionOffset = 4;
+static const int SourceTableFieldCountFromFirstLibraryOffsetPre41 = 6;
+static const int SourceTableFieldCountFromFirstLibraryOffset41Plus = 7;
 
 static const int HeaderSize = 8;  // 'magic', 'formatVersion'.
 
@@ -208,7 +237,8 @@ class Reader : public ValueObject {
     ASSERT((size_ >= 4) && (offset >= 0) && (offset <= size_ - 4));
     uint32_t value;
     if (raw_buffer_ != NULL) {
-      value = *reinterpret_cast<const uint32_t*>(raw_buffer_ + offset);
+      value = LoadUnaligned(
+          reinterpret_cast<const uint32_t*>(raw_buffer_ + offset));
     } else {
       value = typed_data_->GetUint32(offset);
     }
@@ -231,7 +261,7 @@ class Reader : public ValueObject {
 
   double ReadDouble() {
     ASSERT((size_ >= 8) && (offset_ >= 0) && (offset_ <= size_ - 8));
-    double value = ReadUnaligned(
+    double value = LoadUnaligned(
         reinterpret_cast<const double*>(&this->buffer()[offset_]));
     offset_ += 8;
     return value;
@@ -296,6 +326,12 @@ class Reader : public ValueObject {
 
   uint8_t PeekByte() { return buffer()[offset_]; }
 
+  void ReadBytes(uint8_t* buffer, uint8_t size) {
+    for (int i = 0; i < size; i++) {
+      buffer[i] = ReadByte();
+    }
+  }
+
   bool ReadBool() { return (ReadByte() & 1) == 1; }
 
   uint8_t ReadFlags() { return ReadByte(); }
@@ -328,9 +364,22 @@ class Reader : public ValueObject {
     }
   }
 
+  static Nullability ConvertNullability(KernelNullability kernel_nullability) {
+    switch (kernel_nullability) {
+      case KernelNullability::kNullable:
+        return Nullability::kNullable;
+      case KernelNullability::kLegacy:
+        return Nullability::kLegacy;
+      case KernelNullability::kNonNullable:
+      case KernelNullability::kUndetermined:
+        return Nullability::kNonNullable;
+    }
+    UNREACHABLE();
+  }
+
   Nullability ReadNullability() {
-    uint8_t byte = ReadByte();
-    return static_cast<Nullability>(byte);
+    const uint8_t byte = ReadByte();
+    return ConvertNullability(static_cast<KernelNullability>(byte));
   }
 
   Variance ReadVariance() {
@@ -374,7 +423,7 @@ class Reader : public ValueObject {
   const uint8_t* raw_buffer() const { return raw_buffer_; }
   void set_raw_buffer(const uint8_t* raw_buffer) { raw_buffer_ = raw_buffer; }
 
-  RawExternalTypedData* ExternalDataFromTo(intptr_t start, intptr_t end) {
+  ExternalTypedDataPtr ExternalDataFromTo(intptr_t start, intptr_t end) {
     return ExternalTypedData::New(kExternalTypedDataUint8ArrayCid,
                                   const_cast<uint8_t*>(buffer() + start),
                                   end - start, Heap::kOld);
@@ -385,7 +434,7 @@ class Reader : public ValueObject {
     return &buffer()[offset];
   }
 
-  RawTypedData* ReadLineStartsData(intptr_t line_start_count);
+  TypedDataPtr ReadLineStartsData(intptr_t line_start_count);
 
  private:
   const uint8_t* buffer() const {

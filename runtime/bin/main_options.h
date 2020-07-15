@@ -8,6 +8,7 @@
 #include "bin/dartutils.h"
 #include "bin/dfe.h"
 #include "platform/globals.h"
+#include "platform/growable_array.h"
 #include "platform/hashmap.h"
 
 namespace dart {
@@ -18,7 +19,6 @@ namespace bin {
 // The value of the flag can then be accessed with Options::field_name().
 #define STRING_OPTIONS_LIST(V)                                                 \
   V(packages, packages_file)                                                   \
-  V(package_root, package_root)                                                \
   V(snapshot, snapshot_filename)                                               \
   V(snapshot_depfile, snapshot_deps_filename)                                  \
   V(depfile, depfile)                                                          \
@@ -45,7 +45,9 @@ namespace bin {
   V(short_socket_write, short_socket_write)                                    \
   V(disable_exit, exit_disabled)                                               \
   V(preview_dart_2, nop_option)                                                \
-  V(suppress_core_dump, suppress_core_dump)
+  V(suppress_core_dump, suppress_core_dump)                                    \
+  V(enable_service_port_fallback, enable_service_port_fallback)                \
+  V(disable_dart_dev, disable_dart_dev)
 
 // Boolean flags that have a short form.
 #define SHORT_BOOL_OPTIONS_LIST(V)                                             \
@@ -67,7 +69,8 @@ namespace bin {
   V(ProcessEnvironmentOption)                                                  \
   V(ProcessEnableVmServiceOption)                                              \
   V(ProcessObserveOption)                                                      \
-  V(ProcessAbiVersionOption)
+  V(ProcessAbiVersionOption)                                                   \
+  V(ProcessEnableExperimentOption)
 
 // This enum must match the strings in kSnapshotKindNames in main_options.cc.
 enum SnapshotKind {
@@ -166,6 +169,7 @@ class Options {
 
   // VM Service argument processing.
   static const char* vm_service_server_ip_;
+  static bool enable_vm_service_;
   static int vm_service_server_port_;
   static bool ExtractPortAndAddress(const char* option_value,
                                     int* out_port,
@@ -174,6 +178,7 @@ class Options {
                                     const char* default_ip);
 
   static int target_abi_version_;
+  static MallocGrowableArray<const char*> enabled_experiments_;
 
 #define OPTION_FRIEND(flag, variable) friend class OptionProcessor_##flag;
   STRING_OPTIONS_LIST(OPTION_FRIEND)

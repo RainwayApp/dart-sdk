@@ -43,7 +43,7 @@ void Object::AddCommonObjectProperties(JSONObject* jsobj,
   }
   if (!ref) {
     if (raw()->IsHeapObject()) {
-      jsobj->AddProperty("size", raw()->HeapSize());
+      jsobj->AddProperty("size", raw()->ptr()->HeapSize());
     } else {
       jsobj->AddProperty("size", (intptr_t)0);
     }
@@ -96,7 +96,7 @@ void Class::PrintJSONImpl(JSONStream* stream, bool ref) const {
   jsobj.AddProperty("const", is_const());
   jsobj.AddProperty("_finalized", is_finalized());
   jsobj.AddProperty("_implemented", is_implemented());
-  jsobj.AddProperty("_patch", is_patch());
+  jsobj.AddProperty("_patch", false);
   jsobj.AddProperty("_traceAllocations", TraceAllocation(isolate));
 
   const Class& superClass = Class::Handle(SuperClass());
@@ -202,7 +202,6 @@ void TypeArguments::PrintJSONImpl(JSONStream* stream, bool ref) const {
     Array& prior_instantiations = Array::Handle(instantiations());
     ASSERT(prior_instantiations.Length() > 0);  // Always at least a sentinel.
     TypeArguments& type_args = TypeArguments::Handle();
-    Smi& nnbd_mode_as_smi = Smi::Handle();
     intptr_t i = 0;
     while (prior_instantiations.At(i) !=
            Smi::New(TypeArguments::kNoInstantiator)) {
@@ -213,13 +212,6 @@ void TypeArguments::PrintJSONImpl(JSONStream* stream, bool ref) const {
       type_args ^= prior_instantiations.At(
           i + TypeArguments::Instantiation::kFunctionTypeArgsIndex);
       instantiation.AddProperty("functionTypeArguments", type_args, true);
-      nnbd_mode_as_smi ^= prior_instantiations.At(
-          i + TypeArguments::Instantiation::kNnbdModeIndex);
-      instantiation.AddProperty(
-          "nnbd_mode", nnbd_mode_as_smi.Value() ==
-                               static_cast<intptr_t>(NNBDMode::kLegacyLib)
-                           ? "legacy"
-                           : "opted-in");
       type_args ^= prior_instantiations.At(
           i + TypeArguments::Instantiation::kInstantiatedTypeArgsIndex);
       instantiation.AddProperty("instantiated", type_args, true);
@@ -269,7 +261,7 @@ static void AddFunctionServiceId(const JSONObject& jsobj,
   }
   // Oddball functions (not known to their owner) fall back to use the object
   // id ring. Current known examples are signature functions of closures
-  // and stubs like 'megamorphic_miss'.
+  // and stubs like 'megamorphic_call_miss'.
   jsobj.AddServiceId(f);
 }
 
@@ -285,9 +277,9 @@ void Function::PrintJSONImpl(JSONStream* stream, bool ref) const {
   JSONObject jsobj(stream);
   AddCommonObjectProperties(&jsobj, "Function", ref);
   AddFunctionServiceId(jsobj, *this, cls);
-  const String& user_name = String::Handle(UserVisibleName());
+  const char* user_name = UserVisibleNameCString();
   const String& vm_name = String::Handle(name());
-  AddNameProperties(&jsobj, user_name.ToCString(), vm_name.ToCString());
+  AddNameProperties(&jsobj, user_name, vm_name.ToCString());
   const Function& parent = Function::Handle(parent_function());
   if (!parent.IsNull()) {
     jsobj.AddProperty("owner", parent);
@@ -334,10 +326,10 @@ void Function::PrintJSONImpl(JSONStream* stream, bool ref) const {
   jsobj.AddProperty("_optimizedCallSiteCount", optimized_call_site_count());
   jsobj.AddProperty("_deoptimizations",
                     static_cast<intptr_t>(deoptimization_counter()));
-  if ((kind() == RawFunction::kImplicitGetter) ||
-      (kind() == RawFunction::kImplicitSetter) ||
-      (kind() == RawFunction::kImplicitStaticGetter) ||
-      (kind() == RawFunction::kFieldInitializer)) {
+  if ((kind() == FunctionLayout::kImplicitGetter) ||
+      (kind() == FunctionLayout::kImplicitSetter) ||
+      (kind() == FunctionLayout::kImplicitStaticGetter) ||
+      (kind() == FunctionLayout::kFieldInitializer)) {
     const Field& field = Field::Handle(accessor_field());
     if (!field.IsNull()) {
       jsobj.AddProperty("_field", field);
@@ -367,9 +359,9 @@ void Field::PrintJSONImpl(JSONStream* stream, bool ref) const {
   jsobj.AddFixedServiceId("classes/%" Pd "/fields/%s", cls.id(),
                           encoded_field_name);
 
-  const String& user_name = String::Handle(UserVisibleName());
+  const char* user_name = UserVisibleNameCString();
   const String& vm_name = String::Handle(name());
-  AddNameProperties(&jsobj, user_name.ToCString(), vm_name.ToCString());
+  AddNameProperties(&jsobj, user_name, vm_name.ToCString());
   if (cls.IsTopLevel()) {
     const Library& library = Library::Handle(cls.library());
     jsobj.AddProperty("owner", library);
@@ -481,8 +473,8 @@ void Library::PrintJSONImpl(JSONStream* stream, bool ref) const {
   AddCommonObjectProperties(&jsobj, "Library", ref);
   jsobj.AddFixedServiceId("libraries/%s", id.ToCString());
   const String& vm_name = String::Handle(name());
-  const String& scrubbed_name = String::Handle(String::ScrubName(vm_name));
-  AddNameProperties(&jsobj, scrubbed_name.ToCString(), vm_name.ToCString());
+  const char* scrubbed_name = String::ScrubName(vm_name);
+  AddNameProperties(&jsobj, scrubbed_name, vm_name.ToCString());
   const String& library_url = String::Handle(url());
   jsobj.AddPropertyStr("uri", library_url);
   if (ref) {
@@ -627,9 +619,9 @@ void Library::PrintJSONImpl(JSONStream* stream, bool ref) const {
       entry = entries.GetNext();
       if (entry.IsFunction()) {
         const Function& func = Function::Cast(entry);
-        if (func.kind() == RawFunction::kRegularFunction ||
-            func.kind() == RawFunction::kGetterFunction ||
-            func.kind() == RawFunction::kSetterFunction) {
+        if (func.kind() == FunctionLayout::kRegularFunction ||
+            func.kind() == FunctionLayout::kGetterFunction ||
+            func.kind() == FunctionLayout::kSetterFunction) {
           jsarr.AddValue(func);
         }
       }
@@ -665,6 +657,20 @@ void Instructions::PrintJSONImpl(JSONStream* stream, bool ref) const {
   if (ref) {
     return;
   }
+}
+
+void InstructionsSection::PrintJSONImpl(JSONStream* stream, bool ref) const {
+  Object::PrintJSONImpl(stream, ref);
+}
+
+void WeakSerializationReference::PrintJSONImpl(JSONStream* stream,
+                                               bool ref) const {
+  JSONObject jsobj(stream);
+  AddCommonObjectProperties(&jsobj, "Object", ref);
+  jsobj.AddServiceId(*this);
+  if (ref) return;
+  auto& obj = Object::Handle(target());
+  jsobj.AddProperty("target", obj);
 }
 
 void ObjectPool::PrintJSONImpl(JSONStream* stream, bool ref) const {
@@ -725,7 +731,7 @@ void PcDescriptors::PrintToJSONObject(JSONObject* jsobj, bool ref) const {
     return;
   }
   JSONArray members(jsobj, "members");
-  Iterator iter(*this, RawPcDescriptors::kAnyKind);
+  Iterator iter(*this, PcDescriptorsLayout::kAnyKind);
   while (iter.MoveNext()) {
     JSONObject descriptor(&members);
     descriptor.AddPropertyF("pcOffset", "%" Px "", iter.PcOffset());
@@ -762,7 +768,7 @@ void LocalVarDescriptors::PrintJSONImpl(JSONStream* stream, bool ref) const {
   JSONArray members(&jsobj, "members");
   String& var_name = String::Handle();
   for (intptr_t i = 0; i < Length(); i++) {
-    RawLocalVarDescriptors::VarInfo info;
+    LocalVarDescriptorsLayout::VarInfo info;
     var_name = GetName(i);
     GetInfo(i, &info);
     JSONObject var(&members);
@@ -804,7 +810,23 @@ void UnlinkedCall::PrintJSONImpl(JSONStream* stream, bool ref) const {
   if (ref) {
     return;
   }
-  jsobj.AddProperty("_argumentsDescriptor", Array::Handle(args_descriptor()));
+  jsobj.AddProperty("_argumentsDescriptor",
+                    Array::Handle(arguments_descriptor()));
+}
+
+void MonomorphicSmiableCall::PrintJSONImpl(JSONStream* stream, bool ref) const {
+  JSONObject jsobj(stream);
+  AddCommonObjectProperties(&jsobj, "Object", ref);
+  jsobj.AddServiceId(*this);
+  jsobj.AddProperty("_expectedClassId", Smi::Handle(Smi::New(expected_cid())));
+  if (ref) {
+    return;
+  }
+  jsobj.AddProperty("_target", Code::Handle(target()));
+}
+
+void CallSiteData::PrintJSONImpl(JSONStream* stream, bool ref) const {
+  UNREACHABLE();
 }
 
 void ICData::PrintJSONImpl(JSONStream* stream, bool ref) const {
@@ -855,7 +877,8 @@ void Code::PrintJSONImpl(JSONStream* stream, bool ref) const {
   AddCommonObjectProperties(&jsobj, "Code", ref);
   jsobj.AddFixedServiceId("code/%" Px64 "-%" Px "", compile_timestamp(),
                           PayloadStart());
-  const char* qualified_name = QualifiedName();
+  const char* qualified_name = QualifiedName(
+      NameFormattingParams(kUserVisibleName, NameDisambiguation::kNo));
   const char* vm_name = Name();
   AddNameProperties(&jsobj, qualified_name, vm_name);
   const bool is_stub =
@@ -1005,6 +1028,20 @@ void SubtypeTestCache::PrintJSONImpl(JSONStream* stream, bool ref) const {
     return;
   }
   jsobj.AddProperty("_cache", Array::Handle(cache()));
+}
+
+void LoadingUnit::PrintJSONImpl(JSONStream* stream, bool ref) const {
+  JSONObject jsobj(stream);
+  AddCommonObjectProperties(&jsobj, "Object", ref);
+  jsobj.AddServiceId(*this);
+  if (ref) {
+    return;
+  }
+  jsobj.AddProperty("_parent", LoadingUnit::Handle(parent()));
+  jsobj.AddProperty("_baseObjects", Array::Handle(base_objects()));
+  jsobj.AddProperty("_id", static_cast<intptr_t>(id()));
+  jsobj.AddProperty("_loaded", loaded());
+  jsobj.AddProperty("_load_united", load_issued());
 }
 
 void Error::PrintJSONImpl(JSONStream* stream, bool ref) const {
@@ -1416,8 +1453,8 @@ void TypedData::PrintJSONImpl(JSONStream* stream, bool ref) const {
   JSONObject jsobj(stream);
   PrintSharedInstanceJSON(&jsobj, ref);
   const Class& cls = Class::Handle(clazz());
-  const String& kind = String::Handle(cls.UserVisibleName());
-  jsobj.AddProperty("kind", kind.ToCString());
+  const char* kind = cls.UserVisibleNameCString();
+  jsobj.AddProperty("kind", kind);
   jsobj.AddServiceId(*this);
   jsobj.AddProperty("length", Length());
   if (ref) {
@@ -1451,8 +1488,8 @@ void ExternalTypedData::PrintJSONImpl(JSONStream* stream, bool ref) const {
   JSONObject jsobj(stream);
   PrintSharedInstanceJSON(&jsobj, ref);
   const Class& cls = Class::Handle(clazz());
-  const String& kind = String::Handle(cls.UserVisibleName());
-  jsobj.AddProperty("kind", kind.ToCString());
+  const char* kind = cls.UserVisibleNameCString();
+  jsobj.AddProperty("kind", kind);
   jsobj.AddServiceId(*this);
   jsobj.AddProperty("length", Length());
   if (ref) {
@@ -1604,6 +1641,10 @@ void MirrorReference::PrintJSONImpl(JSONStream* stream, bool ref) const {
 }
 
 void UserTag::PrintJSONImpl(JSONStream* stream, bool ref) const {
+  Instance::PrintJSONImpl(stream, ref);
+}
+
+void FutureOr::PrintJSONImpl(JSONStream* stream, bool ref) const {
   Instance::PrintJSONImpl(stream, ref);
 }
 

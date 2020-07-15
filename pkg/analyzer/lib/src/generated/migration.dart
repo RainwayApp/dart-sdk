@@ -7,19 +7,29 @@ import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/generated/element_type_provider.dart';
-import 'package:analyzer/src/generated/source.dart';
+import 'package:analyzer/src/generated/migratable_ast_info_provider.dart';
 
 /// Hooks used by resolution to communicate with the migration engine.
-abstract class MigrationResolutionHooks implements ElementTypeProvider {
-  /// Called when the resolver is visiting a [TypeAnnotation] AST node.  Should
-  /// return the type of the [TypeAnnotation] after migrations have been
-  /// applied.
-  DartType getMigratedTypeAnnotationType(Source source, TypeAnnotation node);
+abstract class MigrationResolutionHooks
+    implements ElementTypeProvider, MigratableAstInfoProvider {
+  /// Called when the resolver is visiting an if statement, if element, or
+  /// conditional expression, to determine whether the condition is known to
+  /// evaluate to `true` or `false`.
+  ///
+  /// If the condition is known to evaluate to `true` or `false`, then the value
+  /// it is known to evaluate to is returned.  Otherwise `null` is returned.
+  bool getConditionalKnownValue(AstNode node);
 
   /// Called after the resolver has determined the type of an expression node.
   /// Should return the type that the expression has after migrations have been
   /// applied.
   DartType modifyExpressionType(Expression expression, DartType dartType);
+
+  /// Called after the resolver has inferred the type of a function literal
+  /// parameter.  Should return the type that the parameter has after migrations
+  /// have been applied.
+  DartType modifyInferredParameterType(
+      ParameterElement parameter, DartType type);
 
   /// Called when the resolver starts or stops making use of a [FlowAnalysis]
   /// instance.

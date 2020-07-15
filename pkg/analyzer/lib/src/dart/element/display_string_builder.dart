@@ -8,6 +8,7 @@ import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/dart/element/type_algebra.dart';
+import 'package:analyzer/src/generated/element_type_provider.dart';
 import 'package:meta/meta.dart';
 
 class ElementDisplayStringBuilder {
@@ -64,7 +65,7 @@ class ElementDisplayStringBuilder {
       _write(element.displayName);
     }
 
-    _writeFormalParameters(element.parameters);
+    _writeFormalParameters(element.parameters, forElement: true);
   }
 
   void writeDynamicType() {
@@ -84,7 +85,7 @@ class ElementDisplayStringBuilder {
 
     if (element.kind != ElementKind.GETTER) {
       _writeTypeParameters(element.typeParameters);
-      _writeFormalParameters(element.parameters);
+      _writeFormalParameters(element.parameters, forElement: true);
     }
   }
 
@@ -102,14 +103,14 @@ class ElementDisplayStringBuilder {
 
   void writeFormalParameter(ParameterElement element) {
     if (element.isRequiredPositional) {
-      _writeWithoutDelimiters(element);
+      _writeWithoutDelimiters(element, forElement: true);
     } else if (element.isOptionalPositional) {
       _write('[');
-      _writeWithoutDelimiters(element);
+      _writeWithoutDelimiters(element, forElement: true);
       _write(']');
     } else if (element.isNamed) {
       _write('{');
-      _writeWithoutDelimiters(element);
+      _writeWithoutDelimiters(element, forElement: true);
       _write('}');
     }
   }
@@ -120,7 +121,7 @@ class ElementDisplayStringBuilder {
     _writeType(type.returnType);
     _write(' Function');
     _writeTypeParameters(type.typeFormals);
-    _writeFormalParameters(type.parameters, withNamesOfPositional: false);
+    _writeFormalParameters(type.parameters, forElement: false);
     _writeNullability(type.nullabilitySuffix);
   }
 
@@ -128,7 +129,7 @@ class ElementDisplayStringBuilder {
     _writeType(element.returnType);
     _write(' Function');
     _writeTypeParameters(element.typeParameters);
-    _writeFormalParameters(element.parameters);
+    _writeFormalParameters(element.parameters, forElement: true);
   }
 
   void writeGenericTypeAliasElement(GenericTypeAliasElementImpl element) {
@@ -190,7 +191,7 @@ class ElementDisplayStringBuilder {
   }
 
   void writeUnknownInferredType() {
-    _write('?');
+    _write('_');
   }
 
   void writeVariableElement(VariableElement element) {
@@ -209,7 +210,7 @@ class ElementDisplayStringBuilder {
 
   void _writeFormalParameters(
     List<ParameterElement> parameters, {
-    bool withNamesOfPositional = true,
+    @required bool forElement,
   }) {
     _write('(');
 
@@ -238,10 +239,7 @@ class ElementDisplayStringBuilder {
       } else if (parameter.isNamed) {
         openGroup(_WriteFormalParameterKind.named, '{', '}');
       }
-      _writeWithoutDelimiters(
-        parameter,
-        withNamesOfPositional: withNamesOfPositional,
-      );
+      _writeWithoutDelimiters(parameter, forElement: forElement);
     }
 
     _write(lastClose);
@@ -333,7 +331,7 @@ class ElementDisplayStringBuilder {
 
   void _writeWithoutDelimiters(
     ParameterElement element, {
-    bool withNamesOfPositional = true,
+    @required bool forElement,
   }) {
     if (element.isRequiredNamed) {
       _write('required ');
@@ -341,9 +339,14 @@ class ElementDisplayStringBuilder {
 
     _writeType(element.type);
 
-    if (element.isNamed || withNamesOfPositional) {
+    if (forElement || element.isNamed) {
       _write(' ');
       _write(element.displayName);
+    }
+
+    if (forElement && element.defaultValueCode != null) {
+      _write(' = ');
+      _write(element.defaultValueCode);
     }
   }
 
@@ -358,10 +361,13 @@ class ElementDisplayStringBuilder {
       if (type is TypeParameterType) {
         referencedTypeParameters.add(type.element);
       } else if (type is FunctionType) {
-        collectTypeParameters(type.returnType);
+        for (var typeParameter in type.typeFormals) {
+          collectTypeParameters(typeParameter.bound);
+        }
         for (var parameter in type.parameters) {
           collectTypeParameters(parameter.type);
         }
+        collectTypeParameters(type.returnType);
       } else if (type is InterfaceType) {
         for (var typeArgument in type.typeArguments) {
           collectTypeParameters(typeArgument);
@@ -394,6 +400,8 @@ class ElementDisplayStringBuilder {
       var newTypeParameter = TypeParameterElementImpl(name, -1);
       newTypeParameter.bound = typeParameter.bound;
       newTypeParameters.add(newTypeParameter);
+      ElementTypeProvider.current
+          .freshTypeParameterCreated(newTypeParameter, typeParameter);
     }
 
     return replaceTypeParameters(type, newTypeParameters);

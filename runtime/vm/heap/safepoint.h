@@ -6,6 +6,7 @@
 #define RUNTIME_VM_HEAP_SAFEPOINT_H_
 
 #include "vm/globals.h"
+#include "vm/isolate.h"
 #include "vm/lockers.h"
 #include "vm/thread.h"
 #include "vm/thread_stack_resource.h"
@@ -49,6 +50,8 @@ class SafepointHandler {
   void ExitSafepointUsingLock(Thread* T);
 
   void BlockForSafepoint(Thread* T);
+
+  bool IsOwnedByTheThread(Thread* thread) { return owner_ == thread; }
 
  private:
   void SafepointThreads(Thread* T);

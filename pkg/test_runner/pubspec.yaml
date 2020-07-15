@@ -3,6 +3,7 @@
 # BSD-style license that can be found in the LICENSE file.
 
 name: test_runner
+# This package is not intended for consumption on pub.dev. DO NOT publish.
 publish_to: none
 environment:
   sdk: "^2.3.0"
@@ -11,12 +12,14 @@ dependencies:
     path: ../expect
   glob:
     path: ../../third_party/pkg/glob
-  package_resolver:
-    path: ../../third_party/pkg_tested/package_resolver
+  package_config:
+    path: ../../third_party/pkg_tested/package_config
   smith:
     path: ../smith
   status_file:
     path: ../status_file
+  dart2js_tools:
+    path: ../dart2js_tools
 dependency_overrides:
   # Other packages in the dependency graph have normal hosted dependencies on
   # this, so just override it to force the local one.

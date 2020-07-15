@@ -446,6 +446,10 @@ class LinkedUnitContext {
     }
   }
 
+  LibraryLanguageVersion getLanguageVersion(CompilationUnit node) {
+    return LazyCompilationUnit.getLanguageVersion(node);
+  }
+
   Comment getLibraryDocumentationComment(CompilationUnit unit) {
     for (var directive in unit.directives) {
       if (directive is LibraryDirective) {
@@ -636,6 +640,8 @@ class LinkedUnitContext {
   TopLevelInferenceError getTypeInferenceError(AstNode node) {
     if (node is DefaultFormalParameter) {
       return getTypeInferenceError(node.parameter);
+    } else if (node is MethodDeclaration) {
+      return LazyMethodDeclaration.getTypeInferenceError(node);
     } else if (node is SimpleFormalParameter) {
       return LazyFormalParameter.getTypeInferenceError(node);
     } else if (node is VariableDeclaration) {
@@ -991,7 +997,7 @@ class LinkedUnitContext {
       }
       var nullabilitySuffix = _nullabilitySuffix(linkedType.nullabilitySuffix);
       return TypeParameterTypeImpl(
-        element,
+        element: element,
         nullabilitySuffix: nullabilitySuffix,
       );
     } else if (kind == LinkedNodeTypeKind.void_) {

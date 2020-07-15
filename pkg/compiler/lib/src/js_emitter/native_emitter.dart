@@ -281,19 +281,19 @@ class NativeEmitter {
     jsAst.Expression closureConverter;
     _elementEnvironment.forEachParameter(member,
         (DartType type, String name, _) {
+      type = type.withoutNullability;
+
       // If [name] is not in [stubParameters], then the parameter is an optional
       // parameter that was not provided for this stub.
       for (jsAst.Parameter stubParameter in stubParameters) {
         if (stubParameter.name == name) {
-          type = type.unaliased;
           if (type is FunctionType) {
             closureConverter ??= _emitterTask.emitter
                 .staticFunctionAccess(_commonElements.closureConverter);
 
             // The parameter type is a function type either directly or through
             // typedef(s).
-            FunctionType functionType = type;
-            int arity = functionType.parameterTypes.length;
+            int arity = type.parameterTypes.length;
             statements.add(js
                 .statement('# = #(#, $arity)', [name, closureConverter, name]));
             break;

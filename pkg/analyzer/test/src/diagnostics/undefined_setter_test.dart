@@ -2,18 +2,14 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/error/codes.dart';
-import 'package:analyzer/src/generated/engine.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../dart/resolution/driver_resolution.dart';
-import 'undefined_getter_test.dart';
 
 main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(UndefinedSetterTest);
-    defineReflectiveTests(UndefinedSetterWithExtensionMethodsTest);
   });
 }
 
@@ -29,6 +25,25 @@ main() {
   x.y = 0;
 }
 ''');
+  }
+
+  test_instance_undefined() async {
+    await assertErrorsInCode(r'''
+class T {}
+f(T e1) { e1.m = 0; }
+''', [
+      error(StaticTypeWarningCode.UNDEFINED_SETTER, 24, 1),
+    ]);
+  }
+
+  test_instance_undefined_mixin() async {
+    await assertErrorsInCode(r'''
+mixin M {
+  f() { this.m = 0; }
+}
+''', [
+      error(StaticTypeWarningCode.UNDEFINED_SETTER, 23, 1),
+    ]);
   }
 
   test_inSubtype() async {
@@ -83,14 +98,28 @@ f(var p) {
       error(StaticTypeWarningCode.UNDEFINED_SETTER, 75, 1),
     ]);
   }
-}
 
-@reflectiveTest
-class UndefinedSetterWithExtensionMethodsTest extends UndefinedGetterTest {
-  @override
-  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..contextFeatures = FeatureSet.forTesting(
-        sdkVersion: '2.3.0', additionalFeatures: [Feature.extension_methods]);
+  test_static_undefined() async {
+    await assertErrorsInCode(r'''
+class A {}
+f() { A.B = 0;}
+''', [
+      error(StaticTypeWarningCode.UNDEFINED_SETTER, 19, 1),
+    ]);
+  }
+
+  test_typeLiteral_cascadeTarget() async {
+    await assertErrorsInCode(r'''
+class T {
+  static void set foo(_) {}
+}
+main() {
+  T..foo = 42;
+}
+''', [
+      error(StaticTypeWarningCode.UNDEFINED_SETTER, 54, 3),
+    ]);
+  }
 
   test_withExtension() async {
     await assertErrorsInCode(r'''

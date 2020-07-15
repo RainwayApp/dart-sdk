@@ -10,6 +10,7 @@ import 'dart:convert' show json;
 
 import '../ast.dart';
 import '../import_table.dart';
+import '../src/text_util.dart';
 
 abstract class Namer<T> {
   int index = 0;
@@ -158,6 +159,13 @@ String debugVariableDeclarationName(VariableDeclaration node) {
 String debugNodeToString(Node node) {
   StringBuffer buffer = new StringBuffer();
   new Printer(buffer, syntheticNames: globalDebuggingNames).writeNode(node);
+  return '$buffer';
+}
+
+String debugLibraryToString(Library library) {
+  StringBuffer buffer = new StringBuffer();
+  new Printer(buffer, syntheticNames: globalDebuggingNames)
+      .writeLibraryFile(library);
   return '$buffer';
 }
 
@@ -408,6 +416,9 @@ class Printer extends Visitor<Null> {
     writeWord('library');
     if (library.name != null) {
       writeWord(library.name);
+    }
+    if (library.isNonNullableByDefault) {
+      writeWord("/*isNonNullableByDefault*/");
     }
     endLine(';');
 
@@ -1071,11 +1082,23 @@ class Printer extends Visitor<Null> {
       writeSpaced('=');
       writeExpression(node.initializer);
     }
+    List<String> features = <String>[];
+    if (node.enclosingLibrary.isNonNullableByDefault !=
+        node.isNonNullableByDefault) {
+      if (node.isNonNullableByDefault) {
+        features.add("isNonNullableByDefault");
+      } else {
+        features.add("isNullableByDefault");
+      }
+    }
     if ((node.enclosingClass == null &&
             node.enclosingLibrary.fileUri != node.fileUri) ||
         (node.enclosingClass != null &&
             node.enclosingClass.fileUri != node.fileUri)) {
-      writeWord("/* from ${node.fileUri} */");
+      features.add(" from ${node.fileUri} ");
+    }
+    if (features.isNotEmpty) {
+      writeWord("/*${features.join(',')}*/");
     }
     endLine(';');
   }
@@ -1088,13 +1111,26 @@ class Printer extends Visitor<Null> {
     writeModifier(node.isAbstract, 'abstract');
     writeModifier(node.isForwardingStub, 'forwarding-stub');
     writeModifier(node.isForwardingSemiStub, 'forwarding-semi-stub');
+    writeModifier(node.isMemberSignature, 'member-signature');
     writeModifier(node.isNoSuchMethodForwarder, 'no-such-method-forwarder');
     writeWord(procedureKindToString(node.kind));
+    List<String> features = <String>[];
+    if (node.enclosingLibrary.isNonNullableByDefault !=
+        node.isNonNullableByDefault) {
+      if (node.isNonNullableByDefault) {
+        features.add("isNonNullableByDefault");
+      } else {
+        features.add("isNullableByDefault");
+      }
+    }
     if ((node.enclosingClass == null &&
             node.enclosingLibrary.fileUri != node.fileUri) ||
         (node.enclosingClass != null &&
             node.enclosingClass.fileUri != node.fileUri)) {
-      writeWord("/* from ${node.fileUri} */");
+      features.add(" from ${node.fileUri} ");
+    }
+    if (features.isNotEmpty) {
+      writeWord("/*${features.join(',')}*/");
     }
     writeFunction(node.function, name: getMemberName(node));
   }
@@ -1106,6 +1142,18 @@ class Printer extends Visitor<Null> {
     writeModifier(node.isConst, 'const');
     writeModifier(node.isSynthetic, 'synthetic');
     writeWord('constructor');
+    List<String> features = <String>[];
+    if (node.enclosingLibrary.isNonNullableByDefault !=
+        node.isNonNullableByDefault) {
+      if (node.isNonNullableByDefault) {
+        features.add("isNonNullableByDefault");
+      } else {
+        features.add("isNullableByDefault");
+      }
+    }
+    if (features.isNotEmpty) {
+      writeWord("/*${features.join(',')}*/");
+    }
     writeFunction(node.function,
         name: node.name, initializers: node.initializers);
   }
@@ -1130,6 +1178,18 @@ class Printer extends Visitor<Null> {
       writeList(node.typeArguments, writeType);
       writeSymbol('>');
     }
+    List<String> features = <String>[];
+    if (node.enclosingLibrary.isNonNullableByDefault !=
+        node.isNonNullableByDefault) {
+      if (node.isNonNullableByDefault) {
+        features.add("isNonNullableByDefault");
+      } else {
+        features.add("isNullableByDefault");
+      }
+    }
+    if (features.isNotEmpty) {
+      writeWord("/*${features.join(',')}*/");
+    }
     endLine(';');
   }
 
@@ -1152,6 +1212,25 @@ class Printer extends Visitor<Null> {
     if (node.implementedTypes.isNotEmpty) {
       writeSpaced('implements');
       writeList(node.implementedTypes, visitSupertype);
+    }
+    List<String> features = <String>[];
+    if (node.isEnum) {
+      features.add('isEnum');
+    }
+    if (node.isAnonymousMixin) {
+      features.add('isAnonymousMixin');
+    }
+    if (node.isEliminatedMixin) {
+      features.add('isEliminatedMixin');
+    }
+    if (node.isMixinDeclaration) {
+      features.add('isMixinDeclaration');
+    }
+    if (node.hasConstConstructor) {
+      features.add('hasConstConstructor');
+    }
+    if (features.isNotEmpty) {
+      writeSpaced('/*${features.join(',')}*/');
     }
     var endLineString = ' {';
     if (node.enclosingLibrary.fileUri != node.fileUri) {
@@ -1308,47 +1387,6 @@ class Printer extends Visitor<Null> {
     writeExpression(node.otherwise);
   }
 
-  String getEscapedCharacter(int codeUnit) {
-    switch (codeUnit) {
-      case 9:
-        return r'\t';
-      case 10:
-        return r'\n';
-      case 11:
-        return r'\v';
-      case 12:
-        return r'\f';
-      case 13:
-        return r'\r';
-      case 34:
-        return r'\"';
-      case 36:
-        return r'\$';
-      case 92:
-        return r'\\';
-      default:
-        if (codeUnit < 32 || codeUnit > 126) {
-          return r'\u' + '$codeUnit'.padLeft(4, '0');
-        } else {
-          return null;
-        }
-    }
-  }
-
-  String escapeString(String string) {
-    StringBuffer buffer;
-    for (int i = 0; i < string.length; ++i) {
-      String character = getEscapedCharacter(string.codeUnitAt(i));
-      if (character != null) {
-        buffer ??= new StringBuffer(string.substring(0, i));
-        buffer.write(character);
-      } else {
-        buffer?.write(string[i]);
-      }
-    }
-    return buffer == null ? string : buffer.toString();
-  }
-
   visitStringConcatenation(StringConcatenation node) {
     if (state == WORD) {
       writeSpace();
@@ -1441,13 +1479,27 @@ class Printer extends Visitor<Null> {
 
   visitIsExpression(IsExpression node) {
     writeExpression(node.operand, Precedence.BITWISE_OR);
-    writeSpaced('is');
+    writeSpaced(
+        node.isForNonNullableByDefault ? 'is{ForNonNullableByDefault}' : 'is');
     writeType(node.type);
   }
 
   visitAsExpression(AsExpression node) {
     writeExpression(node.operand, Precedence.BITWISE_OR);
-    writeSpaced(node.isTypeError ? 'as{TypeError}' : 'as');
+    List<String> flags = <String>[];
+    if (node.isTypeError) {
+      flags.add('TypeError');
+    }
+    if (node.isCovarianceCheck) {
+      flags.add('CovarianceCheck');
+    }
+    if (node.isForDynamic) {
+      flags.add('ForDynamic');
+    }
+    if (node.isForNonNullableByDefault) {
+      flags.add('ForNonNullableByDefault');
+    }
+    writeSpaced(flags.isNotEmpty ? 'as{${flags.join(',')}}' : 'as');
     writeType(node.type);
   }
 
@@ -2093,7 +2145,7 @@ class Printer extends Visitor<Null> {
   }
 
   visitNeverType(NeverType node) {
-    write('Never');
+    writeWord('Never');
     writeNullability(node.nullability);
   }
 
@@ -2106,6 +2158,14 @@ class Printer extends Visitor<Null> {
       state = WORD; // Disallow a word immediately after the '>'.
     }
     writeNullability(node.nullability);
+  }
+
+  visitFutureOrType(FutureOrType node) {
+    writeWord('FutureOr');
+    writeSymbol('<');
+    writeNode(node.typeArgument);
+    writeSymbol('>');
+    writeNullability(node.declaredNullability);
   }
 
   visitFunctionType(FunctionType node) {
@@ -2122,13 +2182,13 @@ class Printer extends Visitor<Null> {
 
   visitTypeParameterType(TypeParameterType node) {
     writeTypeParameterReference(node.parameter);
-    writeNullability(node.typeParameterTypeNullability);
+    writeNullability(node.declaredNullability);
     if (node.promotedBound != null) {
       writeSpaced('&');
       writeType(node.promotedBound);
 
       writeWord("/* '");
-      writeNullability(node.typeParameterTypeNullability, inComment: true);
+      writeNullability(node.declaredNullability, inComment: true);
       writeWord("' & '");
       writeDartTypeNullability(node.promotedBound, inComment: true);
       writeWord("' = '");
@@ -2169,7 +2229,45 @@ class Printer extends Visitor<Null> {
     writeIndentation();
     writeConstantReference(node);
     writeSpaced('=');
-    endLine('$node');
+    endLine('${node.runtimeType}');
+  }
+
+  visitNullConstant(NullConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    endLine('${node.value}');
+  }
+
+  visitBoolConstant(BoolConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    endLine('${node.value}');
+  }
+
+  visitIntConstant(IntConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    endLine('${node.value}');
+  }
+
+  visitDoubleConstant(DoubleConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    endLine('${node.value}');
+  }
+
+  visitSymbolConstant(SymbolConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    String text = node.libraryReference != null
+        ? '#${node.libraryReference.asLibrary.importUri}::${node.name}'
+        : '#${node.name}';
+    endLine('${text}');
   }
 
   visitListConstant(ListConstant node) {
@@ -2206,6 +2304,16 @@ class Printer extends Visitor<Null> {
       writeSymbol(':');
       writeConstantReference(entry.value);
     });
+    endLine(')');
+  }
+
+  visitTypeLiteralConstant(TypeLiteralConstant node) {
+    writeIndentation();
+    writeConstantReference(node);
+    writeSpaced('=');
+    writeWord('${node.runtimeType}');
+    writeSymbol('(');
+    writeNode(node.type);
     endLine(')');
   }
 

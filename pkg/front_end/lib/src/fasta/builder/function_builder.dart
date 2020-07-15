@@ -9,12 +9,11 @@ import 'dart:core' hide MapEntry;
 import 'package:front_end/src/fasta/kernel/kernel_api.dart';
 import 'package:kernel/ast.dart';
 
-import 'package:kernel/type_algebra.dart';
+import 'package:kernel/type_algebra.dart' show containsTypeVariable, substitute;
 
 import '../identifiers.dart';
 import '../scope.dart';
 
-import '../kernel/class_hierarchy_builder.dart' show ClassMember;
 import '../kernel/internal_ast.dart' show VariableDeclarationImpl;
 import '../kernel/redirecting_factory_body.dart' show RedirectingFactoryBody;
 
@@ -27,8 +26,7 @@ import '../messages.dart'
         messagePatchDeclarationOrigin,
         messagePatchNonExternal,
         noLength,
-        templateRequiredNamedParameterHasDefaultValueError,
-        templateRequiredNamedParameterHasDefaultValueWarning;
+        templateRequiredNamedParameterHasDefaultValueError;
 
 import '../modifier.dart';
 
@@ -64,8 +62,6 @@ abstract class FunctionBuilder implements MemberBuilder {
   ProcedureKind get kind;
 
   bool get isAbstract;
-
-  bool get isExternal;
 
   bool get isConstructor;
 
@@ -372,7 +368,8 @@ abstract class FunctionBuilderImpl extends MemberBuilderImpl
     }
     if (formals != null) {
       for (FormalParameterBuilder formal in formals) {
-        VariableDeclaration parameter = formal.build(library, 0);
+        VariableDeclaration parameter = formal.build(
+            library, 0, !isConstructor && !isDeclarationInstanceMember);
         if (needsCheckVisitor != null) {
           if (parameter.type.accept(needsCheckVisitor)) {
             parameter.isGenericCovariantImpl = true;
@@ -388,24 +385,15 @@ abstract class FunctionBuilderImpl extends MemberBuilderImpl
           result.requiredParameterCount++;
         }
 
-        if (library.isNonNullableByDefault &&
-            library.loader.target.performNnbdChecks) {
+        if (library.isNonNullableByDefault) {
+          // Required named parameters can't have default values.
           if (formal.isNamedRequired && formal.initializerToken != null) {
-            if (library.loader.nnbdStrongMode) {
-              library.addProblem(
-                  templateRequiredNamedParameterHasDefaultValueError
-                      .withArguments(formal.name),
-                  formal.charOffset,
-                  formal.name.length,
-                  formal.fileUri);
-            } else {
-              library.addProblem(
-                  templateRequiredNamedParameterHasDefaultValueWarning
-                      .withArguments(formal.name),
-                  formal.charOffset,
-                  formal.name.length,
-                  formal.fileUri);
-            }
+            library.addProblem(
+                templateRequiredNamedParameterHasDefaultValueError
+                    .withArguments(formal.name),
+                formal.charOffset,
+                formal.name.length,
+                formal.fileUri);
           }
         }
       }
@@ -425,15 +413,20 @@ abstract class FunctionBuilderImpl extends MemberBuilderImpl
       result.requiredParameterCount = 1;
     }
     if (returnType != null) {
-      result.returnType = returnType.build(library);
+      result.returnType = returnType.build(
+          library, null, !isConstructor && !isDeclarationInstanceMember);
     }
-    if (!isConstructor &&
-        !isDeclarationInstanceMember &&
-        parent is ClassBuilder) {
-      ClassBuilder enclosingClassBuilder = parent;
-      List<TypeParameter> typeParameters =
-          enclosingClassBuilder.cls.typeParameters;
-      if (typeParameters.isNotEmpty) {
+    if (!isConstructor && !isDeclarationInstanceMember) {
+      List<TypeParameter> typeParameters;
+      if (parent is ClassBuilder) {
+        ClassBuilder enclosingClassBuilder = parent;
+        typeParameters = enclosingClassBuilder.cls.typeParameters;
+      } else if (parent is ExtensionBuilder) {
+        ExtensionBuilder enclosingExtensionBuilder = parent;
+        typeParameters = enclosingExtensionBuilder.extension.typeParameters;
+      }
+
+      if (typeParameters != null && typeParameters.isNotEmpty) {
         Map<TypeParameter, DartType> substitution;
         DartType removeTypeVariables(DartType type) {
           if (substitution == null) {
@@ -560,12 +553,4 @@ abstract class FunctionBuilderImpl extends MemberBuilderImpl
       messagePatchDeclarationOrigin.withLocation(fileUri, charOffset, noLength)
     ]);
   }
-
-  @override
-  List<ClassMember> get localMembers =>
-      isSetter ? const <ClassMember>[] : <ClassMember>[this];
-
-  @override
-  List<ClassMember> get localSetters =>
-      isSetter ? <ClassMember>[this] : const <ClassMember>[];
 }

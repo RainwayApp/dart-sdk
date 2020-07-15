@@ -4,13 +4,9 @@
 
 import 'api.dart';
 
-/**
- * Visitor specialized for generating Dart code.
- */
+/// Visitor specialized for generating Dart code.
 class DartCodegenVisitor extends HierarchicalApiVisitor {
-  /**
-   * Type references in the spec that are named something else in Dart.
-   */
+  /// Type references in the spec that are named something else in Dart.
   static const Map<String, String> _typeRenames = {
     'long': 'int',
     'object': 'Map',
@@ -18,20 +14,18 @@ class DartCodegenVisitor extends HierarchicalApiVisitor {
 
   DartCodegenVisitor(Api api) : super(api);
 
-  /**
-   * Convert the given [TypeDecl] to a Dart type.
-   */
+  /// Convert the given [TypeDecl] to a Dart type.
   String dartType(TypeDecl type) {
     if (type is TypeReference) {
-      String typeName = type.typeName;
-      TypeDefinition referencedDefinition = api.types[typeName];
+      var typeName = type.typeName;
+      var referencedDefinition = api.types[typeName];
       if (_typeRenames.containsKey(typeName)) {
         return _typeRenames[typeName];
       }
       if (referencedDefinition == null) {
         return typeName;
       }
-      TypeDecl referencedType = referencedDefinition.type;
+      var referencedType = referencedDefinition.type;
       if (referencedType is TypeObject || referencedType is TypeEnum) {
         return typeName;
       }

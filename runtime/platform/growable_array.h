@@ -160,6 +160,16 @@ class BaseGrowableArray : public B {
     RemoveLast();
   }
 
+  // Preserves array order.
+  void EraseAt(intptr_t idx) {
+    ASSERT(idx >= 0);
+    ASSERT(idx < length_);
+    for (intptr_t i = idx; i < length_ - 1; i++) {
+      data_[i] = data_[i + 1];
+    }
+    RemoveLast();
+  }
+
   // The content is uninitialized after calling it.
   void SetLength(intptr_t new_length);
 
@@ -195,6 +205,9 @@ class BaseGrowableArray : public B {
 template <typename T, typename B, typename Allocator>
 inline void BaseGrowableArray<T, B, Allocator>::Sort(int compare(const T*,
                                                                  const T*)) {
+  // Avoid calling qsort with a null array.
+  if (length_ == 0) return;
+
   typedef int (*CompareFunction)(const void*, const void*);
   qsort(data_, length_, sizeof(T), reinterpret_cast<CompareFunction>(compare));
 }

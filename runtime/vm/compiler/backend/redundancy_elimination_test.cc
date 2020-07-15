@@ -16,6 +16,8 @@
 #include "vm/compiler/frontend/bytecode_reader.h"
 #include "vm/compiler/frontend/kernel_to_il.h"
 #include "vm/compiler/jit/jit_call_specializer.h"
+#include "vm/flags.h"
+#include "vm/kernel_isolate.h"
 #include "vm/log.h"
 #include "vm/object.h"
 #include "vm/parser.h"
@@ -270,7 +272,7 @@ static void TestAliasingViaRedefinition(
       Function::ZoneHandle(GetFunction(lib, "blackhole"));
 
   using compiler::BlockBuilder;
-  CompilerState S(thread);
+  CompilerState S(thread, /*is_aot=*/false);
   FlowGraphBuilderHelper H;
 
   // We are going to build the following graph:
@@ -360,12 +362,12 @@ static Definition* MakeRedefinition(CompilerState* S,
 static Definition* MakeAssertAssignable(CompilerState* S,
                                         FlowGraph* flow_graph,
                                         Definition* defn) {
+  const auto& dst_type = AbstractType::ZoneHandle(Type::ObjectType());
   return new AssertAssignableInstr(TokenPosition::kNoSource, new Value(defn),
+                                   new Value(flow_graph->GetConstant(dst_type)),
                                    new Value(flow_graph->constant_null()),
                                    new Value(flow_graph->constant_null()),
-                                   AbstractType::ZoneHandle(Type::ObjectType()),
-                                   Symbols::Empty(), S->GetNextDeoptId(),
-                                   NNBDMode::kLegacyLib);
+                                   Symbols::Empty(), S->GetNextDeoptId());
 }
 
 ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedefinitionAliasing_CheckNull_NoEscape) {
@@ -433,7 +435,7 @@ static void TestAliasingViaStore(
       Function::ZoneHandle(GetFunction(lib, "blackhole"));
 
   using compiler::BlockBuilder;
-  CompilerState S(thread);
+  CompilerState S(thread, /*is_aot=*/false);
   FlowGraphBuilderHelper H;
 
   // We are going to build the following graph:
@@ -582,6 +584,116 @@ ISOLATE_UNIT_TEST_CASE(
     LoadOptimizer_AliasingViaStore_AssertAssignable_EscapeViaHost) {
   TestAliasingViaStore(thread, /*make_it_escape=*/false,
                        /* make_host_escape= */ true, MakeAssertAssignable);
+}
+
+// This is a regression test for
+// https://github.com/flutter/flutter/issues/48114.
+ISOLATE_UNIT_TEST_CASE(LoadOptimizer_AliasingViaTypedDataAndUntaggedTypedData) {
+  using compiler::BlockBuilder;
+  CompilerState S(thread, /*is_aot=*/false);
+  FlowGraphBuilderHelper H;
+
+  const auto& lib = Library::Handle(Library::TypedDataLibrary());
+  const Class& cls = Class::Handle(lib.LookupLocalClass(Symbols::Uint32List()));
+  const Error& err = Error::Handle(cls.EnsureIsFinalized(thread));
+  EXPECT(err.IsNull());
+
+  const Function& function = Function::ZoneHandle(
+      cls.LookupFactory(String::Handle(String::New("Uint32List."))));
+  EXPECT(!function.IsNull());
+
+  auto zone = H.flow_graph()->zone();
+
+  // We are going to build the following graph:
+  //
+  //   B0[graph_entry] {
+  //     vc0 <- Constant(0)
+  //     vc42 <- Constant(42)
+  //   }
+  //
+  //   B1[function_entry] {
+  //   }
+  //   array <- StaticCall(...) {_Uint32List}
+  //   v1 <- LoadIndexed(array)
+  //   v2 <- LoadUntagged(array)
+  //   StoreIndexed(v2, index=vc0, value=vc42)
+  //   v3 <- LoadIndexed(array)
+  //   return v3
+  // }
+
+  auto vc0 = H.flow_graph()->GetConstant(Integer::Handle(Integer::New(0)));
+  auto vc42 = H.flow_graph()->GetConstant(Integer::Handle(Integer::New(42)));
+  auto b1 = H.flow_graph()->graph_entry()->normal_entry();
+
+  StaticCallInstr* array;
+  LoadIndexedInstr* v1;
+  LoadUntaggedInstr* v2;
+  StoreIndexedInstr* store;
+  LoadIndexedInstr* v3;
+  ReturnInstr* ret;
+
+  {
+    BlockBuilder builder(H.flow_graph(), b1);
+
+    //   array <- StaticCall(...) {_Uint32List}
+    array = builder.AddDefinition(new StaticCallInstr(
+        TokenPosition::kNoSource, function, 0, Array::empty_array(),
+        new InputsArray(), DeoptId::kNone, 0, ICData::kNoRebind));
+    array->UpdateType(CompileType::FromCid(kTypedDataUint32ArrayCid));
+    array->SetResultType(zone, CompileType::FromCid(kTypedDataUint32ArrayCid));
+    array->set_is_known_list_constructor(true);
+
+    //   v1 <- LoadIndexed(array)
+    v1 = builder.AddDefinition(new LoadIndexedInstr(
+        new Value(array), new Value(vc0), /*index_unboxed=*/false, 1,
+        kTypedDataUint32ArrayCid, kAlignedAccess, DeoptId::kNone,
+        TokenPosition::kNoSource));
+
+    //   v2 <- LoadUntagged(array)
+    //   StoreIndexed(v2, index=0, value=42)
+    v2 = builder.AddDefinition(new LoadUntaggedInstr(new Value(array), 0));
+    store = builder.AddInstruction(new StoreIndexedInstr(
+        new Value(v2), new Value(vc0), new Value(vc42), kNoStoreBarrier,
+        /*index_unboxed=*/false, 1, kTypedDataUint32ArrayCid, kAlignedAccess,
+        DeoptId::kNone, TokenPosition::kNoSource));
+
+    //   v3 <- LoadIndexed(array)
+    v3 = builder.AddDefinition(new LoadIndexedInstr(
+        new Value(array), new Value(vc0), /*index_unboxed=*/false, 1,
+        kTypedDataUint32ArrayCid, kAlignedAccess, DeoptId::kNone,
+        TokenPosition::kNoSource));
+
+    //   return v3
+    ret = builder.AddInstruction(new ReturnInstr(
+        TokenPosition::kNoSource, new Value(v3), S.GetNextDeoptId()));
+  }
+  H.FinishGraph();
+
+  DominatorBasedCSE::Optimize(H.flow_graph());
+  {
+    Instruction* sc = nullptr;
+    Instruction* li = nullptr;
+    Instruction* lu = nullptr;
+    Instruction* s = nullptr;
+    Instruction* li2 = nullptr;
+    Instruction* r = nullptr;
+    ILMatcher cursor(H.flow_graph(), b1, true);
+    RELEASE_ASSERT(cursor.TryMatch({
+        kMatchAndMoveFunctionEntry,
+        {kMatchAndMoveStaticCall, &sc},
+        {kMatchAndMoveLoadIndexed, &li},
+        {kMatchAndMoveLoadUntagged, &lu},
+        {kMatchAndMoveStoreIndexed, &s},
+        {kMatchAndMoveLoadIndexed, &li2},
+        {kMatchReturn, &r},
+    }));
+    EXPECT(array == sc);
+    EXPECT(v1 == li);
+    EXPECT(v2 == lu);
+    EXPECT(store == s);
+    EXPECT(v3 == li2);
+    EXPECT(ret == r);
+  }
 }
 
 // This test verifies behavior of load forwarding when an alias for an
@@ -794,7 +906,7 @@ ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedundantStoresAndLoads) {
   const char* kScript = R"(
     class Bar {
       Bar() { a = null; }
-      Object a;
+      dynamic a;
     }
 
     Bar foo() {
@@ -842,6 +954,164 @@ ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedundantStoresAndLoads) {
   CountLoadsStores(flow_graph, &aft_loads, &aft_stores);
   EXPECT_EQ(0, aft_loads);
   EXPECT_EQ(1, aft_stores);
+}
+
+ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedundantStaticFieldInitialization) {
+  const char* kScript = R"(
+    int getX() => 2;
+    int x = getX();
+
+    foo() => x + x;
+
+    main() {
+      foo();
+    }
+  )";
+
+  // Make sure static field initialization is not removed because
+  // field is already initialized.
+  SetFlagScope<bool> sfs(&FLAG_fields_may_be_reset, true);
+
+  const auto& root_library = Library::Handle(LoadTestScript(kScript));
+  Invoke(root_library, "main");
+  const auto& function = Function::Handle(GetFunction(root_library, "foo"));
+  TestPipeline pipeline(function, CompilerPass::kJIT);
+  FlowGraph* flow_graph = pipeline.RunPasses({});
+  ASSERT(flow_graph != nullptr);
+
+  auto entry = flow_graph->graph_entry()->normal_entry();
+  EXPECT(entry != nullptr);
+
+  ILMatcher cursor(flow_graph, entry);
+  RELEASE_ASSERT(cursor.TryMatch({
+      kMatchAndMoveFunctionEntry,
+      kMatchAndMoveCheckStackOverflow,
+      kMatchAndMoveLoadStaticField,
+      kMoveParallelMoves,
+      kMatchAndMoveCheckSmi,
+      kMoveParallelMoves,
+      kMatchAndMoveBinarySmiOp,
+      kMoveParallelMoves,
+      kMatchReturn,
+  }));
+}
+
+ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedundantInitializerCallAfterIf) {
+  const char* kScript = R"(
+    int x = int.parse('1');
+
+    @pragma('vm:never-inline')
+    use(int arg) {}
+
+    foo(bool condition) {
+      if (condition) {
+        x = 3;
+      } else {
+        use(x);
+      }
+      use(x);
+    }
+
+    main() {
+      foo(true);
+    }
+  )";
+
+  // Make sure static field initialization is not removed because
+  // field is already initialized.
+  SetFlagScope<bool> sfs(&FLAG_fields_may_be_reset, true);
+
+  const auto& root_library = Library::Handle(LoadTestScript(kScript));
+  Invoke(root_library, "main");
+  const auto& function = Function::Handle(GetFunction(root_library, "foo"));
+  TestPipeline pipeline(function, CompilerPass::kJIT);
+  FlowGraph* flow_graph = pipeline.RunPasses({});
+  ASSERT(flow_graph != nullptr);
+
+  auto entry = flow_graph->graph_entry()->normal_entry();
+  EXPECT(entry != nullptr);
+
+  LoadStaticFieldInstr* load_static_after_if = nullptr;
+
+  ILMatcher cursor(flow_graph, entry);
+  RELEASE_ASSERT(cursor.TryMatch({
+      kMoveGlob,
+      kMatchAndMoveBranchTrue,
+      kMoveGlob,
+      kMatchAndMoveGoto,
+      kMatchAndMoveJoinEntry,
+      kMoveParallelMoves,
+      {kMatchAndMoveLoadStaticField, &load_static_after_if},
+      kMoveGlob,
+      kMatchReturn,
+  }));
+  EXPECT(!load_static_after_if->calls_initializer());
+}
+
+ISOLATE_UNIT_TEST_CASE(LoadOptimizer_RedundantInitializerCallInLoop) {
+  if (!TestCase::IsNNBD()) {
+    return;
+  }
+
+  const char* kScript = R"(
+    class A {
+      late int x = int.parse('1');
+      A? next;
+    }
+
+    @pragma('vm:never-inline')
+    use(int arg) {}
+
+    foo(A obj) {
+      use(obj.x);
+      for (;;) {
+        use(obj.x);
+        final next = obj.next;
+        if (next == null) {
+          break;
+        }
+        obj = next;
+        use(obj.x);
+      }
+    }
+
+    main() {
+      foo(A()..next = A());
+    }
+  )";
+
+  const auto& root_library = Library::Handle(LoadTestScript(kScript));
+  Invoke(root_library, "main");
+  const auto& function = Function::Handle(GetFunction(root_library, "foo"));
+  TestPipeline pipeline(function, CompilerPass::kJIT);
+  FlowGraph* flow_graph = pipeline.RunPasses({});
+  ASSERT(flow_graph != nullptr);
+
+  auto entry = flow_graph->graph_entry()->normal_entry();
+  EXPECT(entry != nullptr);
+
+  LoadFieldInstr* load_field_before_loop = nullptr;
+  LoadFieldInstr* load_field_in_loop1 = nullptr;
+  LoadFieldInstr* load_field_in_loop2 = nullptr;
+
+  ILMatcher cursor(flow_graph, entry);
+  RELEASE_ASSERT(cursor.TryMatch({
+      kMoveGlob,
+      {kMatchAndMoveLoadField, &load_field_before_loop},
+      kMoveGlob,
+      kMatchAndMoveGoto,
+      kMatchAndMoveJoinEntry,
+      kMoveGlob,
+      {kMatchAndMoveLoadField, &load_field_in_loop1},
+      kMoveGlob,
+      kMatchAndMoveBranchFalse,
+      kMoveGlob,
+      {kMatchAndMoveLoadField, &load_field_in_loop2},
+  }));
+
+  EXPECT(load_field_before_loop->calls_initializer());
+  EXPECT(!load_field_in_loop1->calls_initializer());
+  EXPECT(load_field_in_loop2->calls_initializer());
 }
 
 }  // namespace dart

@@ -2,28 +2,25 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'dart:async';
-
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/dart/element/type.dart';
-import 'package:analyzer/dart/element/type_provider.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/dart/element/element.dart';
 import 'package:analyzer/src/dart/element/member.dart';
 import 'package:analyzer/src/dart/element/type.dart';
 import 'package:analyzer/src/generated/engine.dart';
 import 'package:analyzer/src/generated/utilities_dart.dart';
-import 'package:analyzer/src/test_utilities/find_element.dart';
-import 'package:analyzer/src/test_utilities/find_node.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../../../generated/elements_types_mixin.dart';
 import '../../../utils.dart';
+import '../resolution/driver_resolution.dart';
 import 'base.dart';
 
 main() {
@@ -39,41 +36,10 @@ final isNeverType = TypeMatcher<NeverTypeImpl>();
 
 final isVoidType = TypeMatcher<VoidTypeImpl>();
 
-/**
- * Integration tests for resolution.
- */
+/// Integration tests for resolution.
 @reflectiveTest
-class AnalysisDriverResolutionTest extends BaseAnalysisDriverTest
+class AnalysisDriverResolutionTest extends DriverResolutionTest
     with ElementsTypesMixin {
-  ResolvedUnitResult result;
-  FindNode findNode;
-  FindElement findElement;
-
-  ClassElement get boolElement => typeProvider.boolType.element;
-
-  ClassElement get doubleElement => typeProvider.doubleType.element;
-
-  InterfaceType get doubleType => typeProvider.doubleType;
-
-  ClassElement get futureElement => typeProvider.futureElement;
-
-  ClassElement get intElement => typeProvider.intType.element;
-
-  InterfaceType get intType => typeProvider.intType;
-
-  ClassElement get listElement => typeProvider.listElement;
-
-  ClassElement get mapElement => typeProvider.mapElement;
-
-  ClassElement get numElement => typeProvider.numType.element;
-
-  InterfaceType get numType => typeProvider.numType;
-
-  ClassElement get stringElement => typeProvider.stringType.element;
-
-  @override
-  TypeProvider get typeProvider => result.typeProvider;
-
   void assertDeclaredVariableType(SimpleIdentifier node, String expected) {
     VariableElement element = node.staticElement;
     assertType(element.type, expected);
@@ -84,80 +50,6 @@ class AnalysisDriverResolutionTest extends BaseAnalysisDriverTest
     expect(element.type, isDynamicType);
   }
 
-  void assertElement(AstNode node, Element expected) {
-    Element actual = getNodeElement(node);
-    expect(actual, same(expected));
-  }
-
-  void assertElementNull(Expression node) {
-    Element actual = getNodeElement(node);
-    expect(actual, isNull);
-  }
-
-  void assertIdentifierTopGetRef(SimpleIdentifier ref, String name) {
-    var getter = findElement.topGet(name);
-    assertElement(ref, getter);
-
-    expect(ref.staticType, getter.returnType);
-  }
-
-  void assertInvokeType(InvocationExpression expression, String expected) {
-    DartType actual = expression.staticInvokeType;
-    assertType(actual, expected);
-  }
-
-  void assertInvokeTypeDynamic(InvocationExpression node) {
-    DartType actual = node.staticInvokeType;
-    expect(actual, isDynamicType);
-  }
-
-  void assertMember(
-    Object elementOrNode,
-    Element expectedBase,
-    Map<String, String> expectedSubstitution,
-  ) {
-    Member actual;
-    if (elementOrNode is Member) {
-      actual = elementOrNode;
-    } else {
-      actual = getNodeElement(elementOrNode as AstNode);
-    }
-
-    expect(actual.declaration, same(expectedBase));
-
-    var actualMapString = actual.substitution.map.map(
-      (k, v) => MapEntry(k.name, v.getDisplayString(withNullability: false)),
-    );
-    expect(actualMapString, expectedSubstitution);
-  }
-
-  void assertTopGetRef(String search, String name) {
-    var ref = findNode.simple(search);
-    assertIdentifierTopGetRef(ref, name);
-  }
-
-  void assertType(Object typeOrNode, String expected) {
-    DartType actual;
-    if (typeOrNode is DartType) {
-      actual = typeOrNode;
-    } else if (typeOrNode is Expression) {
-      actual = typeOrNode.staticType;
-    } else if (typeOrNode is GenericFunctionType) {
-      actual = typeOrNode.type;
-    } else if (typeOrNode is TypeName) {
-      actual = typeOrNode.type;
-    } else {
-      fail('Unsupported node: (${typeOrNode.runtimeType}) $typeOrNode');
-    }
-
-    if (expected == null) {
-      expect(actual, isNull);
-    } else {
-      var typeStr = actual.getDisplayString(withNullability: false);
-      expect(typeStr, expected);
-    }
-  }
-
   /// Test that [argumentList] has exactly two type items `int` and `double`.
   void assertTypeArguments(
       TypeArgumentList argumentList, List<DartType> expectedTypes) {
@@ -165,35 +57,6 @@ class AnalysisDriverResolutionTest extends BaseAnalysisDriverTest
     for (int i = 0; i < expectedTypes.length; i++) {
       _assertTypeNameSimple(argumentList.arguments[i], expectedTypes[i]);
     }
-  }
-
-  void assertTypeDynamic(Expression expression) {
-    DartType actual = expression.staticType;
-    expect(actual, isDynamicType);
-  }
-
-  void assertTypeName(
-      TypeName node, Element expectedElement, String expectedType,
-      {PrefixElement expectedPrefix}) {
-    assertType(node, expectedType);
-
-    if (expectedPrefix == null) {
-      var name = node.name as SimpleIdentifier;
-      assertElement(name, expectedElement);
-      assertTypeNull(name);
-    } else {
-      var name = node.name as PrefixedIdentifier;
-
-      assertElement(name.prefix, expectedPrefix);
-      expect(name.prefix.staticType, isNull);
-
-      assertElement(name.identifier, expectedElement);
-      expect(name.identifier.staticType, isNull);
-    }
-  }
-
-  void assertTypeNull(Identifier node) {
-    expect(node.staticType, isNull);
   }
 
   void assertUnresolvedInvokeType(DartType invokeType) {
@@ -228,30 +91,6 @@ class AnalysisDriverResolutionTest extends BaseAnalysisDriverTest
       expect(expression.staticElement, same(variable.getter));
       expect(expression.staticType, variable.type);
     };
-  }
-
-  Element getNodeElement(Expression node) {
-    if (node is AssignmentExpression) {
-      return node.staticElement;
-    } else if (node is Identifier) {
-      return node.staticElement;
-    } else if (node is IndexExpression) {
-      return node.staticElement;
-    } else if (node is InstanceCreationExpression) {
-      return node.staticElement;
-    } else if (node is PostfixExpression) {
-      return node.staticElement;
-    } else if (node is PrefixExpression) {
-      return node.staticElement;
-    } else {
-      fail('Unsupported node: (${node.runtimeType}) $node');
-    }
-  }
-
-  Future resolveTestFile() async {
-    result = await driver.getResult(testFile);
-    findNode = FindNode(result.content, result.unit);
-    findElement = FindElement(result.unit);
   }
 
   test_adjacentStrings() async {
@@ -828,11 +667,11 @@ f() {}
     expect(atD.name.staticElement, elementD);
     expect(atD.element, constructorD);
 
-    expect(constC.staticElement, constructorC);
     expect(constC.staticType, interfaceTypeStar(elementC));
 
-    expect(constC.constructorName.staticElement, constructorC);
-    expect(constC.constructorName.type.type, interfaceTypeStar(elementC));
+    var constructorName = constC.constructorName;
+    expect(constructorName.staticElement, constructorC);
+    expect(constructorName.type.type, interfaceTypeStar(elementC));
   }
 
   test_annotation_unprefixed_topLevelVariable() async {
@@ -875,17 +714,12 @@ void main() {
   }
 
   test_asExpression() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 void main() {
   num v = 42;
   v as int;
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
+''');
 
     NodeList<Statement> statements = _getMainStatements(result);
 
@@ -1508,7 +1342,7 @@ class B<U> {
 
     ClassDeclaration bNode = result.unit.declarations[1];
     TypeParameterType uType =
-        typeParameterType(bNode.declaredElement.typeParameters[0]);
+        typeParameterTypeStar(bNode.declaredElement.typeParameters[0]);
     InterfaceType auType = aElement.instantiate(
       typeArguments: [uType],
       nullabilitySuffix: NullabilitySuffix.star,
@@ -1884,7 +1718,8 @@ class C<T> {
     FieldDeclaration fDeclaration = cNode.members[0];
     VariableDeclaration fNode = fDeclaration.fields.variables[0];
     FieldElement fElement = fNode.declaredElement;
-    expect(fElement.type, typeProvider.listType2(typeParameterType(tElement)));
+    expect(
+        fElement.type, typeProvider.listType2(typeParameterTypeStar(tElement)));
   }
 
   test_field_generic() async {
@@ -2182,8 +2017,8 @@ main() {
   test_instanceCreation_factory() async {
     String content = r'''
 class C {
-  factory C() => null;
-  factory C.named() => null;
+  factory C() => throw 0;
+  factory C.named() => throw 0;
 }
 var a = new C();
 var b = new C.named();
@@ -2202,36 +2037,36 @@ var b = new C.named();
       TopLevelVariableDeclaration aDeclaration = unit.declarations[1];
       VariableDeclaration aNode = aDeclaration.variables.variables[0];
       InstanceCreationExpression value = aNode.initializer;
-      expect(value.staticElement, defaultConstructor);
       expect(value.staticType, interfaceTypeStar(cElement));
 
-      TypeName typeName = value.constructorName.type;
+      var constructorName = value.constructorName;
+      expect(constructorName.name, isNull);
+      expect(constructorName.staticElement, defaultConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       Identifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      expect(value.constructorName.name, isNull);
     }
 
     {
       TopLevelVariableDeclaration bDeclaration = unit.declarations[2];
       VariableDeclaration bNode = bDeclaration.variables.variables[0];
       InstanceCreationExpression value = bNode.initializer;
-      expect(value.staticElement, namedConstructor);
       expect(value.staticType, interfaceTypeStar(cElement));
 
-      TypeName typeName = value.constructorName.type;
+      var constructorName = value.constructorName;
+      expect(constructorName.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      SimpleIdentifier constructorName = value.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
     }
   }
 
@@ -2255,17 +2090,18 @@ var v = new X(1, b: true, c: 3.0);
 
     InstanceCreationExpression creation = vNode.initializer;
     List<Expression> arguments = creation.argumentList.arguments;
-    expect(creation.staticElement, constructorElement);
     expect(creation.staticType, interfaceTypeStar(xElement));
 
-    TypeName typeName = creation.constructorName.type;
+    var constructorName = creation.constructorName;
+    expect(constructorName.name, isNull);
+    expect(constructorName.staticElement, constructorElement);
+
+    TypeName typeName = constructorName.type;
     expect(typeName.typeArguments, isNull);
 
     Identifier typeIdentifier = typeName.name;
     expect(typeIdentifier.staticElement, xElement);
     expect(typeIdentifier.staticType, isNull);
-
-    expect(creation.constructorName.name, isNull);
 
     _assertArgumentToParameter(arguments[0], constructorElement.parameters[0]);
     _assertArgumentToParameter(arguments[1], constructorElement.parameters[1]);
@@ -2295,17 +2131,18 @@ var b = new C.named(2);
       TopLevelVariableDeclaration aDeclaration = unit.declarations[1];
       VariableDeclaration aNode = aDeclaration.variables.variables[0];
       InstanceCreationExpression value = aNode.initializer;
-      expect(value.staticElement, defaultConstructor);
       expect(value.staticType, interfaceTypeStar(cElement));
 
-      TypeName typeName = value.constructorName.type;
+      var constructorName = value.constructorName;
+      expect(constructorName.name, isNull);
+      expect(constructorName.staticElement, defaultConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       Identifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      expect(value.constructorName.name, isNull);
 
       Expression argument = value.argumentList.arguments[0];
       _assertArgumentToParameter(argument, defaultConstructor.parameters[0]);
@@ -2315,19 +2152,19 @@ var b = new C.named(2);
       TopLevelVariableDeclaration bDeclaration = unit.declarations[2];
       VariableDeclaration bNode = bDeclaration.variables.variables[0];
       InstanceCreationExpression value = bNode.initializer;
-      expect(value.staticElement, namedConstructor);
       expect(value.staticType, interfaceTypeStar(cElement));
 
-      TypeName typeName = value.constructorName.type;
+      var constructorName = value.constructorName;
+      expect(constructorName.staticElement, namedConstructor);
+      expect(constructorName.name.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      SimpleIdentifier constructorName = value.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
 
       Expression argument = value.argumentList.arguments[0];
       _assertArgumentToParameter(argument, namedConstructor.parameters[0]);
@@ -2368,10 +2205,13 @@ main() {
 
       ExpressionStatement statement = statements[0];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, defaultConstructor);
       expect(creation.staticType, cTypeInt);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name, isNull);
+      expect(constructorName.staticElement, defaultConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       PrefixedIdentifier typeIdentifier = typeName.name;
@@ -2384,8 +2224,6 @@ main() {
       expect(typePrefix.staticType, isNull);
 
       expect(typeIdentifier.identifier.staticElement, same(cElement));
-
-      expect(creation.constructorName.name, isNull);
     }
 
     {
@@ -2396,10 +2234,14 @@ main() {
 
       ExpressionStatement statement = statements[1];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, namedConstructor);
       expect(creation.staticType, cTypeDouble);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+      expect(constructorName.staticElement, namedConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       PrefixedIdentifier typeIdentifier = typeName.name;
@@ -2412,10 +2254,6 @@ main() {
       expect(typePrefix.staticType, isNull);
 
       expect(typeIdentifier.identifier.staticElement, same(cElement));
-
-      SimpleIdentifier constructorName = creation.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
     }
 
     {
@@ -2426,10 +2264,14 @@ main() {
 
       ExpressionStatement statement = statements[2];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, namedConstructor);
       expect(creation.staticType, cTypeBool);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+      expect(constructorName.staticElement, namedConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments.arguments, hasLength(1));
       _assertTypeNameSimple(
           typeName.typeArguments.arguments[0], typeProvider.boolType);
@@ -2444,10 +2286,6 @@ main() {
       expect(typePrefix.staticType, isNull);
 
       expect(typeIdentifier.identifier.staticElement, same(cElement));
-
-      SimpleIdentifier constructorName = creation.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
     }
   }
 
@@ -2482,17 +2320,18 @@ class C<T> {
 
       ExpressionStatement statement = statements[0];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, defaultConstructor);
       expect(creation.staticType, cTypeInt);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name, isNull);
+      expect(constructorName.staticElement, defaultConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, same(cElement));
       expect(typeIdentifier.staticType, isNull);
-
-      expect(creation.constructorName.name, isNull);
     }
 
     {
@@ -2503,10 +2342,13 @@ class C<T> {
 
       ExpressionStatement statement = statements[1];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, defaultConstructor);
       expect(creation.staticType, cTypeBool);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name, isNull);
+      expect(constructorName.staticElement, defaultConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments.arguments, hasLength(1));
       _assertTypeNameSimple(
           typeName.typeArguments.arguments[0], typeProvider.boolType);
@@ -2514,8 +2356,6 @@ class C<T> {
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, same(cElement));
       expect(typeIdentifier.staticType, isNull);
-
-      expect(creation.constructorName.name, isNull);
     }
 
     {
@@ -2526,21 +2366,19 @@ class C<T> {
 
       ExpressionStatement statement = statements[2];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, namedConstructor);
       expect(creation.staticType, cTypeDouble);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+      expect(constructorName.staticElement, namedConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments, isNull);
 
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      expect(typeIdentifier.staticElement, same(cElement));
-
-      SimpleIdentifier constructorName = creation.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
     }
 
     {
@@ -2551,10 +2389,14 @@ class C<T> {
 
       ExpressionStatement statement = statements[3];
       InstanceCreationExpression creation = statement.expression;
-      expect(creation.staticElement, namedConstructor);
       expect(creation.staticType, cTypeBool);
 
-      TypeName typeName = creation.constructorName.type;
+      var constructorName = creation.constructorName;
+      expect(constructorName.name.staticElement, namedConstructor);
+      expect(constructorName.name.staticType, isNull);
+      expect(constructorName.staticElement, namedConstructor);
+
+      TypeName typeName = constructorName.type;
       expect(typeName.typeArguments.arguments, hasLength(1));
       _assertTypeNameSimple(
           typeName.typeArguments.arguments[0], typeProvider.boolType);
@@ -2562,10 +2404,6 @@ class C<T> {
       SimpleIdentifier typeIdentifier = typeName.name;
       expect(typeIdentifier.staticElement, cElement);
       expect(typeIdentifier.staticType, isNull);
-
-      SimpleIdentifier constructorName = creation.constructorName.name;
-      expect(constructorName.staticElement, namedConstructor);
-      expect(constructorName.staticType, isNull);
     }
   }
 
@@ -2749,7 +2587,13 @@ const c = a.codeUnitAt(b);
     var invocation = findNode.methodInvocation('codeUnitAt');
     assertType(invocation, 'int');
     assertInvokeType(invocation, 'int Function(int)');
-    assertElement(invocation.methodName, stringElement.getMethod('codeUnitAt'));
+    assertElement(
+      invocation.methodName,
+      elementMatcher(
+        stringElement.getMethod('codeUnitAt'),
+        isLegacy: isNullSafetySdkAndLegacyLibrary,
+      ),
+    );
 
     var aRef = invocation.target;
     assertElement(aRef, findElement.topGet('a'));
@@ -3311,7 +3155,7 @@ main() {
   test_invalid_instanceCreation_constOfNotConst_factory() async {
     addTestFile(r'''
 class C {
-  factory C(x) => null;
+  factory C(x) => throw 0;
 }
 
 var a = 0;
@@ -3901,17 +3745,12 @@ main() {
   }
 
   test_isExpression() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 void main() {
   var v = 42;
   v is num;
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
+''');
 
     NodeList<Statement> statements = _getMainStatements(result);
 
@@ -3940,17 +3779,12 @@ void main() {
   }
 
   test_isExpression_not() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 void main() {
   var v = 42;
   v is! num;
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
+''');
 
     NodeList<Statement> statements = _getMainStatements(result);
 
@@ -4178,7 +4012,7 @@ void main() {
 
     TypeName fReturnTypeNode = fNode.returnType;
     expect(fReturnTypeNode.name.staticElement, same(tElement));
-    expect(fReturnTypeNode.type, typeParameterType(tElement));
+    expect(fReturnTypeNode.type, typeParameterTypeStar(tElement));
 
     expect(fExpression.declaredElement, same(fElement));
 
@@ -4193,13 +4027,13 @@ void main() {
           name: 'a',
           offset: 28,
           kind: ParameterKind.REQUIRED,
-          type: typeParameterType(tElement));
+          type: typeParameterTypeStar(tElement));
 
       _assertSimpleParameter(nodes[1], parameters[1],
           name: 'b',
           offset: 33,
           kind: ParameterKind.REQUIRED,
-          type: typeParameterType(uElement));
+          type: typeParameterTypeStar(uElement));
 
       var aRef = findNode.simple('a;');
       assertElement(aRef, parameters[0]);
@@ -4478,16 +4312,11 @@ void f() {
   }
 
   test_local_parameter() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 void main(int p) {
   p;
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
+''');
 
     InterfaceType intType = typeProvider.intType;
 
@@ -4871,15 +4700,12 @@ void main() {
   }
 
   test_local_variable() async {
-    addTestFile(r'''
+    await assertNoErrorsInCode(r'''
 void main() {
   var v = 42;
   v;
 }
 ''');
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
 
     InterfaceType intType = typeProvider.intType;
 
@@ -6582,7 +6408,10 @@ class C {
       expect(access.staticType, typeProvider.intType);
 
       InstanceCreationExpression newC = access.target;
-      expect(newC.staticElement, cClassElement.unnamedConstructor);
+      expect(
+        newC.constructorName.staticElement,
+        cClassElement.unnamedConstructor,
+      );
       expect(newC.staticType, interfaceTypeStar(cClassElement));
 
       expect(access.propertyName.staticElement, same(fElement.getter));
@@ -6616,7 +6445,10 @@ class C {
       expect(access.staticType, typeProvider.intType);
 
       InstanceCreationExpression newC = access.target;
-      expect(newC.staticElement, cClassElement.unnamedConstructor);
+      expect(
+        newC.constructorName.staticElement,
+        cClassElement.unnamedConstructor,
+      );
       expect(newC.staticType, interfaceTypeStar(cClassElement));
 
       expect(access.propertyName.staticElement, same(fElement.getter));
@@ -6658,18 +6490,13 @@ main() {
   }
 
   test_stringInterpolation() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 void main() {
   var v = 42;
   '$v$v $v';
   ' ${v + 1} ';
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
-    expect(result.errors, isEmpty);
+''');
 
     FunctionDeclaration main = result.unit.declarations[0];
     expect(main.declaredElement, isNotNull);
@@ -7181,7 +7008,7 @@ enum MyEnum {
   }
 
   test_top_executables_class() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 class C {
   C(int p);
   C.named(int p);
@@ -7190,11 +7017,7 @@ class C {
   int get publicGetter => 0;
   void set publicSetter(double p) {}
 }
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
+''');
 
     InterfaceType doubleType = typeProvider.doubleType;
     InterfaceType intType = typeProvider.intType;
@@ -7313,15 +7136,11 @@ class C {
   }
 
   test_top_executables_top() async {
-    String content = r'''
+    await assertNoErrorsInCode(r'''
 int topFunction(double p) => 0;
 int get topGetter => 0;
 void set topSetter(double p) {}
-''';
-    addTestFile(content);
-
-    await resolveTestFile();
-    expect(result.path, testFile);
+''');
 
     InterfaceType doubleType = typeProvider.doubleType;
     InterfaceType intType = typeProvider.intType;
@@ -7455,7 +7274,7 @@ class C<T> {
 
       VariableDeclaration bNode = bDeclaration.fields.variables[0];
       expect(bNode.declaredElement, same(bElement));
-      expect(bElement.type, typeParameterType(tElement));
+      expect(bElement.type, typeParameterTypeStar(tElement));
       expect(bNode.name.staticElement, same(bElement));
       expect(bNode.name.staticType, isNull);
     }
@@ -7693,7 +7512,7 @@ typedef int F<T>(bool a, T b);
         name: 'b',
         offset: 27,
         kind: ParameterKind.REQUIRED,
-        type: typeParameterType(aliasElement.typeParameters[0]));
+        type: typeParameterTypeStar(aliasElement.typeParameters[0]));
   }
 
   test_top_typeParameter() async {
@@ -8569,7 +8388,7 @@ main() {
     expect(result.errors, isNotEmpty);
 
     PropertyAccessorElement objectHashCode =
-        typeProvider.objectType.getGetter('hashCode');
+        objectElement.getGetter('hashCode');
     TopLevelVariableElement foo = _getTopLevelVariable(result, 'foo');
 
     List<Statement> statements = _getMainStatements(result);
@@ -8580,16 +8399,28 @@ main() {
 
     {
       PrefixedIdentifier prefixed = propertyAccess.target;
-      expect(prefixed.staticElement, same(objectHashCode));
-      expect(prefixed.staticType, typeProvider.intType);
+      assertPrefixedIdentifier(
+        prefixed,
+        element: elementMatcher(
+          objectHashCode,
+          isLegacy: isNullSafetySdkAndLegacyLibrary,
+        ),
+        type: 'int',
+      );
 
       SimpleIdentifier prefix = prefixed.prefix;
       expect(prefix.staticElement, same(foo.getter));
       expect(prefix.staticType, typeProvider.objectType);
 
       SimpleIdentifier identifier = prefixed.identifier;
-      expect(identifier.staticElement, same(objectHashCode));
-      expect(identifier.staticType, typeProvider.intType);
+      assertSimpleIdentifier(
+        identifier,
+        element: elementMatcher(
+          objectHashCode,
+          isLegacy: isNullSafetySdkAndLegacyLibrary,
+        ),
+        type: 'int',
+      );
     }
 
     SimpleIdentifier property = propertyAccess.propertyName;
@@ -8777,14 +8608,14 @@ main() {
   }
 }
 
-/**
- * Resolution tests that are run with all of the experiments enabled.
- */
+/// Resolution tests that are run with all of the experiments enabled.
 @reflectiveTest
 class DriverResolutionWithExperimentsTest extends BaseAnalysisDriverTest {
   @override
   AnalysisOptionsImpl createAnalysisOptions() => super.createAnalysisOptions()
-    ..enabledExperiments = _computeActiveExperimentNames();
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.triple_shift],
+    );
 
   test_binaryExpression_gtGtGt() async {
     addTestFile('''
@@ -8809,15 +8640,5 @@ f(A a) {
     BinaryExpression binary = statement.expression;
     expect(binary.operator.type, TokenType.GT_GT_GT);
     expect(binary.staticElement, operatorElement);
-  }
-
-  List<String> _computeActiveExperimentNames() {
-    var result = <String>[];
-    for (var feature in ExperimentStatus.knownFeatures.values) {
-      if (!feature.isExpired) {
-        result.add(feature.enableString);
-      }
-    }
-    return result;
   }
 }

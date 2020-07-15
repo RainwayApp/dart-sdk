@@ -32,6 +32,12 @@ class WidgetDescriptions {
   /// The mapping of identifiers of previously returned properties.
   final Map<int, PropertyDescription> _properties = {};
 
+  /// Flush all data, because there was a change to a file.
+  void flush() {
+    _classRegistry.flush();
+    _properties.clear();
+  }
+
   /// Return the description of the widget with [InstanceCreationExpression] in
   /// the [resolvedUnit] at the [offset], or `null` if the location does not
   /// correspond to a widget.
@@ -117,16 +123,13 @@ class _WidgetDescriptionComputer {
 
   /// The set of classes for which we are currently adding properties,
   /// used to prevent infinite recursion.
-  final Set<ClassElement> classesBeingProcessed = Set<ClassElement>();
+  final Set<ClassElement> classesBeingProcessed = <ClassElement>{};
 
   /// The resolved unit with the widget [InstanceCreationExpression].
   final ResolvedUnitResult resolvedUnit;
 
   /// The offset of the widget expression.
   final int widgetOffset;
-
-  /// The instance of [Flutter] support.
-  final Flutter flutter;
 
   ClassElement _classAlignment;
   ClassElement _classAlignmentDirectional;
@@ -137,16 +140,18 @@ class _WidgetDescriptionComputer {
     this.classRegistry,
     this.resolvedUnit,
     this.widgetOffset,
-  ) : flutter = Flutter.of(resolvedUnit);
+  );
+
+  Flutter get _flutter => Flutter.instance;
 
   Future<_WidgetDescription> compute() async {
     var node = NodeLocator2(widgetOffset).searchWithin(resolvedUnit.unit);
-    var instanceCreation = flutter.identifyNewExpression(node);
+    var instanceCreation = _flutter.identifyNewExpression(node);
     if (instanceCreation == null) {
       return null;
     }
 
-    var constructorElement = instanceCreation.staticElement;
+    var constructorElement = instanceCreation.constructorName.staticElement;
     if (constructorElement == null) {
       return null;
     }
@@ -167,7 +172,7 @@ class _WidgetDescriptionComputer {
     List<PropertyDescription> properties,
     InstanceCreationExpression widgetCreation,
   ) {
-    if (!flutter.isWidgetCreation(widgetCreation)) {
+    if (!_flutter.isWidgetCreation(widgetCreation)) {
       return;
     }
 
@@ -184,7 +189,7 @@ class _WidgetDescriptionComputer {
     }
 
     PropertyDescription containerProperty;
-    if (flutter.isExactlyContainerCreation(parentCreation)) {
+    if (_flutter.isExactlyContainerCreation(parentCreation)) {
       containerProperty = PropertyDescription(
         resolvedUnit: resolvedUnit,
         instanceCreation: parentCreation,
@@ -230,9 +235,9 @@ class _WidgetDescriptionComputer {
         classDescription: containerDescription,
       );
 
-      if (flutter.isExactlyAlignCreation(parentCreation) &&
-          flutter.findNamedArgument(parentCreation, 'widthFactor') == null &&
-          flutter.findNamedArgument(parentCreation, 'heightFactor') == null) {
+      if (_flutter.isExactlyAlignCreation(parentCreation) &&
+          _flutter.findNamedArgument(parentCreation, 'widthFactor') == null &&
+          _flutter.findNamedArgument(parentCreation, 'heightFactor') == null) {
         _replaceNestedContainerProperty(
           containerProperty,
           parentCreation,
@@ -240,7 +245,7 @@ class _WidgetDescriptionComputer {
         );
       }
 
-      if (flutter.isExactlyPaddingCreation(parentCreation)) {
+      if (_flutter.isExactlyPaddingCreation(parentCreation)) {
         _replaceNestedContainerProperty(
           containerProperty,
           parentCreation,
@@ -261,14 +266,14 @@ class _WidgetDescriptionComputer {
     InstanceCreationExpression instanceCreation,
     ConstructorElement constructorElement,
   }) {
-    constructorElement ??= instanceCreation?.staticElement;
+    constructorElement ??= instanceCreation?.constructorName?.staticElement;
     constructorElement ??= classDescription?.constructor;
     if (constructorElement == null) return;
 
     var classElement = constructorElement.enclosingElement;
     if (!classesBeingProcessed.add(classElement)) return;
 
-    var existingNamed = Set<ParameterElement>();
+    var existingNamed = <ParameterElement>{};
     if (instanceCreation != null) {
       for (var argumentExpression in instanceCreation.argumentList.arguments) {
         var parameter = argumentExpression.staticParameterElement;
@@ -341,7 +346,7 @@ class _WidgetDescriptionComputer {
     var propertyDescription = PropertyDescription(
       parent: parent,
       resolvedUnit: resolvedUnit,
-      flutter: flutter,
+      flutter: _flutter,
       classDescription: classDescription,
       instanceCreation: instanceCreation,
       argumentExpression: argumentExpression,
@@ -360,7 +365,7 @@ class _WidgetDescriptionComputer {
     );
     properties.add(propertyDescription);
 
-    if (flutter.isExactEdgeInsetsGeometryType(parameter.type)) {
+    if (_flutter.isExactEdgeInsetsGeometryType(parameter.type)) {
       propertyDescription.addEdgeInsetsNestedProperties(_classEdgeInsets);
     } else if (valueExpression is InstanceCreationExpression) {
       var type = valueExpression.staticType;
@@ -408,19 +413,19 @@ class _WidgetDescriptionComputer {
   Future<void> _fetchClassElements() async {
     var sessionHelper = AnalysisSessionHelper(resolvedUnit.session);
     _classAlignment = await sessionHelper.getClass(
-      flutter.widgetsUri,
+      _flutter.widgetsUri,
       'Alignment',
     );
     _classAlignmentDirectional = await sessionHelper.getClass(
-      flutter.widgetsUri,
+      _flutter.widgetsUri,
       'AlignmentDirectional',
     );
     _classContainer = await sessionHelper.getClass(
-      flutter.widgetsUri,
+      _flutter.widgetsUri,
       'Container',
     );
     _classEdgeInsets = await sessionHelper.getClass(
-      flutter.widgetsUri,
+      _flutter.widgetsUri,
       'EdgeInsets',
     );
   }
@@ -454,7 +459,7 @@ class _WidgetDescriptionComputer {
           enumItems: _enumItemsForEnum(classElement),
         );
       }
-      if (flutter.isExactAlignmentGeometry(classElement)) {
+      if (_flutter.isExactAlignmentGeometry(classElement)) {
         var items = <protocol.FlutterWidgetPropertyValueEnumItem>[];
         items.addAll(
           _enumItemsForStaticFields(_classAlignment),
@@ -478,7 +483,7 @@ class _WidgetDescriptionComputer {
     InstanceCreationExpression parentCreation,
     String name,
   ) {
-    var argument = flutter.findNamedArgument(parentCreation, name);
+    var argument = _flutter.findNamedArgument(parentCreation, name);
     if (argument != null) {
       var replacements = <PropertyDescription>[];
       _addProperty(
@@ -530,8 +535,8 @@ class _WidgetDescriptionComputer {
         if (field is FieldElement && field.isStatic) {
           var enclosingClass = field.enclosingElement as ClassElement;
           if (field.isEnumConstant ||
-              flutter.isExactAlignment(enclosingClass) ||
-              flutter.isExactAlignmentDirectional(enclosingClass)) {
+              _flutter.isExactAlignment(enclosingClass) ||
+              _flutter.isExactAlignmentDirectional(enclosingClass)) {
             return protocol.FlutterWidgetPropertyValue(
               enumValue: _toEnumItem(field),
             );

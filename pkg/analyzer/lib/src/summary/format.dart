@@ -2158,6 +2158,7 @@ class AvailableDeclarationBuilder extends Object
   bool _isConst;
   bool _isDeprecated;
   bool _isFinal;
+  bool _isStatic;
   idl.AvailableDeclarationKind _kind;
   int _locationOffset;
   int _locationStartColumn;
@@ -2259,6 +2260,13 @@ class AvailableDeclarationBuilder extends Object
 
   set isFinal(bool value) {
     this._isFinal = value;
+  }
+
+  @override
+  bool get isStatic => _isStatic ??= false;
+
+  set isStatic(bool value) {
+    this._isStatic = value;
   }
 
   @override
@@ -2370,6 +2378,7 @@ class AvailableDeclarationBuilder extends Object
       bool isConst,
       bool isDeprecated,
       bool isFinal,
+      bool isStatic,
       idl.AvailableDeclarationKind kind,
       int locationOffset,
       int locationStartColumn,
@@ -2394,6 +2403,7 @@ class AvailableDeclarationBuilder extends Object
         _isConst = isConst,
         _isDeprecated = isDeprecated,
         _isFinal = isFinal,
+        _isStatic = isStatic,
         _kind = kind,
         _locationOffset = locationOffset,
         _locationStartColumn = locationStartColumn,
@@ -2440,6 +2450,7 @@ class AvailableDeclarationBuilder extends Object
     signature.addBool(this._isConst == true);
     signature.addBool(this._isDeprecated == true);
     signature.addBool(this._isFinal == true);
+    signature.addBool(this._isStatic == true);
     signature.addInt(this._kind == null ? 0 : this._kind.index);
     signature.addInt(this._locationOffset ?? 0);
     signature.addInt(this._locationStartColumn ?? 0);
@@ -2568,41 +2579,44 @@ class AvailableDeclarationBuilder extends Object
     if (_isFinal == true) {
       fbBuilder.addBool(11, true);
     }
+    if (_isStatic == true) {
+      fbBuilder.addBool(12, true);
+    }
     if (_kind != null && _kind != idl.AvailableDeclarationKind.CLASS) {
-      fbBuilder.addUint8(12, _kind.index);
+      fbBuilder.addUint8(13, _kind.index);
     }
     if (_locationOffset != null && _locationOffset != 0) {
-      fbBuilder.addUint32(13, _locationOffset);
+      fbBuilder.addUint32(14, _locationOffset);
     }
     if (_locationStartColumn != null && _locationStartColumn != 0) {
-      fbBuilder.addUint32(14, _locationStartColumn);
+      fbBuilder.addUint32(15, _locationStartColumn);
     }
     if (_locationStartLine != null && _locationStartLine != 0) {
-      fbBuilder.addUint32(15, _locationStartLine);
+      fbBuilder.addUint32(16, _locationStartLine);
     }
     if (offset_name != null) {
-      fbBuilder.addOffset(16, offset_name);
+      fbBuilder.addOffset(17, offset_name);
     }
     if (offset_parameterNames != null) {
-      fbBuilder.addOffset(17, offset_parameterNames);
+      fbBuilder.addOffset(18, offset_parameterNames);
     }
     if (offset_parameters != null) {
-      fbBuilder.addOffset(18, offset_parameters);
+      fbBuilder.addOffset(19, offset_parameters);
     }
     if (offset_parameterTypes != null) {
-      fbBuilder.addOffset(19, offset_parameterTypes);
+      fbBuilder.addOffset(20, offset_parameterTypes);
     }
     if (offset_relevanceTags != null) {
-      fbBuilder.addOffset(20, offset_relevanceTags);
+      fbBuilder.addOffset(21, offset_relevanceTags);
     }
     if (_requiredParameterCount != null && _requiredParameterCount != 0) {
-      fbBuilder.addUint32(21, _requiredParameterCount);
+      fbBuilder.addUint32(22, _requiredParameterCount);
     }
     if (offset_returnType != null) {
-      fbBuilder.addOffset(22, offset_returnType);
+      fbBuilder.addOffset(23, offset_returnType);
     }
     if (offset_typeParameters != null) {
-      fbBuilder.addOffset(23, offset_typeParameters);
+      fbBuilder.addOffset(24, offset_typeParameters);
     }
     return fbBuilder.endTable();
   }
@@ -2637,6 +2651,7 @@ class _AvailableDeclarationImpl extends Object
   bool _isConst;
   bool _isDeprecated;
   bool _isFinal;
+  bool _isStatic;
   idl.AvailableDeclarationKind _kind;
   int _locationOffset;
   int _locationStartColumn;
@@ -2728,83 +2743,89 @@ class _AvailableDeclarationImpl extends Object
   }
 
   @override
+  bool get isStatic {
+    _isStatic ??= const fb.BoolReader().vTableGet(_bc, _bcOffset, 12, false);
+    return _isStatic;
+  }
+
+  @override
   idl.AvailableDeclarationKind get kind {
     _kind ??= const _AvailableDeclarationKindReader()
-        .vTableGet(_bc, _bcOffset, 12, idl.AvailableDeclarationKind.CLASS);
+        .vTableGet(_bc, _bcOffset, 13, idl.AvailableDeclarationKind.CLASS);
     return _kind;
   }
 
   @override
   int get locationOffset {
     _locationOffset ??=
-        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 13, 0);
+        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 14, 0);
     return _locationOffset;
   }
 
   @override
   int get locationStartColumn {
     _locationStartColumn ??=
-        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 14, 0);
+        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 15, 0);
     return _locationStartColumn;
   }
 
   @override
   int get locationStartLine {
     _locationStartLine ??=
-        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 15, 0);
+        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 16, 0);
     return _locationStartLine;
   }
 
   @override
   String get name {
-    _name ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 16, '');
+    _name ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 17, '');
     return _name;
   }
 
   @override
   List<String> get parameterNames {
     _parameterNames ??= const fb.ListReader<String>(fb.StringReader())
-        .vTableGet(_bc, _bcOffset, 17, const <String>[]);
+        .vTableGet(_bc, _bcOffset, 18, const <String>[]);
     return _parameterNames;
   }
 
   @override
   String get parameters {
-    _parameters ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 18, '');
+    _parameters ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 19, '');
     return _parameters;
   }
 
   @override
   List<String> get parameterTypes {
     _parameterTypes ??= const fb.ListReader<String>(fb.StringReader())
-        .vTableGet(_bc, _bcOffset, 19, const <String>[]);
+        .vTableGet(_bc, _bcOffset, 20, const <String>[]);
     return _parameterTypes;
   }
 
   @override
   List<String> get relevanceTags {
     _relevanceTags ??= const fb.ListReader<String>(fb.StringReader())
-        .vTableGet(_bc, _bcOffset, 20, const <String>[]);
+        .vTableGet(_bc, _bcOffset, 21, const <String>[]);
     return _relevanceTags;
   }
 
   @override
   int get requiredParameterCount {
     _requiredParameterCount ??=
-        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 21, 0);
+        const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 22, 0);
     return _requiredParameterCount;
   }
 
   @override
   String get returnType {
-    _returnType ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 22, '');
+    _returnType ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 23, '');
     return _returnType;
   }
 
   @override
   String get typeParameters {
     _typeParameters ??=
-        const fb.StringReader().vTableGet(_bc, _bcOffset, 23, '');
+        const fb.StringReader().vTableGet(_bc, _bcOffset, 24, '');
     return _typeParameters;
   }
 }
@@ -2848,6 +2869,9 @@ abstract class _AvailableDeclarationMixin implements idl.AvailableDeclaration {
     }
     if (isFinal != false) {
       _result["isFinal"] = isFinal;
+    }
+    if (isStatic != false) {
+      _result["isStatic"] = isStatic;
     }
     if (kind != idl.AvailableDeclarationKind.CLASS) {
       _result["kind"] = kind.toString().split('.')[1];
@@ -2902,6 +2926,7 @@ abstract class _AvailableDeclarationMixin implements idl.AvailableDeclaration {
         "isConst": isConst,
         "isDeprecated": isDeprecated,
         "isFinal": isFinal,
+        "isStatic": isStatic,
         "kind": kind,
         "locationOffset": locationOffset,
         "locationStartColumn": locationStartColumn,
@@ -3483,6 +3508,419 @@ abstract class _AvailableFileExportCombinatorMixin
   String toString() => convert.json.encode(toJson());
 }
 
+class CiderLinkedLibraryCycleBuilder extends Object
+    with _CiderLinkedLibraryCycleMixin
+    implements idl.CiderLinkedLibraryCycle {
+  LinkedNodeBundleBuilder _bundle;
+  List<int> _signature;
+
+  @override
+  LinkedNodeBundleBuilder get bundle => _bundle;
+
+  set bundle(LinkedNodeBundleBuilder value) {
+    this._bundle = value;
+  }
+
+  @override
+  List<int> get signature => _signature ??= <int>[];
+
+  /// The hash signature for this linked cycle. It depends of API signatures
+  /// of all files in the cycle, and on the signatures of the transitive
+  /// closure of the cycle dependencies.
+  set signature(List<int> value) {
+    assert(value == null || value.every((e) => e >= 0));
+    this._signature = value;
+  }
+
+  CiderLinkedLibraryCycleBuilder(
+      {LinkedNodeBundleBuilder bundle, List<int> signature})
+      : _bundle = bundle,
+        _signature = signature;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {
+    _bundle?.flushInformative();
+  }
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    if (this._signature == null) {
+      signature.addInt(0);
+    } else {
+      signature.addInt(this._signature.length);
+      for (var x in this._signature) {
+        signature.addInt(x);
+      }
+    }
+    signature.addBool(this._bundle != null);
+    this._bundle?.collectApiSignature(signature);
+  }
+
+  List<int> toBuffer() {
+    fb.Builder fbBuilder = fb.Builder();
+    return fbBuilder.finish(finish(fbBuilder), "CLNB");
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fb.Offset offset_bundle;
+    fb.Offset offset_signature;
+    if (_bundle != null) {
+      offset_bundle = _bundle.finish(fbBuilder);
+    }
+    if (!(_signature == null || _signature.isEmpty)) {
+      offset_signature = fbBuilder.writeListUint32(_signature);
+    }
+    fbBuilder.startTable();
+    if (offset_bundle != null) {
+      fbBuilder.addOffset(1, offset_bundle);
+    }
+    if (offset_signature != null) {
+      fbBuilder.addOffset(0, offset_signature);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+idl.CiderLinkedLibraryCycle readCiderLinkedLibraryCycle(List<int> buffer) {
+  fb.BufferContext rootRef = fb.BufferContext.fromBytes(buffer);
+  return const _CiderLinkedLibraryCycleReader().read(rootRef, 0);
+}
+
+class _CiderLinkedLibraryCycleReader
+    extends fb.TableReader<_CiderLinkedLibraryCycleImpl> {
+  const _CiderLinkedLibraryCycleReader();
+
+  @override
+  _CiderLinkedLibraryCycleImpl createObject(fb.BufferContext bc, int offset) =>
+      _CiderLinkedLibraryCycleImpl(bc, offset);
+}
+
+class _CiderLinkedLibraryCycleImpl extends Object
+    with _CiderLinkedLibraryCycleMixin
+    implements idl.CiderLinkedLibraryCycle {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _CiderLinkedLibraryCycleImpl(this._bc, this._bcOffset);
+
+  idl.LinkedNodeBundle _bundle;
+  List<int> _signature;
+
+  @override
+  idl.LinkedNodeBundle get bundle {
+    _bundle ??=
+        const _LinkedNodeBundleReader().vTableGet(_bc, _bcOffset, 1, null);
+    return _bundle;
+  }
+
+  @override
+  List<int> get signature {
+    _signature ??=
+        const fb.Uint32ListReader().vTableGet(_bc, _bcOffset, 0, const <int>[]);
+    return _signature;
+  }
+}
+
+abstract class _CiderLinkedLibraryCycleMixin
+    implements idl.CiderLinkedLibraryCycle {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (bundle != null) {
+      _result["bundle"] = bundle.toJson();
+    }
+    if (signature.isNotEmpty) {
+      _result["signature"] = signature;
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "bundle": bundle,
+        "signature": signature,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
+class CiderUnitErrorsBuilder extends Object
+    with _CiderUnitErrorsMixin
+    implements idl.CiderUnitErrors {
+  List<AnalysisDriverUnitErrorBuilder> _errors;
+  List<int> _signature;
+
+  @override
+  List<AnalysisDriverUnitErrorBuilder> get errors =>
+      _errors ??= <AnalysisDriverUnitErrorBuilder>[];
+
+  set errors(List<AnalysisDriverUnitErrorBuilder> value) {
+    this._errors = value;
+  }
+
+  @override
+  List<int> get signature => _signature ??= <int>[];
+
+  /// The hash signature of this data.
+  set signature(List<int> value) {
+    assert(value == null || value.every((e) => e >= 0));
+    this._signature = value;
+  }
+
+  CiderUnitErrorsBuilder(
+      {List<AnalysisDriverUnitErrorBuilder> errors, List<int> signature})
+      : _errors = errors,
+        _signature = signature;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {
+    _errors?.forEach((b) => b.flushInformative());
+  }
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    if (this._signature == null) {
+      signature.addInt(0);
+    } else {
+      signature.addInt(this._signature.length);
+      for (var x in this._signature) {
+        signature.addInt(x);
+      }
+    }
+    if (this._errors == null) {
+      signature.addInt(0);
+    } else {
+      signature.addInt(this._errors.length);
+      for (var x in this._errors) {
+        x?.collectApiSignature(signature);
+      }
+    }
+  }
+
+  List<int> toBuffer() {
+    fb.Builder fbBuilder = fb.Builder();
+    return fbBuilder.finish(finish(fbBuilder), "CUEr");
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fb.Offset offset_errors;
+    fb.Offset offset_signature;
+    if (!(_errors == null || _errors.isEmpty)) {
+      offset_errors =
+          fbBuilder.writeList(_errors.map((b) => b.finish(fbBuilder)).toList());
+    }
+    if (!(_signature == null || _signature.isEmpty)) {
+      offset_signature = fbBuilder.writeListUint32(_signature);
+    }
+    fbBuilder.startTable();
+    if (offset_errors != null) {
+      fbBuilder.addOffset(1, offset_errors);
+    }
+    if (offset_signature != null) {
+      fbBuilder.addOffset(0, offset_signature);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+idl.CiderUnitErrors readCiderUnitErrors(List<int> buffer) {
+  fb.BufferContext rootRef = fb.BufferContext.fromBytes(buffer);
+  return const _CiderUnitErrorsReader().read(rootRef, 0);
+}
+
+class _CiderUnitErrorsReader extends fb.TableReader<_CiderUnitErrorsImpl> {
+  const _CiderUnitErrorsReader();
+
+  @override
+  _CiderUnitErrorsImpl createObject(fb.BufferContext bc, int offset) =>
+      _CiderUnitErrorsImpl(bc, offset);
+}
+
+class _CiderUnitErrorsImpl extends Object
+    with _CiderUnitErrorsMixin
+    implements idl.CiderUnitErrors {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _CiderUnitErrorsImpl(this._bc, this._bcOffset);
+
+  List<idl.AnalysisDriverUnitError> _errors;
+  List<int> _signature;
+
+  @override
+  List<idl.AnalysisDriverUnitError> get errors {
+    _errors ??= const fb.ListReader<idl.AnalysisDriverUnitError>(
+            _AnalysisDriverUnitErrorReader())
+        .vTableGet(_bc, _bcOffset, 1, const <idl.AnalysisDriverUnitError>[]);
+    return _errors;
+  }
+
+  @override
+  List<int> get signature {
+    _signature ??=
+        const fb.Uint32ListReader().vTableGet(_bc, _bcOffset, 0, const <int>[]);
+    return _signature;
+  }
+}
+
+abstract class _CiderUnitErrorsMixin implements idl.CiderUnitErrors {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (errors.isNotEmpty) {
+      _result["errors"] = errors.map((_value) => _value.toJson()).toList();
+    }
+    if (signature.isNotEmpty) {
+      _result["signature"] = signature;
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "errors": errors,
+        "signature": signature,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
+class CiderUnlinkedUnitBuilder extends Object
+    with _CiderUnlinkedUnitMixin
+    implements idl.CiderUnlinkedUnit {
+  List<int> _contentDigest;
+  UnlinkedUnit2Builder _unlinkedUnit;
+
+  @override
+  List<int> get contentDigest => _contentDigest ??= <int>[];
+
+  /// The hash signature of the contents of the file.
+  set contentDigest(List<int> value) {
+    assert(value == null || value.every((e) => e >= 0));
+    this._contentDigest = value;
+  }
+
+  @override
+  UnlinkedUnit2Builder get unlinkedUnit => _unlinkedUnit;
+
+  /// Unlinked summary of the compilation unit.
+  set unlinkedUnit(UnlinkedUnit2Builder value) {
+    this._unlinkedUnit = value;
+  }
+
+  CiderUnlinkedUnitBuilder(
+      {List<int> contentDigest, UnlinkedUnit2Builder unlinkedUnit})
+      : _contentDigest = contentDigest,
+        _unlinkedUnit = unlinkedUnit;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {
+    _unlinkedUnit?.flushInformative();
+  }
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    if (this._contentDigest == null) {
+      signature.addInt(0);
+    } else {
+      signature.addInt(this._contentDigest.length);
+      for (var x in this._contentDigest) {
+        signature.addInt(x);
+      }
+    }
+    signature.addBool(this._unlinkedUnit != null);
+    this._unlinkedUnit?.collectApiSignature(signature);
+  }
+
+  List<int> toBuffer() {
+    fb.Builder fbBuilder = fb.Builder();
+    return fbBuilder.finish(finish(fbBuilder), "CUUN");
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fb.Offset offset_contentDigest;
+    fb.Offset offset_unlinkedUnit;
+    if (!(_contentDigest == null || _contentDigest.isEmpty)) {
+      offset_contentDigest = fbBuilder.writeListUint32(_contentDigest);
+    }
+    if (_unlinkedUnit != null) {
+      offset_unlinkedUnit = _unlinkedUnit.finish(fbBuilder);
+    }
+    fbBuilder.startTable();
+    if (offset_contentDigest != null) {
+      fbBuilder.addOffset(0, offset_contentDigest);
+    }
+    if (offset_unlinkedUnit != null) {
+      fbBuilder.addOffset(1, offset_unlinkedUnit);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+idl.CiderUnlinkedUnit readCiderUnlinkedUnit(List<int> buffer) {
+  fb.BufferContext rootRef = fb.BufferContext.fromBytes(buffer);
+  return const _CiderUnlinkedUnitReader().read(rootRef, 0);
+}
+
+class _CiderUnlinkedUnitReader extends fb.TableReader<_CiderUnlinkedUnitImpl> {
+  const _CiderUnlinkedUnitReader();
+
+  @override
+  _CiderUnlinkedUnitImpl createObject(fb.BufferContext bc, int offset) =>
+      _CiderUnlinkedUnitImpl(bc, offset);
+}
+
+class _CiderUnlinkedUnitImpl extends Object
+    with _CiderUnlinkedUnitMixin
+    implements idl.CiderUnlinkedUnit {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _CiderUnlinkedUnitImpl(this._bc, this._bcOffset);
+
+  List<int> _contentDigest;
+  idl.UnlinkedUnit2 _unlinkedUnit;
+
+  @override
+  List<int> get contentDigest {
+    _contentDigest ??=
+        const fb.Uint32ListReader().vTableGet(_bc, _bcOffset, 0, const <int>[]);
+    return _contentDigest;
+  }
+
+  @override
+  idl.UnlinkedUnit2 get unlinkedUnit {
+    _unlinkedUnit ??=
+        const _UnlinkedUnit2Reader().vTableGet(_bc, _bcOffset, 1, null);
+    return _unlinkedUnit;
+  }
+}
+
+abstract class _CiderUnlinkedUnitMixin implements idl.CiderUnlinkedUnit {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (contentDigest.isNotEmpty) {
+      _result["contentDigest"] = contentDigest;
+    }
+    if (unlinkedUnit != null) {
+      _result["unlinkedUnit"] = unlinkedUnit.toJson();
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "contentDigest": contentDigest,
+        "unlinkedUnit": unlinkedUnit,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
 class DiagnosticMessageBuilder extends Object
     with _DiagnosticMessageMixin
     implements idl.DiagnosticMessage {
@@ -3776,6 +4214,230 @@ abstract class _DirectiveInfoMixin implements idl.DirectiveInfo {
   String toString() => convert.json.encode(toJson());
 }
 
+class LinkedLanguageVersionBuilder extends Object
+    with _LinkedLanguageVersionMixin
+    implements idl.LinkedLanguageVersion {
+  int _major;
+  int _minor;
+
+  @override
+  int get major => _major ??= 0;
+
+  set major(int value) {
+    assert(value == null || value >= 0);
+    this._major = value;
+  }
+
+  @override
+  int get minor => _minor ??= 0;
+
+  set minor(int value) {
+    assert(value == null || value >= 0);
+    this._minor = value;
+  }
+
+  LinkedLanguageVersionBuilder({int major, int minor})
+      : _major = major,
+        _minor = minor;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {}
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    signature.addInt(this._major ?? 0);
+    signature.addInt(this._minor ?? 0);
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fbBuilder.startTable();
+    if (_major != null && _major != 0) {
+      fbBuilder.addUint32(0, _major);
+    }
+    if (_minor != null && _minor != 0) {
+      fbBuilder.addUint32(1, _minor);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+class _LinkedLanguageVersionReader
+    extends fb.TableReader<_LinkedLanguageVersionImpl> {
+  const _LinkedLanguageVersionReader();
+
+  @override
+  _LinkedLanguageVersionImpl createObject(fb.BufferContext bc, int offset) =>
+      _LinkedLanguageVersionImpl(bc, offset);
+}
+
+class _LinkedLanguageVersionImpl extends Object
+    with _LinkedLanguageVersionMixin
+    implements idl.LinkedLanguageVersion {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _LinkedLanguageVersionImpl(this._bc, this._bcOffset);
+
+  int _major;
+  int _minor;
+
+  @override
+  int get major {
+    _major ??= const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 0, 0);
+    return _major;
+  }
+
+  @override
+  int get minor {
+    _minor ??= const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 1, 0);
+    return _minor;
+  }
+}
+
+abstract class _LinkedLanguageVersionMixin
+    implements idl.LinkedLanguageVersion {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (major != 0) {
+      _result["major"] = major;
+    }
+    if (minor != 0) {
+      _result["minor"] = minor;
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "major": major,
+        "minor": minor,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
+class LinkedLibraryLanguageVersionBuilder extends Object
+    with _LinkedLibraryLanguageVersionMixin
+    implements idl.LinkedLibraryLanguageVersion {
+  LinkedLanguageVersionBuilder _override2;
+  LinkedLanguageVersionBuilder _package;
+
+  @override
+  LinkedLanguageVersionBuilder get override2 => _override2;
+
+  set override2(LinkedLanguageVersionBuilder value) {
+    this._override2 = value;
+  }
+
+  @override
+  LinkedLanguageVersionBuilder get package => _package;
+
+  set package(LinkedLanguageVersionBuilder value) {
+    this._package = value;
+  }
+
+  LinkedLibraryLanguageVersionBuilder(
+      {LinkedLanguageVersionBuilder override2,
+      LinkedLanguageVersionBuilder package})
+      : _override2 = override2,
+        _package = package;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {
+    _override2?.flushInformative();
+    _package?.flushInformative();
+  }
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    signature.addBool(this._package != null);
+    this._package?.collectApiSignature(signature);
+    signature.addBool(this._override2 != null);
+    this._override2?.collectApiSignature(signature);
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fb.Offset offset_override2;
+    fb.Offset offset_package;
+    if (_override2 != null) {
+      offset_override2 = _override2.finish(fbBuilder);
+    }
+    if (_package != null) {
+      offset_package = _package.finish(fbBuilder);
+    }
+    fbBuilder.startTable();
+    if (offset_override2 != null) {
+      fbBuilder.addOffset(1, offset_override2);
+    }
+    if (offset_package != null) {
+      fbBuilder.addOffset(0, offset_package);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+class _LinkedLibraryLanguageVersionReader
+    extends fb.TableReader<_LinkedLibraryLanguageVersionImpl> {
+  const _LinkedLibraryLanguageVersionReader();
+
+  @override
+  _LinkedLibraryLanguageVersionImpl createObject(
+          fb.BufferContext bc, int offset) =>
+      _LinkedLibraryLanguageVersionImpl(bc, offset);
+}
+
+class _LinkedLibraryLanguageVersionImpl extends Object
+    with _LinkedLibraryLanguageVersionMixin
+    implements idl.LinkedLibraryLanguageVersion {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _LinkedLibraryLanguageVersionImpl(this._bc, this._bcOffset);
+
+  idl.LinkedLanguageVersion _override2;
+  idl.LinkedLanguageVersion _package;
+
+  @override
+  idl.LinkedLanguageVersion get override2 {
+    _override2 ??=
+        const _LinkedLanguageVersionReader().vTableGet(_bc, _bcOffset, 1, null);
+    return _override2;
+  }
+
+  @override
+  idl.LinkedLanguageVersion get package {
+    _package ??=
+        const _LinkedLanguageVersionReader().vTableGet(_bc, _bcOffset, 0, null);
+    return _package;
+  }
+}
+
+abstract class _LinkedLibraryLanguageVersionMixin
+    implements idl.LinkedLibraryLanguageVersion {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (override2 != null) {
+      _result["override2"] = override2.toJson();
+    }
+    if (package != null) {
+      _result["package"] = package.toJson();
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "override2": override2,
+        "package": package,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
 class LinkedNodeBuilder extends Object
     with _LinkedNodeMixin
     implements idl.LinkedNode {
@@ -3797,6 +4459,7 @@ class LinkedNodeBuilder extends Object
   List<String> _variantField_33;
   idl.LinkedNodeCommentType _variantField_29;
   List<LinkedNodeBuilder> _variantField_3;
+  LinkedLibraryLanguageVersionBuilder _variantField_40;
   LinkedNodeBuilder _variantField_10;
   idl.LinkedNodeFormalParameterKind _variantField_26;
   double _variantField_21;
@@ -6438,6 +7101,19 @@ class LinkedNodeBuilder extends Object
   }
 
   @override
+  LinkedLibraryLanguageVersionBuilder get compilationUnit_languageVersion {
+    assert(kind == idl.LinkedNodeKind.compilationUnit);
+    return _variantField_40;
+  }
+
+  /// The language version information.
+  set compilationUnit_languageVersion(
+      LinkedLibraryLanguageVersionBuilder value) {
+    assert(kind == idl.LinkedNodeKind.compilationUnit);
+    _variantField_40 = value;
+  }
+
+  @override
   LinkedNodeBuilder get constructorDeclaration_returnType {
     assert(kind == idl.LinkedNodeKind.constructorDeclaration);
     return _variantField_10;
@@ -6809,13 +7485,15 @@ class LinkedNodeBuilder extends Object
 
   @override
   TopLevelInferenceErrorBuilder get topLevelTypeInferenceError {
-    assert(kind == idl.LinkedNodeKind.simpleFormalParameter ||
+    assert(kind == idl.LinkedNodeKind.methodDeclaration ||
+        kind == idl.LinkedNodeKind.simpleFormalParameter ||
         kind == idl.LinkedNodeKind.variableDeclaration);
     return _variantField_32;
   }
 
   set topLevelTypeInferenceError(TopLevelInferenceErrorBuilder value) {
-    assert(kind == idl.LinkedNodeKind.simpleFormalParameter ||
+    assert(kind == idl.LinkedNodeKind.methodDeclaration ||
+        kind == idl.LinkedNodeKind.simpleFormalParameter ||
         kind == idl.LinkedNodeKind.variableDeclaration);
     _variantField_32 = value;
   }
@@ -7069,11 +7747,13 @@ class LinkedNodeBuilder extends Object
     List<LinkedNodeBuilder> compilationUnit_declarations,
     LinkedNodeBuilder compilationUnit_scriptTag,
     List<LinkedNodeBuilder> compilationUnit_directives,
+    LinkedLibraryLanguageVersionBuilder compilationUnit_languageVersion,
     int informativeId,
   })  : _kind = idl.LinkedNodeKind.compilationUnit,
         _variantField_2 = compilationUnit_declarations,
         _variantField_6 = compilationUnit_scriptTag,
         _variantField_3 = compilationUnit_directives,
+        _variantField_40 = compilationUnit_languageVersion,
         _variantField_36 = informativeId;
 
   LinkedNodeBuilder.conditionalExpression({
@@ -7596,6 +8276,7 @@ class LinkedNodeBuilder extends Object
     LinkedNodeBuilder methodDeclaration_typeParameters,
     int informativeId,
     bool methodDeclaration_hasOperatorEqualWithParameterTypeFromObject,
+    TopLevelInferenceErrorBuilder topLevelTypeInferenceError,
   })  : _kind = idl.LinkedNodeKind.methodDeclaration,
         _variantField_24 = actualReturnType,
         _variantField_4 = annotatedNode_metadata,
@@ -7605,7 +8286,8 @@ class LinkedNodeBuilder extends Object
         _variantField_9 = methodDeclaration_typeParameters,
         _variantField_36 = informativeId,
         _variantField_31 =
-            methodDeclaration_hasOperatorEqualWithParameterTypeFromObject;
+            methodDeclaration_hasOperatorEqualWithParameterTypeFromObject,
+        _variantField_32 = topLevelTypeInferenceError;
 
   LinkedNodeBuilder.methodInvocation({
     LinkedNodeTypeBuilder invocationExpression_invokeType,
@@ -8058,6 +8740,7 @@ class LinkedNodeBuilder extends Object
       compilationUnit_declarations?.forEach((b) => b.flushInformative());
       compilationUnit_scriptTag?.flushInformative();
       compilationUnit_directives?.forEach((b) => b.flushInformative());
+      compilationUnit_languageVersion?.flushInformative();
       informativeId = null;
     } else if (kind == idl.LinkedNodeKind.conditionalExpression) {
       conditionalExpression_condition?.flushInformative();
@@ -8272,6 +8955,7 @@ class LinkedNodeBuilder extends Object
       methodDeclaration_returnType?.flushInformative();
       methodDeclaration_typeParameters?.flushInformative();
       informativeId = null;
+      topLevelTypeInferenceError?.flushInformative();
     } else if (kind == idl.LinkedNodeKind.methodInvocation) {
       invocationExpression_invokeType?.flushInformative();
       methodInvocation_methodName?.flushInformative();
@@ -8692,6 +9376,8 @@ class LinkedNodeBuilder extends Object
       this.compilationUnit_scriptTag?.collectApiSignature(signature);
       signature.addInt(this.flags ?? 0);
       signature.addString(this.name ?? '');
+      signature.addBool(this.compilationUnit_languageVersion != null);
+      this.compilationUnit_languageVersion?.collectApiSignature(signature);
     } else if (kind == idl.LinkedNodeKind.conditionalExpression) {
       signature.addInt(this.kind == null ? 0 : this.kind.index);
       signature.addBool(this.conditionalExpression_condition != null);
@@ -9470,6 +10156,8 @@ class LinkedNodeBuilder extends Object
       signature.addBool(
           this.methodDeclaration_hasOperatorEqualWithParameterTypeFromObject ==
               true);
+      signature.addBool(this.topLevelTypeInferenceError != null);
+      this.topLevelTypeInferenceError?.collectApiSignature(signature);
       signature.addString(this.name ?? '');
     } else if (kind == idl.LinkedNodeKind.methodInvocation) {
       signature.addInt(this.kind == null ? 0 : this.kind.index);
@@ -10065,6 +10753,7 @@ class LinkedNodeBuilder extends Object
     fb.Offset offset_variantField_13;
     fb.Offset offset_variantField_33;
     fb.Offset offset_variantField_3;
+    fb.Offset offset_variantField_40;
     fb.Offset offset_variantField_10;
     fb.Offset offset_variantField_25;
     fb.Offset offset_variantField_20;
@@ -10121,6 +10810,9 @@ class LinkedNodeBuilder extends Object
     if (!(_variantField_3 == null || _variantField_3.isEmpty)) {
       offset_variantField_3 = fbBuilder
           .writeList(_variantField_3.map((b) => b.finish(fbBuilder)).toList());
+    }
+    if (_variantField_40 != null) {
+      offset_variantField_40 = _variantField_40.finish(fbBuilder);
     }
     if (_variantField_10 != null) {
       offset_variantField_10 = _variantField_10.finish(fbBuilder);
@@ -10219,6 +10911,9 @@ class LinkedNodeBuilder extends Object
     }
     if (offset_variantField_3 != null) {
       fbBuilder.addOffset(3, offset_variantField_3);
+    }
+    if (offset_variantField_40 != null) {
+      fbBuilder.addOffset(40, offset_variantField_40);
     }
     if (offset_variantField_10 != null) {
       fbBuilder.addOffset(10, offset_variantField_10);
@@ -10327,6 +11022,7 @@ class _LinkedNodeImpl extends Object
   List<String> _variantField_33;
   idl.LinkedNodeCommentType _variantField_29;
   List<idl.LinkedNode> _variantField_3;
+  idl.LinkedLibraryLanguageVersion _variantField_40;
   idl.LinkedNode _variantField_10;
   idl.LinkedNodeFormalParameterKind _variantField_26;
   double _variantField_21;
@@ -12217,6 +12913,14 @@ class _LinkedNodeImpl extends Object
   }
 
   @override
+  idl.LinkedLibraryLanguageVersion get compilationUnit_languageVersion {
+    assert(kind == idl.LinkedNodeKind.compilationUnit);
+    _variantField_40 ??= const _LinkedLibraryLanguageVersionReader()
+        .vTableGet(_bc, _bcOffset, 40, null);
+    return _variantField_40;
+  }
+
+  @override
   idl.LinkedNode get constructorDeclaration_returnType {
     assert(kind == idl.LinkedNodeKind.constructorDeclaration);
     _variantField_10 ??=
@@ -12463,7 +13167,8 @@ class _LinkedNodeImpl extends Object
 
   @override
   idl.TopLevelInferenceError get topLevelTypeInferenceError {
-    assert(kind == idl.LinkedNodeKind.simpleFormalParameter ||
+    assert(kind == idl.LinkedNodeKind.methodDeclaration ||
+        kind == idl.LinkedNodeKind.simpleFormalParameter ||
         kind == idl.LinkedNodeKind.variableDeclaration);
     _variantField_32 ??= const _TopLevelInferenceErrorReader()
         .vTableGet(_bc, _bcOffset, 32, null);
@@ -12807,6 +13512,10 @@ abstract class _LinkedNodeMixin implements idl.LinkedNode {
         _result["compilationUnit_directives"] = compilationUnit_directives
             .map((_value) => _value.toJson())
             .toList();
+      }
+      if (compilationUnit_languageVersion != null) {
+        _result["compilationUnit_languageVersion"] =
+            compilationUnit_languageVersion.toJson();
       }
       if (informativeId != 0) {
         _result["informativeId"] = informativeId;
@@ -13592,6 +14301,10 @@ abstract class _LinkedNodeMixin implements idl.LinkedNode {
         _result["methodDeclaration_hasOperatorEqualWithParameterTypeFromObject"] =
             methodDeclaration_hasOperatorEqualWithParameterTypeFromObject;
       }
+      if (topLevelTypeInferenceError != null) {
+        _result["topLevelTypeInferenceError"] =
+            topLevelTypeInferenceError.toJson();
+      }
     }
     if (kind == idl.LinkedNodeKind.methodInvocation) {
       if (invocationExpression_invokeType != null) {
@@ -14335,6 +15048,7 @@ abstract class _LinkedNodeMixin implements idl.LinkedNode {
         "compilationUnit_declarations": compilationUnit_declarations,
         "compilationUnit_scriptTag": compilationUnit_scriptTag,
         "compilationUnit_directives": compilationUnit_directives,
+        "compilationUnit_languageVersion": compilationUnit_languageVersion,
         "flags": flags,
         "informativeId": informativeId,
         "kind": kind,
@@ -14944,6 +15658,7 @@ abstract class _LinkedNodeMixin implements idl.LinkedNode {
         "methodDeclaration_hasOperatorEqualWithParameterTypeFromObject":
             methodDeclaration_hasOperatorEqualWithParameterTypeFromObject,
         "name": name,
+        "topLevelTypeInferenceError": topLevelTypeInferenceError,
       };
     }
     if (kind == idl.LinkedNodeKind.methodInvocation) {
@@ -16476,8 +17191,16 @@ abstract class _LinkedNodeTypeFormalParameterMixin
 class LinkedNodeTypeSubstitutionBuilder extends Object
     with _LinkedNodeTypeSubstitutionMixin
     implements idl.LinkedNodeTypeSubstitution {
+  bool _isLegacy;
   List<LinkedNodeTypeBuilder> _typeArguments;
   List<int> _typeParameters;
+
+  @override
+  bool get isLegacy => _isLegacy ??= false;
+
+  set isLegacy(bool value) {
+    this._isLegacy = value;
+  }
 
   @override
   List<LinkedNodeTypeBuilder> get typeArguments =>
@@ -16496,8 +17219,11 @@ class LinkedNodeTypeSubstitutionBuilder extends Object
   }
 
   LinkedNodeTypeSubstitutionBuilder(
-      {List<LinkedNodeTypeBuilder> typeArguments, List<int> typeParameters})
-      : _typeArguments = typeArguments,
+      {bool isLegacy,
+      List<LinkedNodeTypeBuilder> typeArguments,
+      List<int> typeParameters})
+      : _isLegacy = isLegacy,
+        _typeArguments = typeArguments,
         _typeParameters = typeParameters;
 
   /// Flush [informative] data recursively.
@@ -16523,6 +17249,7 @@ class LinkedNodeTypeSubstitutionBuilder extends Object
         x?.collectApiSignature(signature);
       }
     }
+    signature.addBool(this._isLegacy == true);
   }
 
   fb.Offset finish(fb.Builder fbBuilder) {
@@ -16536,6 +17263,9 @@ class LinkedNodeTypeSubstitutionBuilder extends Object
       offset_typeParameters = fbBuilder.writeListUint32(_typeParameters);
     }
     fbBuilder.startTable();
+    if (_isLegacy == true) {
+      fbBuilder.addBool(2, true);
+    }
     if (offset_typeArguments != null) {
       fbBuilder.addOffset(1, offset_typeArguments);
     }
@@ -16564,8 +17294,15 @@ class _LinkedNodeTypeSubstitutionImpl extends Object
 
   _LinkedNodeTypeSubstitutionImpl(this._bc, this._bcOffset);
 
+  bool _isLegacy;
   List<idl.LinkedNodeType> _typeArguments;
   List<int> _typeParameters;
+
+  @override
+  bool get isLegacy {
+    _isLegacy ??= const fb.BoolReader().vTableGet(_bc, _bcOffset, 2, false);
+    return _isLegacy;
+  }
 
   @override
   List<idl.LinkedNodeType> get typeArguments {
@@ -16588,6 +17325,9 @@ abstract class _LinkedNodeTypeSubstitutionMixin
   @override
   Map<String, Object> toJson() {
     Map<String, Object> _result = <String, Object>{};
+    if (isLegacy != false) {
+      _result["isLegacy"] = isLegacy;
+    }
     if (typeArguments.isNotEmpty) {
       _result["typeArguments"] =
           typeArguments.map((_value) => _value.toJson()).toList();
@@ -16600,6 +17340,7 @@ abstract class _LinkedNodeTypeSubstitutionMixin
 
   @override
   Map<String, Object> toMap() => {
+        "isLegacy": isLegacy,
         "typeArguments": typeArguments,
         "typeParameters": typeParameters,
       };
@@ -16921,6 +17662,7 @@ class PackageBundleBuilder extends Object
     with _PackageBundleMixin
     implements idl.PackageBundle {
   LinkedNodeBundleBuilder _bundle2;
+  PackageBundleSdkBuilder _sdk;
 
   @override
   LinkedNodeBundleBuilder get bundle2 => _bundle2;
@@ -16930,17 +17672,31 @@ class PackageBundleBuilder extends Object
     this._bundle2 = value;
   }
 
-  PackageBundleBuilder({LinkedNodeBundleBuilder bundle2}) : _bundle2 = bundle2;
+  @override
+  PackageBundleSdkBuilder get sdk => _sdk;
+
+  /// The SDK specific data, if this bundle is for SDK.
+  set sdk(PackageBundleSdkBuilder value) {
+    this._sdk = value;
+  }
+
+  PackageBundleBuilder(
+      {LinkedNodeBundleBuilder bundle2, PackageBundleSdkBuilder sdk})
+      : _bundle2 = bundle2,
+        _sdk = sdk;
 
   /// Flush [informative] data recursively.
   void flushInformative() {
     _bundle2?.flushInformative();
+    _sdk?.flushInformative();
   }
 
   /// Accumulate non-[informative] data into [signature].
   void collectApiSignature(api_sig.ApiSignature signature) {
     signature.addBool(this._bundle2 != null);
     this._bundle2?.collectApiSignature(signature);
+    signature.addBool(this._sdk != null);
+    this._sdk?.collectApiSignature(signature);
   }
 
   List<int> toBuffer() {
@@ -16950,12 +17706,19 @@ class PackageBundleBuilder extends Object
 
   fb.Offset finish(fb.Builder fbBuilder) {
     fb.Offset offset_bundle2;
+    fb.Offset offset_sdk;
     if (_bundle2 != null) {
       offset_bundle2 = _bundle2.finish(fbBuilder);
+    }
+    if (_sdk != null) {
+      offset_sdk = _sdk.finish(fbBuilder);
     }
     fbBuilder.startTable();
     if (offset_bundle2 != null) {
       fbBuilder.addOffset(0, offset_bundle2);
+    }
+    if (offset_sdk != null) {
+      fbBuilder.addOffset(1, offset_sdk);
     }
     return fbBuilder.endTable();
   }
@@ -16983,12 +17746,19 @@ class _PackageBundleImpl extends Object
   _PackageBundleImpl(this._bc, this._bcOffset);
 
   idl.LinkedNodeBundle _bundle2;
+  idl.PackageBundleSdk _sdk;
 
   @override
   idl.LinkedNodeBundle get bundle2 {
     _bundle2 ??=
         const _LinkedNodeBundleReader().vTableGet(_bc, _bcOffset, 0, null);
     return _bundle2;
+  }
+
+  @override
+  idl.PackageBundleSdk get sdk {
+    _sdk ??= const _PackageBundleSdkReader().vTableGet(_bc, _bcOffset, 1, null);
+    return _sdk;
   }
 }
 
@@ -16999,12 +17769,99 @@ abstract class _PackageBundleMixin implements idl.PackageBundle {
     if (bundle2 != null) {
       _result["bundle2"] = bundle2.toJson();
     }
+    if (sdk != null) {
+      _result["sdk"] = sdk.toJson();
+    }
     return _result;
   }
 
   @override
   Map<String, Object> toMap() => {
         "bundle2": bundle2,
+        "sdk": sdk,
+      };
+
+  @override
+  String toString() => convert.json.encode(toJson());
+}
+
+class PackageBundleSdkBuilder extends Object
+    with _PackageBundleSdkMixin
+    implements idl.PackageBundleSdk {
+  String _allowedExperimentsJson;
+
+  @override
+  String get allowedExperimentsJson => _allowedExperimentsJson ??= '';
+
+  /// The content of the `allowed_experiments.json` from SDK.
+  set allowedExperimentsJson(String value) {
+    this._allowedExperimentsJson = value;
+  }
+
+  PackageBundleSdkBuilder({String allowedExperimentsJson})
+      : _allowedExperimentsJson = allowedExperimentsJson;
+
+  /// Flush [informative] data recursively.
+  void flushInformative() {}
+
+  /// Accumulate non-[informative] data into [signature].
+  void collectApiSignature(api_sig.ApiSignature signature) {
+    signature.addString(this._allowedExperimentsJson ?? '');
+  }
+
+  fb.Offset finish(fb.Builder fbBuilder) {
+    fb.Offset offset_allowedExperimentsJson;
+    if (_allowedExperimentsJson != null) {
+      offset_allowedExperimentsJson =
+          fbBuilder.writeString(_allowedExperimentsJson);
+    }
+    fbBuilder.startTable();
+    if (offset_allowedExperimentsJson != null) {
+      fbBuilder.addOffset(0, offset_allowedExperimentsJson);
+    }
+    return fbBuilder.endTable();
+  }
+}
+
+class _PackageBundleSdkReader extends fb.TableReader<_PackageBundleSdkImpl> {
+  const _PackageBundleSdkReader();
+
+  @override
+  _PackageBundleSdkImpl createObject(fb.BufferContext bc, int offset) =>
+      _PackageBundleSdkImpl(bc, offset);
+}
+
+class _PackageBundleSdkImpl extends Object
+    with _PackageBundleSdkMixin
+    implements idl.PackageBundleSdk {
+  final fb.BufferContext _bc;
+  final int _bcOffset;
+
+  _PackageBundleSdkImpl(this._bc, this._bcOffset);
+
+  String _allowedExperimentsJson;
+
+  @override
+  String get allowedExperimentsJson {
+    _allowedExperimentsJson ??=
+        const fb.StringReader().vTableGet(_bc, _bcOffset, 0, '');
+    return _allowedExperimentsJson;
+  }
+}
+
+abstract class _PackageBundleSdkMixin implements idl.PackageBundleSdk {
+  @override
+  Map<String, Object> toJson() {
+    Map<String, Object> _result = <String, Object>{};
+    if (allowedExperimentsJson != '') {
+      _result["allowedExperimentsJson"] = allowedExperimentsJson;
+    }
+    return _result;
+  }
+
+  @override
+  Map<String, Object> toMap() => {
+        "allowedExperimentsJson": allowedExperimentsJson,
       };
 
   @override
@@ -17016,7 +17873,6 @@ class TopLevelInferenceErrorBuilder extends Object
     implements idl.TopLevelInferenceError {
   List<String> _arguments;
   idl.TopLevelInferenceErrorKind _kind;
-  int _slot;
 
   @override
   List<String> get arguments => _arguments ??= <String>[];
@@ -17035,29 +17891,16 @@ class TopLevelInferenceErrorBuilder extends Object
     this._kind = value;
   }
 
-  @override
-  int get slot => _slot ??= 0;
-
-  /// The slot id (which is unique within the compilation unit) identifying the
-  /// target of type inference with which this [TopLevelInferenceError] is
-  /// associated.
-  set slot(int value) {
-    assert(value == null || value >= 0);
-    this._slot = value;
-  }
-
   TopLevelInferenceErrorBuilder(
-      {List<String> arguments, idl.TopLevelInferenceErrorKind kind, int slot})
+      {List<String> arguments, idl.TopLevelInferenceErrorKind kind})
       : _arguments = arguments,
-        _kind = kind,
-        _slot = slot;
+        _kind = kind;
 
   /// Flush [informative] data recursively.
   void flushInformative() {}
 
   /// Accumulate non-[informative] data into [signature].
   void collectApiSignature(api_sig.ApiSignature signature) {
-    signature.addInt(this._slot ?? 0);
     signature.addInt(this._kind == null ? 0 : this._kind.index);
     if (this._arguments == null) {
       signature.addInt(0);
@@ -17077,13 +17920,10 @@ class TopLevelInferenceErrorBuilder extends Object
     }
     fbBuilder.startTable();
     if (offset_arguments != null) {
-      fbBuilder.addOffset(2, offset_arguments);
+      fbBuilder.addOffset(1, offset_arguments);
     }
     if (_kind != null && _kind != idl.TopLevelInferenceErrorKind.assignment) {
-      fbBuilder.addUint8(1, _kind.index);
-    }
-    if (_slot != null && _slot != 0) {
-      fbBuilder.addUint32(0, _slot);
+      fbBuilder.addUint8(0, _kind.index);
     }
     return fbBuilder.endTable();
   }
@@ -17108,26 +17948,19 @@ class _TopLevelInferenceErrorImpl extends Object
 
   List<String> _arguments;
   idl.TopLevelInferenceErrorKind _kind;
-  int _slot;
 
   @override
   List<String> get arguments {
     _arguments ??= const fb.ListReader<String>(fb.StringReader())
-        .vTableGet(_bc, _bcOffset, 2, const <String>[]);
+        .vTableGet(_bc, _bcOffset, 1, const <String>[]);
     return _arguments;
   }
 
   @override
   idl.TopLevelInferenceErrorKind get kind {
     _kind ??= const _TopLevelInferenceErrorKindReader().vTableGet(
-        _bc, _bcOffset, 1, idl.TopLevelInferenceErrorKind.assignment);
+        _bc, _bcOffset, 0, idl.TopLevelInferenceErrorKind.assignment);
     return _kind;
-  }
-
-  @override
-  int get slot {
-    _slot ??= const fb.Uint32Reader().vTableGet(_bc, _bcOffset, 0, 0);
-    return _slot;
   }
 }
 
@@ -17142,9 +17975,6 @@ abstract class _TopLevelInferenceErrorMixin
     if (kind != idl.TopLevelInferenceErrorKind.assignment) {
       _result["kind"] = kind.toString().split('.')[1];
     }
-    if (slot != 0) {
-      _result["slot"] = slot;
-    }
     return _result;
   }
 
@@ -17152,7 +17982,6 @@ abstract class _TopLevelInferenceErrorMixin
   Map<String, Object> toMap() => {
         "arguments": arguments,
         "kind": kind,
-        "slot": slot,
       };
 
   @override
@@ -19045,6 +19874,7 @@ class UnlinkedUnit2Builder extends Object
   List<UnlinkedNamespaceDirectiveBuilder> _imports;
   List<UnlinkedInformativeDataBuilder> _informativeData;
   List<int> _lineStarts;
+  String _partOfUri;
   List<String> _parts;
 
   @override
@@ -19109,6 +19939,14 @@ class UnlinkedUnit2Builder extends Object
   }
 
   @override
+  String get partOfUri => _partOfUri ??= '';
+
+  /// URI of the `part of` directive.
+  set partOfUri(String value) {
+    this._partOfUri = value;
+  }
+
+  @override
   List<String> get parts => _parts ??= <String>[];
 
   /// URIs of `part` directives.
@@ -19124,6 +19962,7 @@ class UnlinkedUnit2Builder extends Object
       List<UnlinkedNamespaceDirectiveBuilder> imports,
       List<UnlinkedInformativeDataBuilder> informativeData,
       List<int> lineStarts,
+      String partOfUri,
       List<String> parts})
       : _apiSignature = apiSignature,
         _exports = exports,
@@ -19132,6 +19971,7 @@ class UnlinkedUnit2Builder extends Object
         _imports = imports,
         _informativeData = informativeData,
         _lineStarts = lineStarts,
+        _partOfUri = partOfUri,
         _parts = parts;
 
   /// Flush [informative] data recursively.
@@ -19186,6 +20026,7 @@ class UnlinkedUnit2Builder extends Object
         x?.collectApiSignature(signature);
       }
     }
+    signature.addString(this._partOfUri ?? '');
   }
 
   List<int> toBuffer() {
@@ -19199,6 +20040,7 @@ class UnlinkedUnit2Builder extends Object
     fb.Offset offset_imports;
     fb.Offset offset_informativeData;
     fb.Offset offset_lineStarts;
+    fb.Offset offset_partOfUri;
     fb.Offset offset_parts;
     if (!(_apiSignature == null || _apiSignature.isEmpty)) {
       offset_apiSignature = fbBuilder.writeListUint32(_apiSignature);
@@ -19217,6 +20059,9 @@ class UnlinkedUnit2Builder extends Object
     }
     if (!(_lineStarts == null || _lineStarts.isEmpty)) {
       offset_lineStarts = fbBuilder.writeListUint32(_lineStarts);
+    }
+    if (_partOfUri != null) {
+      offset_partOfUri = fbBuilder.writeString(_partOfUri);
     }
     if (!(_parts == null || _parts.isEmpty)) {
       offset_parts = fbBuilder
@@ -19243,6 +20088,9 @@ class UnlinkedUnit2Builder extends Object
     }
     if (offset_lineStarts != null) {
       fbBuilder.addOffset(5, offset_lineStarts);
+    }
+    if (offset_partOfUri != null) {
+      fbBuilder.addOffset(8, offset_partOfUri);
     }
     if (offset_parts != null) {
       fbBuilder.addOffset(4, offset_parts);
@@ -19279,6 +20127,7 @@ class _UnlinkedUnit2Impl extends Object
   List<idl.UnlinkedNamespaceDirective> _imports;
   List<idl.UnlinkedInformativeData> _informativeData;
   List<int> _lineStarts;
+  String _partOfUri;
   List<String> _parts;
 
   @override
@@ -19334,6 +20183,12 @@ class _UnlinkedUnit2Impl extends Object
   }
 
   @override
+  String get partOfUri {
+    _partOfUri ??= const fb.StringReader().vTableGet(_bc, _bcOffset, 8, '');
+    return _partOfUri;
+  }
+
+  @override
   List<String> get parts {
     _parts ??= const fb.ListReader<String>(fb.StringReader())
         .vTableGet(_bc, _bcOffset, 4, const <String>[]);
@@ -19367,6 +20222,9 @@ abstract class _UnlinkedUnit2Mixin implements idl.UnlinkedUnit2 {
     if (lineStarts.isNotEmpty) {
       _result["lineStarts"] = lineStarts;
     }
+    if (partOfUri != '') {
+      _result["partOfUri"] = partOfUri;
+    }
     if (parts.isNotEmpty) {
       _result["parts"] = parts;
     }
@@ -19382,6 +20240,7 @@ abstract class _UnlinkedUnit2Mixin implements idl.UnlinkedUnit2 {
         "imports": imports,
         "informativeData": informativeData,
         "lineStarts": lineStarts,
+        "partOfUri": partOfUri,
         "parts": parts,
       };
 

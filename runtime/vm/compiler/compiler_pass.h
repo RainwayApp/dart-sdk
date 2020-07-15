@@ -5,7 +5,9 @@
 #ifndef RUNTIME_VM_COMPILER_COMPILER_PASS_H_
 #define RUNTIME_VM_COMPILER_COMPILER_PASS_H_
 
-#ifndef DART_PRECOMPILED_RUNTIME
+#if defined(DART_PRECOMPILED_RUNTIME)
+#error "AOT runtime should not use compiler sources (including header files)"
+#endif  // defined(DART_PRECOMPILED_RUNTIME)
 
 #include <initializer_list>
 
@@ -48,8 +50,9 @@ namespace dart {
   V(TryCatchOptimization)                                                      \
   V(TryOptimizePatterns)                                                       \
   V(TypePropagation)                                                           \
+  V(UseTableDispatch)                                                          \
   V(WidenSmiToInt32)                                                           \
-  V(WriteBarrierElimination)
+  V(EliminateWriteBarriers)
 
 class AllocationSinking;
 class BlockScheduler;
@@ -67,18 +70,20 @@ struct CompilerPassState {
                     SpeculativeInliningPolicy* speculative_policy,
                     Precompiler* precompiler = NULL)
       : thread(thread),
-        flow_graph(flow_graph),
         precompiler(precompiler),
         inlining_depth(0),
         sinking(NULL),
         call_specializer(NULL),
         speculative_policy(speculative_policy),
         reorder_blocks(false),
-        sticky_flags(0) {
-  }
+        sticky_flags(0),
+        flow_graph_(flow_graph) {}
+
+  FlowGraph* flow_graph() const { return flow_graph_; }
+
+  void set_flow_graph(FlowGraph* flow_graph);
 
   Thread* const thread;
-  FlowGraph* flow_graph;
   Precompiler* const precompiler;
   int inlining_depth;
   AllocationSinking* sinking;
@@ -98,6 +103,9 @@ struct CompilerPassState {
   bool reorder_blocks;
 
   intptr_t sticky_flags;
+
+ private:
+  FlowGraph* flow_graph_;
 };
 
 class CompilerPass {
@@ -109,7 +117,7 @@ class CompilerPass {
   };
 
 #define ADD_ONE(name) +1
-  static const intptr_t kNumPasses = 0 COMPILER_PASS_LIST(ADD_ONE);
+  static constexpr intptr_t kNumPasses = 0 COMPILER_PASS_LIST(ADD_ONE);
 #undef ADD_ONE
 
   CompilerPass(Id id, const char* name) : name_(name), flags_(0) {
@@ -194,7 +202,5 @@ class CompilerPass {
 };
 
 }  // namespace dart
-
-#endif
 
 #endif  // RUNTIME_VM_COMPILER_COMPILER_PASS_H_

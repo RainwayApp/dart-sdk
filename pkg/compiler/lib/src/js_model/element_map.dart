@@ -47,7 +47,7 @@ abstract class JsToElementMap {
   FunctionType getFunctionType(ir.FunctionNode node);
 
   /// Return the [InterfaceType] corresponding to the [cls] with the given
-  /// [typeArguments].
+  /// [typeArguments] and [nullability].
   InterfaceType createInterfaceType(
       ir.Class cls, List<ir.DartType> typeArguments);
 
@@ -73,9 +73,6 @@ abstract class JsToElementMap {
 
   /// Returns the [ClassEntity] corresponding to the class [node].
   ClassEntity getClass(ir.Class node);
-
-  /// Returns the [TypedefType] corresponding to raw type of the typedef [node].
-  TypedefType getTypedefType(ir.Typedef node);
 
   /// Returns the super [MemberEntity] for a super invocation, get or set of
   /// [name] from the member [context].
@@ -108,6 +105,13 @@ abstract class JsToElementMap {
   ConstantValue getConstantValue(
       ir.Member memberContext, ir.Expression expression,
       {bool requireConstant: true, bool implicitNull: false});
+
+  /// Returns the [ConstantValue] for the sentinel used to indicate that a
+  /// parameter is required.
+  ///
+  /// These should only appear within the defaultValues object attached to
+  /// closures and tearoffs when emitting Function.apply.
+  ConstantValue getRequiredSentinelConstantValue();
 
   /// Return the [ImportEntity] corresponding to [node].
   ImportEntity getImport(ir.LibraryDependency node);
@@ -532,7 +536,7 @@ void forEachOrderedParameterByFunctionNode(
       position++) {
     ir.VariableDeclaration variable = node.positionalParameters[position];
     f(variable,
-        isOptional: position >= parameterStructure.requiredParameters,
+        isOptional: position >= parameterStructure.requiredPositionalParameters,
         isElided: position >= parameterStructure.positionalParameters);
   }
 

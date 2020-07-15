@@ -4,6 +4,7 @@
 
 import 'dart:collection';
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/source/error_processor.dart';
@@ -307,11 +308,8 @@ class ErrorFilterOptionValidator extends OptionsValidator {
   Set<String> _lintCodes;
 
   Set<String> get lintCodes {
-    if (_lintCodes == null) {
-      _lintCodes = Set.from(
-          Registry.ruleRegistry.rules.map((rule) => rule.name.toUpperCase()));
-    }
-    return _lintCodes;
+    return _lintCodes ??= Set.from(
+        Registry.ruleRegistry.rules.map((rule) => rule.name.toUpperCase()));
   }
 
   @override
@@ -410,6 +408,43 @@ class LinterOptionsValidator extends TopLevelOptionValidator {
   LinterOptionsValidator() : super('linter', const ['rules']);
 }
 
+/// Validates `analyzer` optional-checks value configuration options.
+class OptionalChecksValueValidator extends OptionsValidator {
+  ErrorBuilder builder = ErrorBuilder(AnalyzerOptions.optionalChecksOptions);
+  ErrorBuilder trueOrFalseBuilder = TrueOrFalseValueErrorBuilder();
+
+  @override
+  void validate(ErrorReporter reporter, YamlMap options) {
+    var analyzer = getValue(options, AnalyzerOptions.analyzer);
+    if (analyzer is YamlMap) {
+      var v = getValue(analyzer, AnalyzerOptions.optionalChecks);
+      if (v is YamlScalar) {
+        var value = toLowerCase(v.value);
+        if (value != AnalyzerOptions.chromeOsManifestChecks) {
+          builder.reportError(
+              reporter, AnalyzerOptions.chromeOsManifestChecks, v);
+        }
+      } else if (v is YamlMap) {
+        v.nodes.forEach((k, v) {
+          String key, value;
+          if (k is YamlScalar) {
+            key = k.value?.toString();
+            if (key != AnalyzerOptions.chromeOsManifestChecks) {
+              builder.reportError(
+                  reporter, AnalyzerOptions.chromeOsManifestChecks, k);
+            } else {
+              value = toLowerCase(v.value);
+              if (!AnalyzerOptions.trueOrFalse.contains(value)) {
+                trueOrFalseBuilder.reportError(reporter, key, v);
+              }
+            }
+          }
+        });
+      }
+    }
+  }
+}
+
 /// Validates options defined in an analysis options file.
 class OptionsFileValidator {
   /// The source being validated.
@@ -430,14 +465,6 @@ class OptionsFileValidator {
       source,
       isNonNullableByDefault: false,
     );
-    if (AnalysisEngine.ANALYSIS_OPTIONS_FILE == source.shortName) {
-      reporter.reportError(AnalysisError(
-          source,
-          0, // offset
-          1, // length
-          AnalysisOptionsHintCode.DEPRECATED_ANALYSIS_OPTIONS_FILE_NAME,
-          [source.shortName]));
-    }
     _validators.forEach((OptionsValidator v) => v.validate(reporter, options));
     return recorder.errors;
   }
@@ -487,43 +514,6 @@ class StrongModeOptionValueValidator extends OptionsValidator {
             value = toLowerCase(v.value);
             if (!AnalyzerOptions.trueOrFalse.contains(value)) {
               trueOrFalseBuilder.reportError(reporter, key, v);
-            }
-          }
-        });
-      }
-    }
-  }
-}
-
-/// Validates `analyzer` optional-checks value configuration options.
-class OptionalChecksValueValidator extends OptionsValidator {
-  ErrorBuilder builder = ErrorBuilder(AnalyzerOptions.optionalChecksOptions);
-  ErrorBuilder trueOrFalseBuilder = TrueOrFalseValueErrorBuilder();
-
-  @override
-  void validate(ErrorReporter reporter, YamlMap options) {
-    var analyzer = getValue(options, AnalyzerOptions.analyzer);
-    if (analyzer is YamlMap) {
-      var v = getValue(analyzer, AnalyzerOptions.optionalChecks);
-      if (v is YamlScalar) {
-        var value = toLowerCase(v.value);
-        if (value != AnalyzerOptions.chromeOsManifestChecks) {
-          builder.reportError(
-              reporter, AnalyzerOptions.chromeOsManifestChecks, v);
-        }
-      } else if (v is YamlMap) {
-        v.nodes.forEach((k, v) {
-          String key, value;
-          if (k is YamlScalar) {
-            key = k.value?.toString();
-            if (key != AnalyzerOptions.chromeOsManifestChecks) {
-              builder.reportError(
-                  reporter, AnalyzerOptions.chromeOsManifestChecks, k);
-            } else {
-              value = toLowerCase(v.value);
-              if (!AnalyzerOptions.trueOrFalse.contains(value)) {
-                trueOrFalseBuilder.reportError(reporter, key, v);
-              }
             }
           }
         });
@@ -587,11 +577,8 @@ class TrueOrFalseValueErrorBuilder extends ErrorBuilder {
 }
 
 class _OptionsProcessor {
-  static final Map<String, Object> defaults = {'analyzer': {}};
-
-  /**
-   * Apply the options in the given [optionMap] to the given analysis [options].
-   */
+  /// Apply the options in the given [optionMap] to the given analysis
+  /// [options].
   void applyToAnalysisOptions(AnalysisOptionsImpl options, YamlMap optionMap) {
     if (optionMap == null) {
       return;
@@ -617,7 +604,9 @@ class _OptionsProcessor {
             enabledExperiments.add(experimentName);
           }
         }
-        options.enabledExperiments = enabledExperiments;
+        options.contextFeatures = FeatureSet.fromEnableFlags(
+          enabledExperiments,
+        );
       }
 
       // Process optional checks options.
@@ -699,6 +688,31 @@ class _OptionsProcessor {
     }
   }
 
+  void _applyOptionalChecks(AnalysisOptionsImpl options, YamlNode config) {
+    if (config is YamlMap) {
+      config.nodes.forEach((k, v) {
+        if (k is YamlScalar && v is YamlScalar) {
+          _applyOptionalChecksOption(options, k.value?.toString(), v.value);
+        }
+      });
+    }
+    if (config is YamlScalar) {
+      if (config.value?.toString() == AnalyzerOptions.chromeOsManifestChecks) {
+        options.chromeOsManifestChecks = true;
+      }
+    }
+  }
+
+  void _applyOptionalChecksOption(
+      AnalysisOptionsImpl options, String feature, Object value) {
+    bool boolValue = toBool(value);
+    if (boolValue != null) {
+      if (feature == AnalyzerOptions.chromeOsManifestChecks) {
+        options.chromeOsManifestChecks = boolValue;
+      }
+    }
+  }
+
   void _applyProcessors(AnalysisOptionsImpl options, YamlNode codes) {
     ErrorConfig config = ErrorConfig(codes);
     options.errorProcessors = config.processors;
@@ -724,31 +738,6 @@ class _OptionsProcessor {
           _applyStrongModeOption(options, k.value?.toString(), v.value);
         }
       });
-    }
-  }
-
-  void _applyOptionalChecksOption(
-      AnalysisOptionsImpl options, String feature, Object value) {
-    bool boolValue = toBool(value);
-    if (boolValue != null) {
-      if (feature == AnalyzerOptions.chromeOsManifestChecks) {
-        options.chromeOsManifestChecks = boolValue;
-      }
-    }
-  }
-
-  void _applyOptionalChecks(AnalysisOptionsImpl options, YamlNode config) {
-    if (config is YamlMap) {
-      config.nodes.forEach((k, v) {
-        if (k is YamlScalar && v is YamlScalar) {
-          _applyOptionalChecksOption(options, k.value?.toString(), v.value);
-        }
-      });
-    }
-    if (config is YamlScalar) {
-      if (config.value?.toString() == AnalyzerOptions.chromeOsManifestChecks) {
-        options.chromeOsManifestChecks = true;
-      }
     }
   }
 

@@ -9,6 +9,7 @@ import 'package:_fe_analyzer_shared/src/testing/id_testing.dart';
 import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer/dart/element/null_safety_understanding_flag.dart';
 import 'package:analyzer/dart/element/type_system.dart';
 import 'package:analyzer/src/dart/analysis/testing_data.dart';
 import 'package:analyzer/src/dart/element/type.dart';
@@ -21,13 +22,14 @@ import '../util/id_testing_helper.dart';
 main(List<String> args) async {
   Directory dataDir = Directory.fromUri(Platform.script.resolve(
       '../../../_fe_analyzer_shared/test/flow_analysis/nullability/data'));
-  await runTests<String>(dataDir,
-      args: args,
-      supportedMarkers: cfeAnalyzerMarkers,
-      createUriForFileName: createUriForFileName,
-      onFailure: onFailure,
-      runTest:
-          runTestFor(const _NullabilityDataComputer(), [analyzerNnbdConfig]));
+  await NullSafetyUnderstandingFlag.enableNullSafetyTypes(() {
+    return runTests<String>(dataDir,
+        args: args,
+        createUriForFileName: createUriForFileName,
+        onFailure: onFailure,
+        runTest:
+            runTestFor(const _NullabilityDataComputer(), [analyzerNnbdConfig]));
+  });
 }
 
 class FlowTestBase {
@@ -80,8 +82,8 @@ class _NullabilityDataExtractor extends AstDataExtractor<String> {
         TypeImpl declaredType = (element as VariableElement).type;
         var isPromoted = promotedType != declaredType;
         if (isPromoted &&
-            _typeSystem.isNullable(declaredType) &&
-            !_typeSystem.isNullable(promotedType)) {
+            _typeSystem.isPotentiallyNullable(declaredType) &&
+            !_typeSystem.isPotentiallyNullable(promotedType)) {
           return 'nonNullable';
         }
       }
@@ -94,7 +96,7 @@ class _NullabilityDataInterpreter implements DataInterpreter<String> {
   const _NullabilityDataInterpreter();
 
   @override
-  String getText(String actualData) => actualData;
+  String getText(String actualData, [String indentation]) => actualData;
 
   @override
   String isAsExpected(String actualData, String expectedData) {

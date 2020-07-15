@@ -2,8 +2,10 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/src/error/codes.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
+import '../../../generated/elements_types_mixin.dart';
 import 'driver_resolution.dart';
 
 main() {
@@ -13,7 +15,8 @@ main() {
 }
 
 @reflectiveTest
-class ClassAliasDriverResolutionTest extends DriverResolutionTest {
+class ClassAliasDriverResolutionTest extends DriverResolutionTest
+    with ElementsTypesMixin {
   test_defaultConstructor() async {
     await assertNoErrorsInCode(r'''
 class A {}
@@ -43,7 +46,51 @@ class X = A with B implements C;
     assertElementTypeStrings(x.interfaces, ['C']);
   }
 
-  @failingTest
+  test_element_typeFunction_extends() async {
+    await assertNoErrorsInCode(r'''
+class A {}
+class X = Function with A;
+''');
+    var x = findElement.class_('X');
+    assertType(x.supertype, 'Object');
+  }
+
+  test_element_typeFunction_implements() async {
+    await assertNoErrorsInCode(r'''
+class A {}
+class B {}
+class X = Object with A implements A, Function, B;
+''');
+    var a = findElement.class_('A');
+    var b = findElement.class_('B');
+    var x = findElement.class_('X');
+    assertElementTypes(
+      x.interfaces,
+      [
+        interfaceTypeStar(a),
+        interfaceTypeStar(b),
+      ],
+    );
+  }
+
+  test_element_typeFunction_with() async {
+    await assertNoErrorsInCode(r'''
+class A {}
+class B {}
+class X = Object with A, Function, B;
+''');
+    var a = findElement.class_('A');
+    var b = findElement.class_('B');
+    var x = findElement.class_('X');
+    assertElementTypes(
+      x.mixins,
+      [
+        interfaceTypeStar(a),
+        interfaceTypeStar(b),
+      ],
+    );
+  }
+
   test_implicitConstructors_const() async {
     await assertNoErrorsInCode(r'''
 class A {
@@ -56,7 +103,58 @@ class C = A with M;
 
 const x = const C();
 ''');
-    // TODO(scheglov) add also negative test with fields
+  }
+
+  test_implicitConstructors_const_field() async {
+    await assertErrorsInCode(r'''
+class A {
+  const A();
+}
+
+class M {
+  int i = 0;
+}
+
+class C = A with M;
+
+const x = const C();
+''', [
+      error(CompileTimeErrorCode.CONST_INITIALIZED_WITH_NON_CONSTANT_VALUE, 83,
+          5),
+      error(CompileTimeErrorCode.CONST_WITH_NON_CONST, 83, 5),
+    ]);
+  }
+
+  test_implicitConstructors_const_getter() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  const A();
+}
+
+class M {
+  int get i => 0;
+}
+
+class C = A with M;
+
+const x = const C();
+''');
+  }
+
+  test_implicitConstructors_const_setter() async {
+    await assertNoErrorsInCode(r'''
+class A {
+  const A();
+}
+
+class M {
+  set(int i) {}
+}
+
+class C = A with M;
+
+const x = const C();
+''');
   }
 
   test_implicitConstructors_dependencies() async {

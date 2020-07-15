@@ -2,10 +2,12 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/visitor.dart';
 import 'package:analyzer/file_system/file_system.dart';
+import 'package:analyzer/src/context/packages.dart';
 import 'package:analyzer/src/dart/analysis/byte_store.dart';
 import 'package:analyzer/src/dart/analysis/driver.dart';
 import 'package:analyzer/src/dart/analysis/file_state.dart';
@@ -22,9 +24,7 @@ import 'package:analyzer/src/test_utilities/mock_sdk.dart';
 import 'package:analyzer/src/test_utilities/resource_provider_mixin.dart';
 import 'package:test/test.dart';
 
-/**
- * Finds an [Element] with the given [name].
- */
+/// Finds an [Element] with the given [name].
 Element findChildElement(Element root, String name, [ElementKind kind]) {
   Element result;
   root.accept(_ElementVisitorFunctionWrapper((Element element) {
@@ -66,8 +66,6 @@ class BaseAnalysisDriverTest with ResourceProviderMixin {
 
   List<String> enabledExperiments = [];
 
-  bool get disableChangesAndCacheAllResults => false;
-
   void addTestFile(String content, {bool priority = false}) {
     testCode = content;
     newFile(testFile, content: content);
@@ -99,14 +97,14 @@ class BaseAnalysisDriverTest with ResourceProviderMixin {
           ResourceUriResolver(resourceProvider)
         ]),
         createAnalysisOptions(),
-        disableChangesAndCacheAllResults: disableChangesAndCacheAllResults,
+        packages: Packages.empty,
         enableIndex: true,
         externalSummaries: externalSummaries);
   }
 
   AnalysisOptionsImpl createAnalysisOptions() => AnalysisOptionsImpl()
     ..useFastaParser = analyzer.Parser.useFasta
-    ..enabledExperiments = enabledExperiments;
+    ..contextFeatures = FeatureSet.fromEnableFlags(enabledExperiments);
 
   int findOffset(String search) {
     int offset = testCode.indexOf(search);
@@ -153,9 +151,7 @@ class BaseAnalysisDriverTest with ResourceProviderMixin {
   void tearDown() {}
 }
 
-/**
- * Wraps an [_ElementVisitorFunction] into a [GeneralizingElementVisitor].
- */
+/// Wraps an [_ElementVisitorFunction] into a [GeneralizingElementVisitor].
 class _ElementVisitorFunctionWrapper extends GeneralizingElementVisitor {
   final _ElementVisitorFunction function;
 

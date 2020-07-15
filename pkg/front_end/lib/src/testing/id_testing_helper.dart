@@ -6,10 +6,13 @@ import 'package:_fe_analyzer_shared/src/messages/severity.dart' show Severity;
 import 'package:_fe_analyzer_shared/src/testing/id.dart'
     show ActualData, ClassId, Id, IdKind, IdValue, MemberId, NodeId;
 import 'package:_fe_analyzer_shared/src/testing/id_testing.dart';
+import 'package:front_end/src/base/nnbd_mode.dart';
 import 'package:kernel/ast.dart';
+import 'package:kernel/target/targets.dart';
 import '../api_prototype/compiler_options.dart'
     show CompilerOptions, DiagnosticMessage;
-import '../api_prototype/experimental_flags.dart' show ExperimentalFlag;
+import '../api_prototype/experimental_flags.dart'
+    show AllowedExperimentalFlags, ExperimentalFlag;
 import '../api_prototype/terminal_color_support.dart'
     show printDiagnosticMessage;
 import '../base/common.dart';
@@ -41,12 +44,23 @@ class TestConfig {
   final String marker;
   final String name;
   final Map<ExperimentalFlag, bool> experimentalFlags;
+  final AllowedExperimentalFlags allowedExperimentalFlags;
   final Uri librariesSpecificationUri;
+  // TODO(johnniwinther): Tailor support to redefine selected platform
+  // classes/members only.
+  final bool compileSdk;
+  final TargetFlags targetFlags;
+  final NnbdMode nnbdMode;
 
   const TestConfig(this.marker, this.name,
-      {this.experimentalFlags = const {}, this.librariesSpecificationUri});
+      {this.experimentalFlags = const {},
+      this.allowedExperimentalFlags,
+      this.librariesSpecificationUri,
+      this.compileSdk: false,
+      this.targetFlags: const TargetFlags(),
+      this.nnbdMode: NnbdMode.Weak});
 
-  void customizeCompilerOptions(CompilerOptions options) {}
+  void customizeCompilerOptions(CompilerOptions options, TestData testData) {}
 }
 
 // TODO(johnniwinther): Support annotations for compile-time errors.
@@ -56,32 +70,47 @@ abstract class DataComputer<T> {
   /// Called before testing to setup flags needed for data collection.
   void setup() {}
 
+  // Called to allow for (awaited) inspection of the compilation result.
+  Future<void> inspectComponent(Component component) async {}
+
   /// Function that computes a data mapping for [member].
   ///
   /// Fills [actualMap] with the data.
-  void computeMemberData(InternalCompilerResult compilerResult, Member member,
+  void computeMemberData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Member member,
       Map<Id, ActualData<T>> actualMap,
       {bool verbose}) {}
 
   /// Function that computes a data mapping for [cls].
   ///
   /// Fills [actualMap] with the data.
-  void computeClassData(InternalCompilerResult compilerResult, Class cls,
+  void computeClassData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Class cls,
       Map<Id, ActualData<T>> actualMap,
       {bool verbose}) {}
 
   /// Function that computes a data mapping for [extension].
   ///
   /// Fills [actualMap] with the data.
-  void computeExtensionData(InternalCompilerResult compilerResult,
-      Extension extension, Map<Id, ActualData<T>> actualMap,
+  void computeExtensionData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Extension extension,
+      Map<Id, ActualData<T>> actualMap,
       {bool verbose}) {}
 
   /// Function that computes a data mapping for [library].
   ///
   /// Fills [actualMap] with the data.
-  void computeLibraryData(InternalCompilerResult compilerResult,
-      Library library, Map<Id, ActualData<T>> actualMap,
+  void computeLibraryData(
+      TestConfig config,
+      InternalCompilerResult compilerResult,
+      Library library,
+      Map<Id, ActualData<T>> actualMap,
       {bool verbose}) {}
 
   /// Returns `true` if this data computer supports tests with compile-time
@@ -92,13 +121,16 @@ abstract class DataComputer<T> {
   bool get supportsErrors => false;
 
   /// Returns data corresponding to [error].
-  T computeErrorData(InternalCompilerResult compiler, Id id,
+  T computeErrorData(TestConfig config, InternalCompilerResult compiler, Id id,
           List<FormattedMessage> errors) =>
       null;
 
   /// Returns the [DataInterpreter] used to check the actual data with the
   /// expected data.
   DataInterpreter<T> get dataValidator;
+
+  /// Returns `true` if data should be collected for member signatures.
+  bool get includeMemberSignatures => false;
 }
 
 class CfeCompiledData<T> extends CompiledData<T> {
@@ -120,9 +152,13 @@ class CfeCompiledData<T> extends CompiledData<T> {
       int offset;
       if (id.className != null) {
         Class cls = lookupClass(library, id.className);
-        member = lookupClassMember(cls, id.memberName);
-        offset = member.fileOffset;
-        if (offset == -1) {
+        member = lookupClassMember(cls, id.memberName, required: false);
+        if (member != null) {
+          offset = member.fileOffset;
+          if (offset == -1) {
+            offset = cls.fileOffset;
+          }
+        } else {
           offset = cls.fileOffset;
         }
       } else {
@@ -187,14 +223,16 @@ RunTestFunction<T> runTestFor<T>(
       bool verbose,
       bool succinct,
       bool printCode,
-      Map<String, List<String>> skipMap}) {
+      Map<String, List<String>> skipMap,
+      Uri nullUri}) {
     return runTest(testData, dataComputer, testedConfigs,
         testAfterFailures: testAfterFailures,
         verbose: verbose,
         succinct: succinct,
         printCode: printCode,
         onFailure: onFailure,
-        skipMap: skipMap);
+        skipMap: skipMap,
+        nullUri: nullUri);
   };
 }
 
@@ -210,10 +248,18 @@ Future<Map<String, TestResult<T>>> runTest<T>(TestData testData,
     bool forUserLibrariesOnly: true,
     Iterable<Id> globalIds: const <Id>[],
     void onFailure(String message),
-    Map<String, List<String>> skipMap}) async {
+    Map<String, List<String>> skipMap,
+    Uri nullUri}) async {
+  for (TestConfig config in testedConfigs) {
+    if (!testData.expectedMaps.containsKey(config.marker)) {
+      throw new ArgumentError("Unexpected test marker '${config.marker}'. "
+          "Supported markers: ${testData.expectedMaps.keys}.");
+    }
+  }
+
   Map<String, TestResult<T>> results = {};
   for (TestConfig config in testedConfigs) {
-    if (skipForConfig(testData.name, config.name, skipMap)) {
+    if (skipForConfig(testData.name, config.marker, skipMap)) {
       continue;
     }
     results[config.marker] = await runTestForConfig(
@@ -222,7 +268,8 @@ Future<Map<String, TestResult<T>>> runTest<T>(TestData testData,
         onFailure: onFailure,
         verbose: verbose,
         succinct: succinct,
-        printCode: printCode);
+        printCode: printCode,
+        nullUri: nullUri);
   }
   return results;
 }
@@ -238,7 +285,8 @@ Future<TestResult<T>> runTestForConfig<T>(
     bool printCode,
     bool forUserLibrariesOnly: true,
     Iterable<Id> globalIds: const <Id>[],
-    void onFailure(String message)}) async {
+    void onFailure(String message),
+    Uri nullUri}) async {
   MemberAnnotations<IdValue> memberAnnotations =
       testData.expectedMaps[config.marker];
   Iterable<Id> globalIds = memberAnnotations.globalData.keys;
@@ -251,15 +299,19 @@ Future<TestResult<T>> runTestForConfig<T>(
     if (!succinct) printDiagnosticMessage(message, print);
   };
   options.debugDump = printCode;
+  options.target = new NoneTarget(config.targetFlags);
   options.experimentalFlags.addAll(config.experimentalFlags);
+  options.allowedExperimentalFlags = config.allowedExperimentalFlags;
+  options.nnbdMode = config.nnbdMode;
   if (config.librariesSpecificationUri != null) {
     Set<Uri> testFiles =
         testData.memorySourceFiles.keys.map(createUriForFileName).toSet();
     if (testFiles.contains(config.librariesSpecificationUri)) {
       options.librariesSpecificationUri = config.librariesSpecificationUri;
+      options.compileSdk = config.compileSdk;
     }
   }
-  config.customizeCompilerOptions(options);
+  config.customizeCompilerOptions(options, testData);
   InternalCompilerResult compilerResult = await compileScript(
       testData.memorySourceFiles,
       options: options,
@@ -271,7 +323,7 @@ Future<TestResult<T>> runTestForConfig<T>(
   Map<Id, ActualData<T>> globalData = <Id, ActualData<T>>{};
 
   Map<Id, ActualData<T>> actualMapForUri(Uri uri) {
-    return actualMaps.putIfAbsent(uri, () => <Id, ActualData<T>>{});
+    return actualMaps.putIfAbsent(uri ?? nullUri, () => <Id, ActualData<T>>{});
   }
 
   if (errors.isNotEmpty) {
@@ -283,15 +335,20 @@ Future<TestResult<T>> runTestForConfig<T>(
     Map<Uri, Map<int, List<FormattedMessage>>> errorMap = {};
     for (FormattedMessage error in errors) {
       Map<int, List<FormattedMessage>> map =
-          errorMap.putIfAbsent(error.uri, () => {});
+          errorMap.putIfAbsent(error.uri ?? nullUri, () => {});
       List<FormattedMessage> list = map.putIfAbsent(error.charOffset, () => []);
       list.add(error);
     }
 
     errorMap.forEach((Uri uri, Map<int, List<FormattedMessage>> map) {
       map.forEach((int offset, List<DiagnosticMessage> list) {
+        if (offset == null || offset < 0) {
+          // Position errors without offset in the begin of the file.
+          offset = 0;
+        }
         NodeId id = new NodeId(offset, IdKind.error);
-        T data = dataComputer.computeErrorData(compilerResult, id, list);
+        T data =
+            dataComputer.computeErrorData(config, compilerResult, id, list);
         if (data != null) {
           Map<Id, ActualData<T>> actualMap = actualMapForUri(uri);
           actualMap[id] = new ActualData<T>(id, data, uri, offset, list);
@@ -308,6 +365,12 @@ Future<TestResult<T>> runTestForConfig<T>(
   }
 
   void processMember(Member member, Map<Id, ActualData<T>> actualMap) {
+    if (!dataComputer.includeMemberSignatures && member is Procedure) {
+      if (member.isMemberSignature ||
+          (member.isForwardingStub && !member.isForwardingSemiStub)) {
+        return;
+      }
+    }
     if (member.enclosingClass != null) {
       if (member.enclosingClass.isEnum) {
         if (member is Constructor ||
@@ -320,17 +383,18 @@ Future<TestResult<T>> runTestForConfig<T>(
         return;
       }
     }
-    dataComputer.computeMemberData(compilerResult, member, actualMap,
+    dataComputer.computeMemberData(config, compilerResult, member, actualMap,
         verbose: verbose);
   }
 
   void processClass(Class cls, Map<Id, ActualData<T>> actualMap) {
-    dataComputer.computeClassData(compilerResult, cls, actualMap,
+    dataComputer.computeClassData(config, compilerResult, cls, actualMap,
         verbose: verbose);
   }
 
   void processExtension(Extension extension, Map<Id, ActualData<T>> actualMap) {
-    dataComputer.computeExtensionData(compilerResult, extension, actualMap,
+    dataComputer.computeExtensionData(
+        config, compilerResult, extension, actualMap,
         verbose: verbose);
   }
 
@@ -340,13 +404,15 @@ Future<TestResult<T>> runTestForConfig<T>(
             library.importUri.scheme == 'package');
   }
 
+  await dataComputer.inspectComponent(component);
+
   for (Library library in component.libraries) {
     if (excludeLibrary(library) &&
         !testData.memorySourceFiles.containsKey(library.fileUri.path)) {
       continue;
     }
     dataComputer.computeLibraryData(
-        compilerResult, library, actualMapFor(library));
+        config, compilerResult, library, actualMapFor(library));
     for (Class cls in library.classes) {
       processClass(cls, actualMapFor(cls));
       for (Member member in cls.members) {
@@ -429,13 +495,13 @@ void printMessageInLocation(
     Map<Uri, Source> uriToSource, Uri uri, int offset, String message,
     {bool succinct: false}) {
   if (uri == null) {
-    print(message);
+    print("(null uri)@$offset: $message");
   } else {
     Source source = uriToSource[uri];
     if (source == null) {
       print('$uri@$offset: $message');
     } else {
-      if (offset != null) {
+      if (offset != null && offset >= 1) {
         Location location = source.getLocation(uri, offset);
         print('$location: $message');
         if (!succinct) {

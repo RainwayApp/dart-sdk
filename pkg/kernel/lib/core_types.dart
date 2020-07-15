@@ -59,6 +59,7 @@ class CoreTypes {
   Class _invocationMirrorClass;
   Constructor _invocationMirrorWithTypeConstructor;
   Constructor _noSuchMethodErrorDefaultConstructor;
+  Procedure _listDefaultConstructor;
   Procedure _listFromConstructor;
   Procedure _listUnmodifiableConstructor;
   Procedure _identicalProcedure;
@@ -73,11 +74,12 @@ class CoreTypes {
 
   Library _asyncLibrary;
   Class _futureClass;
+  Class _deprecatedFutureOrClass;
   Class _stackTraceClass;
   Class _streamClass;
   Class _asyncAwaitCompleterClass;
-  Class _futureOrClass;
   Constructor _asyncAwaitCompleterConstructor;
+  Procedure _asyncAwaitCompleterStartProcedure;
   Procedure _completeOnAsyncReturnProcedure;
   Procedure _completerCompleteError;
   Constructor _syncIterableDefaultConstructor;
@@ -158,9 +160,6 @@ class CoreTypes {
   InterfaceType _streamLegacyRawType;
   InterfaceType _streamNullableRawType;
   InterfaceType _streamNonNullableRawType;
-  InterfaceType _futureOrLegacyRawType;
-  InterfaceType _futureOrNullableRawType;
-  InterfaceType _futureOrNonNullableRawType;
   InterfaceType _pragmaLegacyRawType;
   InterfaceType _pragmaNullableRawType;
   InterfaceType _pragmaNonNullableRawType;
@@ -260,6 +259,11 @@ class CoreTypes {
         index.getMember('dart:async', '_AsyncAwaitCompleter', '');
   }
 
+  Procedure get asyncAwaitCompleterStartProcedure {
+    return _asyncAwaitCompleterStartProcedure ??=
+        index.getMember('dart:async', '_AsyncAwaitCompleter', 'start');
+  }
+
   Member get completeOnAsyncReturn {
     return _completeOnAsyncReturnProcedure ??=
         index.getTopLevelMember('dart:async', '_completeOnAsyncReturn');
@@ -290,9 +294,10 @@ class CoreTypes {
     return _futureClass ??= index.getClass('dart:core', 'Future');
   }
 
-  Class get futureOrClass {
-    return _futureOrClass ??= (index.tryGetClass('dart:core', 'FutureOr') ??
-        index.getClass('dart:async', 'FutureOr'));
+  // TODO(dmitryas): Remove it when FutureOrType is fully supported.
+  Class get deprecatedFutureOrClass {
+    return _deprecatedFutureOrClass ??=
+        index.getClass('dart:async', 'FutureOr');
   }
 
   Procedure get identicalProcedure {
@@ -347,6 +352,10 @@ class CoreTypes {
 
   Class get listClass {
     return _listClass ??= index.getClass('dart:core', 'List');
+  }
+
+  Procedure get listDefaultConstructor {
+    return _listDefaultConstructor ??= index.getMember('dart:core', 'List', '');
   }
 
   Procedure get listFromConstructor {
@@ -1107,39 +1116,6 @@ class CoreTypes {
     }
   }
 
-  InterfaceType get futureOrLegacyRawType {
-    return _futureOrLegacyRawType ??= _legacyRawTypes[futureOrClass] ??=
-        new InterfaceType(futureOrClass, Nullability.legacy,
-            const <DartType>[const DynamicType()]);
-  }
-
-  InterfaceType get futureOrNullableRawType {
-    return _futureOrNullableRawType ??= _nullableRawTypes[futureOrClass] ??=
-        new InterfaceType(futureOrClass, Nullability.nullable,
-            const <DartType>[const DynamicType()]);
-  }
-
-  InterfaceType get futureOrNonNullableRawType {
-    return _futureOrNonNullableRawType ??=
-        _nonNullableRawTypes[futureOrClass] ??= new InterfaceType(futureOrClass,
-            Nullability.nonNullable, const <DartType>[const DynamicType()]);
-  }
-
-  InterfaceType futureOrRawType(Nullability nullability) {
-    switch (nullability) {
-      case Nullability.legacy:
-        return futureOrLegacyRawType;
-      case Nullability.nullable:
-        return futureOrNullableRawType;
-      case Nullability.nonNullable:
-        return futureOrNonNullableRawType;
-      case Nullability.undetermined:
-      default:
-        throw new StateError(
-            "Unsupported nullability $nullability on an InterfaceType.");
-    }
-  }
-
   InterfaceType get pragmaLegacyRawType {
     return _pragmaLegacyRawType ??= _legacyRawTypes[pragmaClass] ??=
         new InterfaceType(pragmaClass, Nullability.legacy, const <DartType>[]);
@@ -1221,7 +1197,8 @@ class CoreTypes {
           getAsTypeArguments(klass.typeParameters, klass.enclosingLibrary));
     }
     if (result.nullability != nullability) {
-      return _thisInterfaceTypes[klass] = result.withNullability(nullability);
+      return _thisInterfaceTypes[klass] =
+          result.withDeclaredNullability(nullability);
     }
     return result;
   }
@@ -1233,7 +1210,8 @@ class CoreTypes {
           getAsTypeArguments(typedef.typeParameters, typedef.enclosingLibrary));
     }
     if (result.nullability != nullability) {
-      return _thisTypedefTypes[typedef] = result.withNullability(nullability);
+      return _thisTypedefTypes[typedef] =
+          result.withDeclaredNullability(nullability);
     }
     return result;
   }
@@ -1253,8 +1231,117 @@ class CoreTypes {
               klass.typeParameters.length, const BottomType()));
     }
     if (result.nullability != nullability) {
-      return _bottomInterfaceTypes[klass] = result.withNullability(nullability);
+      return _bottomInterfaceTypes[klass] =
+          result.withDeclaredNullability(nullability);
     }
     return result;
+  }
+
+  /// Checks if [type] satisfies the TOP predicate.
+  ///
+  /// For the definition of TOP see the following:
+  /// https://github.com/dart-lang/language/blob/master/resources/type-system/upper-lower-bounds.md#helper-predicates
+  bool isTop(DartType type) {
+    if (type is InvalidType) return false;
+
+    // TOP(dynamic) is true.
+    if (type is DynamicType) return true;
+
+    // TOP(void) is true.
+    if (type is VoidType) return true;
+
+    // TOP(T?) is true iff TOP(T) or OBJECT(T).
+    // TOP(T*) is true iff TOP(T) or OBJECT(T).
+    if (type.declaredNullability == Nullability.nullable ||
+        type.declaredNullability == Nullability.legacy) {
+      DartType nonNullableType =
+          type.withDeclaredNullability(Nullability.nonNullable);
+      assert(
+          !identical(type, nonNullableType),
+          "Setting the declared nullability of type '${type}' "
+          "to non-nullable was supposed to change the type, but it remained the same.");
+      return isTop(nonNullableType) || isObject(nonNullableType);
+    }
+
+    // TOP(FutureOr<T>) is TOP(T).
+    if (type is FutureOrType) {
+      return isTop(type.typeArgument);
+    }
+
+    return false;
+  }
+
+  /// Checks if [type] satisfies the OBJECT predicate.
+  ///
+  /// For the definition of OBJECT see the following:
+  /// https://github.com/dart-lang/language/blob/master/resources/type-system/upper-lower-bounds.md#helper-predicates
+  bool isObject(DartType type) {
+    if (type is InvalidType) return false;
+
+    // OBJECT(Object) is true.
+    if (type is InterfaceType &&
+        type.classNode == objectClass &&
+        type.nullability == Nullability.nonNullable) {
+      return true;
+    }
+
+    // OBJECT(FutureOr<T>) is OBJECT(T).
+    if (type is FutureOrType && type.nullability == Nullability.nonNullable) {
+      return isObject(type.typeArgument);
+    }
+
+    return false;
+  }
+
+  /// Checks if [type] satisfies the BOTTOM predicate.
+  ///
+  /// For the definition of BOTTOM see the following:
+  /// https://github.com/dart-lang/language/blob/master/resources/type-system/upper-lower-bounds.md#helper-predicates
+  bool isBottom(DartType type) {
+    if (type is InvalidType) return false;
+
+    // BOTTOM(Never) is true.
+    if (type is NeverType && type.nullability == Nullability.nonNullable) {
+      return true;
+    }
+
+    // BOTTOM(X&T) is true iff BOTTOM(T).
+    if (type is TypeParameterType &&
+        type.promotedBound != null &&
+        type.isPotentiallyNonNullable) {
+      return isBottom(type.promotedBound);
+    }
+
+    // BOTTOM(X extends T) is true iff BOTTOM(T).
+    if (type is TypeParameterType && type.isPotentiallyNonNullable) {
+      assert(type.promotedBound == null);
+      return isBottom(type.parameter.bound);
+    }
+
+    if (type is BottomType) return true;
+
+    return false;
+  }
+
+  /// Checks if [type] satisfies the NULL predicate.
+  ///
+  /// For the definition of NULL see the following:
+  /// https://github.com/dart-lang/language/blob/master/resources/type-system/upper-lower-bounds.md#helper-predicates
+  bool isNull(DartType type) {
+    if (type is InvalidType) return false;
+
+    // NULL(Null) is true.
+    if (type == nullType) return true;
+
+    // NULL(T?) is true iff NULL(T) or BOTTOM(T).
+    // NULL(T*) is true iff NULL(T) or BOTTOM(T).
+    if (type.nullability == Nullability.nullable ||
+        type.nullability == Nullability.legacy) {
+      DartType nonNullableType =
+          type.withDeclaredNullability(Nullability.nonNullable);
+      return isBottom(nonNullableType);
+    }
+
+    return false;
   }
 }

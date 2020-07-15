@@ -22,20 +22,20 @@ FreeListElement* FreeListElement::AsElement(uword addr, intptr_t size) {
   FreeListElement* result = reinterpret_cast<FreeListElement*>(addr);
 
   uint32_t tags = 0;
-  tags = RawObject::SizeTag::update(size, tags);
-  tags = RawObject::ClassIdTag::update(kFreeListElement, tags);
+  tags = ObjectLayout::SizeTag::update(size, tags);
+  tags = ObjectLayout::ClassIdTag::update(kFreeListElement, tags);
   ASSERT((addr & kNewObjectAlignmentOffset) == kOldObjectAlignmentOffset);
-  tags = RawObject::OldBit::update(true, tags);
-  tags = RawObject::OldAndNotMarkedBit::update(true, tags);
-  tags = RawObject::OldAndNotRememberedBit::update(true, tags);
-  tags = RawObject::NewBit::update(false, tags);
+  tags = ObjectLayout::OldBit::update(true, tags);
+  tags = ObjectLayout::OldAndNotMarkedBit::update(true, tags);
+  tags = ObjectLayout::OldAndNotRememberedBit::update(true, tags);
+  tags = ObjectLayout::NewBit::update(false, tags);
   result->tags_ = tags;
 #if defined(HASH_IN_OBJECT_HEADER)
   // Clearing this is mostly for neatness. The identityHashCode
   // of free list entries is not used.
   result->hash_ = 0;
 #endif
-  if (size > RawObject::SizeTag::kMaxSizeTag) {
+  if (size > ObjectLayout::SizeTag::kMaxSizeTag) {
     *result->SizeAddress() = size;
   }
   result->set_next(NULL);
@@ -51,11 +51,10 @@ void FreeListElement::Init() {
 
 intptr_t FreeListElement::HeaderSizeFor(intptr_t size) {
   if (size == 0) return 0;
-  return ((size > RawObject::SizeTag::kMaxSizeTag) ? 3 : 2) * kWordSize;
+  return ((size > ObjectLayout::SizeTag::kMaxSizeTag) ? 3 : 2) * kWordSize;
 }
 
-FreeList::FreeList()
-    : mutex_(), freelist_search_budget_(kInitialFreeListSearchBudget) {
+FreeList::FreeList() : mutex_() {
   Reset();
 }
 
@@ -376,6 +375,43 @@ FreeListElement* FreeList::TryAllocateLargeLocked(intptr_t minimum_size) {
     current = next;
   }
   return NULL;
+}
+
+void FreeList::MergeFrom(FreeList* donor, bool is_protected) {
+  // The [other] free list is from a dying isolate. There are no other threads
+  // accessing it, so there is no need to lock here.
+  MutexLocker ml(&mutex_);
+  for (intptr_t i = 0; i < (kNumLists + 1); ++i) {
+    FreeListElement* donor_head = donor->free_lists_[i];
+    if (donor_head != nullptr) {
+      // If we didn't have a freelist element before we have to set the bit now,
+      // since we will get 1+ elements from [other].
+      FreeListElement* old_head = free_lists_[i];
+      if (old_head == nullptr && i != kNumLists) {
+        free_map_.Set(i, true);
+      }
+
+      // Chain other's list in.
+      FreeListElement* last = donor_head;
+      while (last->next() != nullptr) {
+        last = last->next();
+      }
+
+      if (is_protected) {
+        VirtualMemory::Protect(reinterpret_cast<void*>(last), sizeof(*last),
+                               VirtualMemory::kReadWrite);
+      }
+      last->set_next(old_head);
+      if (is_protected) {
+        VirtualMemory::Protect(reinterpret_cast<void*>(last), sizeof(*last),
+                               VirtualMemory::kReadExecute);
+      }
+      free_lists_[i] = donor_head;
+    }
+  }
+
+  last_free_small_size_ =
+      Utils::Maximum(last_free_small_size_, donor->last_free_small_size_);
 }
 
 }  // namespace dart

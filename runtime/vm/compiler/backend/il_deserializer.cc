@@ -2,12 +2,11 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-#if !defined(DART_PRECOMPILED_RUNTIME)
-
 #include "vm/compiler/backend/il_deserializer.h"
 
 #include "vm/compiler/backend/il_serializer.h"
 #include "vm/compiler/backend/range_analysis.h"
+#include "vm/compiler/call_specializer.h"
 #include "vm/compiler/jit/compiler.h"
 #include "vm/flags.h"
 #include "vm/json_writer.h"
@@ -126,7 +125,7 @@ static void PrintRoundTripResults(Zone* zone, const RoundTripResults& results) {
 }
 
 void FlowGraphDeserializer::RoundTripSerialization(CompilerPassState* state) {
-  auto const flow_graph = state->flow_graph;
+  auto const flow_graph = state->flow_graph();
 
   // The deserialized flow graph must be in the same zone as the original flow
   // graph, to ensure it has the right lifetime. Thus, we leave an explicit
@@ -195,7 +194,9 @@ void FlowGraphDeserializer::RoundTripSerialization(CompilerPassState* state) {
 
   if (FLAG_print_json_round_trip_results) PrintRoundTripResults(zone, results);
 
-  if (new_graph != nullptr) state->flow_graph = new_graph;
+  if (new_graph != nullptr) {
+    state->set_flow_graph(new_graph);
+  }
 }
 
 #define HANDLED_CASE(name)                                                     \
@@ -219,8 +220,20 @@ void FlowGraphDeserializer::AllUnhandledInstructions(
        block_it.Advance()) {
     auto const entry = block_it.Current();
     if (!IsHandledInstruction(entry)) unhandled->Add(entry);
-    // Don't check the Phi definitions in JoinEntrys, as those are now handled
-    // and also parsed differently from other definitions.
+    // Check that the Phi instructions in JoinEntrys do not have pair
+    // representation.
+    if (auto const join_block = entry->AsJoinEntry()) {
+      auto const phis = join_block->phis();
+      auto const length = ((phis == nullptr) ? 0 : phis->length());
+      for (intptr_t i = 0; i < length; i++) {
+        auto const current = phis->At(i);
+        for (intptr_t j = 0; j < current->InputCount(); j++) {
+          if (current->InputAt(j)->definition()->HasPairRepresentation()) {
+            unhandled->Add(current);
+          }
+        }
+      }
+    }
     if (auto const def_block = entry->AsBlockEntryWithInitialDefs()) {
       auto const defs = def_block->initial_definitions();
       for (intptr_t i = 0; i < defs->length(); i++) {
@@ -346,7 +359,13 @@ FlowGraph* FlowGraphDeserializer::ParseFlowGraph() {
   }
 
   flow_graph_->set_max_block_id(max_block_id_);
-  flow_graph_->set_current_ssa_temp_index(max_ssa_index_ + 1);
+  // The highest numbered SSA temp might need two slots (e.g. for unboxed
+  // integers on 32-bit platforms), so we add 2 to the highest seen SSA temp
+  // index to get to the new current SSA temp index. In cases where the highest
+  // numbered SSA temp originally had only one slot assigned, this can result
+  // in different SSA temp numbering in later passes between the original and
+  // deserialized graphs.
+  flow_graph_->set_current_ssa_temp_index(max_ssa_index_ + 2);
   // Now that the deserializer has finished re-creating all the blocks in the
   // flow graph, the blocks must be rediscovered. In addition, if ComputeSSA
   // has already been run, dominators must be recomputed as well.
@@ -779,10 +798,6 @@ Instruction* FlowGraphDeserializer::ParseInstruction(SExpList* list) {
 
   if (inst == nullptr) return nullptr;
   if (env != nullptr) env->DeepCopyTo(zone(), inst);
-  if (auto const lifetime_sexp =
-          CheckInteger(list->ExtraLookupValue("lifetime_position"))) {
-    inst->set_lifetime_position(lifetime_sexp->value());
-  }
   return inst;
 }
 
@@ -870,22 +885,18 @@ AssertAssignableInstr* FlowGraphDeserializer::DeserializeAssertAssignable(
   auto const val = ParseValue(Retrieve(sexp, 1));
   if (val == nullptr) return nullptr;
 
-  auto const inst_type_args = ParseValue(Retrieve(sexp, 2));
+  auto const dst_type = ParseValue(Retrieve(sexp, 2));
+  if (dst_type == nullptr) return nullptr;
+
+  auto const inst_type_args = ParseValue(Retrieve(sexp, 3));
   if (inst_type_args == nullptr) return nullptr;
 
-  auto const func_type_args = ParseValue(Retrieve(sexp, 3));
+  auto const func_type_args = ParseValue(Retrieve(sexp, 4));
   if (func_type_args == nullptr) return nullptr;
-
-  auto& dst_type = AbstractType::Handle(zone());
-  auto const dst_type_sexp = Retrieve(sexp, "type");
-  if (!ParseDartValue(dst_type_sexp, &dst_type)) return nullptr;
 
   auto& dst_name = String::ZoneHandle(zone());
   auto const dst_name_sexp = Retrieve(sexp, "name");
   if (!ParseDartValue(dst_name_sexp, &dst_name)) return nullptr;
-
-  // TODO(regis): Serialize/deserialize nnbd_mode.
-  auto nnbd_mode = NNBDMode::kLegacyLib;
 
   auto kind = AssertAssignableInstr::Kind::kUnknown;
   if (auto const kind_sexp = CheckSymbol(sexp->ExtraLookupValue("kind"))) {
@@ -896,8 +907,8 @@ AssertAssignableInstr* FlowGraphDeserializer::DeserializeAssertAssignable(
   }
 
   return new (zone())
-      AssertAssignableInstr(info.token_pos, val, inst_type_args, func_type_args,
-                            dst_type, dst_name, info.deopt_id, nnbd_mode, kind);
+      AssertAssignableInstr(info.token_pos, val, dst_type, inst_type_args,
+                            func_type_args, dst_name, info.deopt_id, kind);
 }
 
 AssertBooleanInstr* FlowGraphDeserializer::DeserializeAssertBoolean(
@@ -1001,10 +1012,10 @@ ConstantInstr* FlowGraphDeserializer::DeserializeConstant(
 DebugStepCheckInstr* FlowGraphDeserializer::DeserializeDebugStepCheck(
     SExpList* sexp,
     const InstrInfo& info) {
-  auto kind = RawPcDescriptors::kAnyKind;
+  auto kind = PcDescriptorsLayout::kAnyKind;
   if (auto const kind_sexp = CheckSymbol(Retrieve(sexp, "stub_kind"))) {
-    if (!RawPcDescriptors::ParseKind(kind_sexp->value(), &kind)) {
-      StoreError(kind_sexp, "not a valid RawPcDescriptors::Kind name");
+    if (!PcDescriptorsLayout::ParseKind(kind_sexp->value(), &kind)) {
+      StoreError(kind_sexp, "not a valid PcDescriptorsLayout::Kind name");
       return nullptr;
     }
   }
@@ -1026,7 +1037,12 @@ InstanceCallInstr* FlowGraphDeserializer::DeserializeInstanceCall(
     SExpList* sexp,
     const InstrInfo& info) {
   auto& interface_target = Function::ZoneHandle(zone());
+  auto& tearoff_interface_target = Function::ZoneHandle(zone());
   if (!ParseDartValue(Retrieve(sexp, "interface_target"), &interface_target)) {
+    return nullptr;
+  }
+  if (!ParseDartValue(Retrieve(sexp, "tearoff_interface_target"),
+                      &tearoff_interface_target)) {
     return nullptr;
   }
   auto& function_name = String::ZoneHandle(zone());
@@ -1036,6 +1052,8 @@ InstanceCallInstr* FlowGraphDeserializer::DeserializeInstanceCall(
     if (!ParseDartValue(name_sexp, &function_name)) return nullptr;
   } else if (!interface_target.IsNull()) {
     function_name = interface_target.name();
+  } else if (!tearoff_interface_target.IsNull()) {
+    function_name = tearoff_interface_target.name();
   }
 
   auto token_kind = Token::Kind::kILLEGAL;
@@ -1059,7 +1077,7 @@ InstanceCallInstr* FlowGraphDeserializer::DeserializeInstanceCall(
   auto const inst = new (zone()) InstanceCallInstr(
       info.token_pos, function_name, token_kind, call_info.inputs,
       call_info.type_args_len, call_info.argument_names, checked_arg_count,
-      info.deopt_id, interface_target);
+      info.deopt_id, interface_target, tearoff_interface_target);
 
   if (call_info.result_type != nullptr) {
     inst->SetResultType(zone(), *call_info.result_type);
@@ -1093,7 +1111,14 @@ LoadFieldInstr* FlowGraphDeserializer::DeserializeLoadField(
   const Slot* slot;
   if (!ParseSlot(CheckTaggedList(Retrieve(sexp, 2)), &slot)) return nullptr;
 
-  return new (zone()) LoadFieldInstr(instance, *slot, info.token_pos);
+  bool calls_initializer = false;
+  if (auto const calls_initializer_sexp =
+          CheckBool(sexp->ExtraLookupValue("calls_initializer"))) {
+    calls_initializer = calls_initializer_sexp->value();
+  }
+
+  return new (zone()) LoadFieldInstr(instance, *slot, info.token_pos,
+                                     calls_initializer, info.deopt_id);
 }
 
 NativeCallInstr* FlowGraphDeserializer::DeserializeNativeCall(
@@ -1128,7 +1153,19 @@ ParameterInstr* FlowGraphDeserializer::DeserializeParameter(
     const InstrInfo& info) {
   ASSERT(current_block_ != nullptr);
   if (auto const index_sexp = CheckInteger(Retrieve(sexp, 1))) {
-    return new (zone()) ParameterInstr(index_sexp->value(), current_block_);
+    const auto param_offset_sexp =
+        CheckInteger(sexp->ExtraLookupValue("param_offset"));
+    ASSERT(param_offset_sexp != nullptr);
+    const auto representation_sexp =
+        CheckSymbol(sexp->ExtraLookupValue("representation"));
+    Representation representation;
+    if (!Location::ParseRepresentation(representation_sexp->value(),
+                                       &representation)) {
+      StoreError(representation_sexp, "unknown parameter representation");
+    }
+    return new (zone())
+        ParameterInstr(index_sexp->value(), param_offset_sexp->value(),
+                       current_block_, representation);
   }
   return nullptr;
 }
@@ -1423,6 +1460,10 @@ bool FlowGraphDeserializer::ParseDartValue(SExpression* sexp, Object* out) {
     // We'll use the null value in *out as a marker later, so go ahead and exit
     // early if we parse one.
     if (sym->Equals("null")) return true;
+    if (sym->Equals("sentinel")) {
+      *out = Object::sentinel().raw();
+      return true;
+    }
 
     // The only other symbols that should appear in Dart value position are
     // names of constant definitions.
@@ -1606,13 +1647,13 @@ bool FlowGraphDeserializer::ParseFunction(SExpList* list, Object* out) {
   auto& function = Function::Cast(*out);
   // Check the kind expected by the S-expression if one was specified.
   if (auto const kind_sexp = CheckSymbol(list->ExtraLookupValue("kind"))) {
-    RawFunction::Kind kind;
-    if (!RawFunction::ParseKind(kind_sexp->value(), &kind)) {
+    FunctionLayout::Kind kind;
+    if (!FunctionLayout::ParseKind(kind_sexp->value(), &kind)) {
       StoreError(kind_sexp, "unexpected function kind");
       return false;
     }
     if (function.kind() != kind) {
-      auto const kind_str = RawFunction::KindToCString(function.kind());
+      auto const kind_str = FunctionLayout::KindToCString(function.kind());
       StoreError(list, "retrieved function has kind %s", kind_str);
       return false;
     }
@@ -1653,6 +1694,8 @@ bool FlowGraphDeserializer::ParseInstance(SExpList* list, Object* out) {
     return false;
   }
 
+  ASSERT(cid_sexp->value() != kNullCid);  // Must use canonical instances.
+  ASSERT(cid_sexp->value() != kBoolCid);  // Must use canonical instances.
   instance_class_ = table->At(cid_sexp->value());
   *out = Instance::New(instance_class_, Heap::kOld);
   auto& instance = Instance::Cast(*out);
@@ -2095,9 +2138,8 @@ bool FlowGraphDeserializer::ParseCanonicalName(SExpSymbol* sym, Object* obj) {
       return false;
     }
     if (is_forwarder) {
-      // Go back four characters to start at the 'dyn:' we stripped earlier.
-      tmp_string_ = String::FromUTF8(
-          reinterpret_cast<const uint8_t*>(func_start - 4), name_len + 4);
+      tmp_string_ = name_function_.name();
+      tmp_string_ = Function::CreateDynamicInvocationForwarderName(tmp_string_);
       name_function_ =
           name_function_.GetDynamicInvocationForwarder(tmp_string_);
     }
@@ -2453,5 +2495,3 @@ void FlowGraphDeserializer::ReportError() const {
 }
 
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)

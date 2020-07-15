@@ -8,7 +8,7 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import '../support/integration_tests.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(UpdateOptionsTest);
   });
@@ -17,10 +17,10 @@ main() {
 @reflectiveTest
 class UpdateOptionsTest extends AbstractAnalysisServerIntegrationTest {
   @failingTest
-  test_options() async {
+  Future<void> test_options() async {
     // We fail after the first analysis.updateOptions - we should not see a hint
     // for the unused import (#28800).
-    String pathname = sourcePath('test.dart');
+    var pathname = sourcePath('test.dart');
     writeFile(pathname, '''
 import 'dart:async'; // unused
 

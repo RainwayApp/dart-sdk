@@ -2,7 +2,9 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
+import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
@@ -54,7 +56,9 @@ main() {
 class FunctionExpressionInvocationWithNnbdTest extends DriverResolutionTest {
   @override
   AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
-    ..enabledExperiments = [EnableString.non_nullable]
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.non_nullable],
+    )
     ..implicitCasts = false;
 
   @override
@@ -143,6 +147,96 @@ main(A a) {
       typeArgumentTypes: ['int'],
       invokeType: 'int Function()',
       type: 'int',
+    );
+  }
+
+  test_never() async {
+    await assertErrorsInCode(r'''
+main(Never x) {
+  x<int>(1 + 2);
+}
+''', [
+      error(HintCode.RECEIVER_OF_TYPE_NEVER, 18, 1),
+    ]);
+
+    assertFunctionExpressionInvocation(
+      findNode.functionExpressionInvocation('x<int>(1 + 2)'),
+      element: null,
+      typeArgumentTypes: ['int'],
+      invokeType: 'dynamic',
+      type: 'Never',
+    );
+
+    assertType(findNode.binary('1 + 2'), 'int');
+  }
+
+  test_neverQ() async {
+    await assertErrorsInCode(r'''
+main(Never? x) {
+  x<int>(1 + 2);
+}
+''', [
+      error(StaticWarningCode.UNCHECKED_USE_OF_NULLABLE_VALUE, 19, 1),
+    ]);
+
+    assertFunctionExpressionInvocation(
+      findNode.functionExpressionInvocation('x<int>(1 + 2)'),
+      element: null,
+      typeArgumentTypes: ['int'],
+      invokeType: 'dynamic',
+      type: 'dynamic',
+    );
+
+    assertType(findNode.binary('1 + 2'), 'int');
+  }
+
+  test_nullShorting() async {
+    await assertNoErrorsInCode(r'''
+abstract class A {
+  int Function() get foo;
+}
+
+class B {
+  void bar(A? a) {
+    a?.foo();
+  }
+}
+''');
+
+    assertFunctionExpressionInvocation(
+      findNode.functionExpressionInvocation('a?.foo()'),
+      element: null,
+      typeArgumentTypes: [],
+      invokeType: 'int Function()',
+      type: 'int?',
+    );
+  }
+
+  test_nullShorting_extends() async {
+    await assertNoErrorsInCode(r'''
+abstract class A {
+  int Function() get foo;
+}
+
+class B {
+  void bar(A? a) {
+    a?.foo().isEven;
+  }
+}
+''');
+
+    assertFunctionExpressionInvocation(
+      findNode.functionExpressionInvocation('a?.foo()'),
+      element: null,
+      typeArgumentTypes: [],
+      invokeType: 'int Function()',
+      type: 'int',
+    );
+
+    assertPropertyAccess2(
+      findNode.propertyAccess('isEven'),
+      element: intElement.getGetter('isEven'),
+      type: 'bool?',
     );
   }
 }

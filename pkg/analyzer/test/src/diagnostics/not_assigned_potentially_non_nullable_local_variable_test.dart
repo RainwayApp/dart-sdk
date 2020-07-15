@@ -2,6 +2,7 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/src/dart/analysis/experiments.dart';
 import 'package:analyzer/src/error/codes.dart';
 import 'package:analyzer/src/generated/engine.dart';
@@ -22,8 +23,10 @@ main() {
 class NotInitializedPotentiallyNonNullableLocalVariableTest
     extends DriverResolutionTest {
   @override
-  AnalysisOptionsImpl get analysisOptions =>
-      AnalysisOptionsImpl()..enabledExperiments = [EnableString.non_nullable];
+  AnalysisOptionsImpl get analysisOptions => AnalysisOptionsImpl()
+    ..contextFeatures = FeatureSet.fromEnableFlags(
+      [EnableString.non_nullable],
+    );
 
   test_assignment_leftExpression() async {
     await assertErrorsInCode(r'''
@@ -90,7 +93,7 @@ void f() {
 }
 ''', [
       _notAssignedError(22, 1),
-      error(StaticWarningCode.DEAD_NULL_COALESCE, 28, 1),
+      error(StaticWarningCode.DEAD_NULL_AWARE_EXPRESSION, 28, 1),
     ]);
   }
 
@@ -102,7 +105,7 @@ void f() {
 }
 ''', [
       _notAssignedError(22, 1),
-      error(StaticWarningCode.DEAD_NULL_COALESCE, 28, 1),
+      error(StaticWarningCode.DEAD_NULL_AWARE_EXPRESSION, 28, 1),
       _notAssignedError(28, 1),
     ]);
   }
@@ -124,7 +127,7 @@ void f() {
   (v = 0) ?? 0;
   v;
 }
-''', [error(StaticWarningCode.DEAD_NULL_COALESCE, 33, 1)]);
+''', [error(StaticWarningCode.DEAD_NULL_AWARE_EXPRESSION, 33, 1)]);
   }
 
   test_binaryExpression_ifNull_right() async {
@@ -135,7 +138,7 @@ void f(int a) {
   v;
 }
 ''', [
-      error(StaticWarningCode.DEAD_NULL_COALESCE, 32, 7),
+      error(StaticWarningCode.DEAD_NULL_AWARE_EXPRESSION, 32, 7),
       _notAssignedError(43, 1),
     ]);
   }
@@ -809,7 +812,7 @@ void f() {
   }
 
   test_if_condition_notTrue() async {
-    await assertNoErrorsInCode(r'''
+    await assertErrorsInCode(r'''
 void f() {
   int v;
   if (!true) {
@@ -819,7 +822,9 @@ void f() {
   }
   v;
 }
-''');
+''', [
+      error(HintCode.DEAD_CODE, 33, 25),
+    ]);
   }
 
   test_if_condition_true() async {
@@ -900,6 +905,12 @@ main(bool c) {
     await assertNoErrorsInCode('''
 f() {
   late int v;
+
+  void g() {
+    v = 0;
+  }
+
+  g();
   v;
 }
 ''');
@@ -1316,7 +1327,7 @@ void f(bool b) {
   }
 
   test_while_true_break_if() async {
-    await assertNoErrorsInCode(r'''
+    await assertErrorsInCode(r'''
 void f(bool b) {
   int v;
   while (true) {
@@ -1331,7 +1342,9 @@ void f(bool b) {
   }
   v;
 }
-''');
+''', [
+      error(HintCode.DEAD_CODE, 131, 2),
+    ]);
   }
 
   test_while_true_break_if2() async {

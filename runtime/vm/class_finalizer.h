@@ -5,6 +5,8 @@
 #ifndef RUNTIME_VM_CLASS_FINALIZER_H_
 #define RUNTIME_VM_CLASS_FINALIZER_H_
 
+#include <memory>
+
 #include "vm/allocation.h"
 #include "vm/growable_array.h"
 #include "vm/object.h"
@@ -25,7 +27,7 @@ class ClassFinalizer : public AllStatic {
 
   // Finalize given type while parsing class cls.
   // Also canonicalize and bound check type if applicable.
-  static RawAbstractType* FinalizeType(
+  static AbstractTypePtr FinalizeType(
       const Class& cls,
       const AbstractType& type,
       FinalizationKind finalization = kCanonicalize,
@@ -60,14 +62,17 @@ class ClassFinalizer : public AllStatic {
   // Register class in the lists of direct subclasses and direct implementors.
   static void RegisterClassInHierarchy(Zone* zone, const Class& cls);
 
-  // Finalize the class including its fields and functions.
+  // Ensures members of the class are loaded, class layout is finalized and size
+  // registered in class table.
   static void FinalizeClass(const Class& cls);
+  // Makes class instantiatable and usable by generated code.
+  static ErrorPtr AllocateFinalizeClass(const Class& cls);
 
   // Completes loading of the class, this populates the function
   // and fields of the class.
   //
   // Returns Error::null() if there is no loading error.
-  static RawError* LoadClassMembers(const Class& cls);
+  static ErrorPtr LoadClassMembers(const Class& cls);
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   // Verify that the classes have been properly prefinalized. This is
@@ -77,8 +82,7 @@ class ClassFinalizer : public AllStatic {
 
  private:
   static void AllocateEnumValues(const Class& enum_cls);
-  static void FinalizeTypeParameters(const Class& cls,
-                                     PendingTypes* pending_types = NULL);
+  static void FinalizeTypeParameters(const Class& cls);
   static intptr_t ExpandAndFinalizeTypeArguments(const Class& cls,
                                                  const AbstractType& type,
                                                  PendingTypes* pending_types);

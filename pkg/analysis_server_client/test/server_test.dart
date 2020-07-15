@@ -36,6 +36,7 @@ void main() {
       process.stderr = _noMessage();
 
       final future = server.send('blahMethod', null);
+      // ignore: unawaited_futures
       future.catchError((e) {
         expect(e, const TypeMatcher<RequestError>());
         final error = e as RequestError;
@@ -59,6 +60,7 @@ void main() {
         completer.complete();
       }
 
+      // ignore: unawaited_futures
       server.send('blahMethod', null);
       server.listenToOutput(notificationProcessor: eventHandler);
       await completer.future;
@@ -70,8 +72,9 @@ void main() {
       final mockout = StreamController<List<int>>();
       process.stdout = mockout.stream;
       process.stderr = _noMessage();
+      // ignore: unawaited_futures
       process.mockin.controller.stream.first.then((_) {
-        String encoded = json.encode({'id': '0'});
+        var encoded = json.encode({'id': '0'});
         mockout.add(utf8.encoder.convert('$encoded\n'));
       });
       process.exitCode = Future.value(0);
@@ -94,7 +97,7 @@ void main() {
       final mockout = StreamController<List<int>>();
       process.stdout = mockout.stream;
       process.stderr = _noMessage();
-      process.exitCode = Future.delayed(const Duration(seconds: 1));
+      process.exitCode = Future.delayed(const Duration(seconds: 1), () => 0);
 
       server.listenToOutput();
       await server.stop(timeLimit: const Duration(milliseconds: 10));
@@ -162,7 +165,7 @@ class MockProcess implements Process {
 
   @override
   bool kill([ProcessSignal signal = ProcessSignal.sigterm]) {
-    bool wasKilled = killed;
+    var wasKilled = killed;
     killed = true;
     return !wasKilled;
   }
@@ -198,11 +201,11 @@ class MockStdin implements IOSink {
   void write(Object obj) {}
 
   @override
-  void writeAll(Iterable objects, [String separator = ""]) {}
+  void writeAll(Iterable objects, [String separator = '']) {}
 
   @override
   void writeCharCode(int charCode) {}
 
   @override
-  void writeln([Object obj = ""]) {}
+  void writeln([Object obj = '']) {}
 }

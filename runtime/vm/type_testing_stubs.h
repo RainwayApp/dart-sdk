@@ -5,11 +5,15 @@
 #ifndef RUNTIME_VM_TYPE_TESTING_STUBS_H_
 #define RUNTIME_VM_TYPE_TESTING_STUBS_H_
 
+#include "vm/object.h"
+
+#if !defined(DART_PRECOMPILED_RUNTIME)
 #include "vm/compiler/assembler/assembler.h"
 #include "vm/compiler/backend/il.h"
+#include "vm/compiler/stub_code_compiler.h"
+#endif  // !defined(DART_PRECOMPILED_RUNTIME)
 
 namespace dart {
-
 
 class TypeTestingStubNamer {
  public:
@@ -34,11 +38,11 @@ class TypeTestingStubNamer {
 
 class TypeTestingStubGenerator {
  public:
-  // During bootstrapping it will return `null` for a whitelisted set of types,
+  // During bootstrapping it will return `null` for |void| and |dynamic| types,
   // otherwise it will return a default stub which tail-calls
   // subtypingtest/runtime code.
-  static RawCode* DefaultCodeForType(const AbstractType& type,
-                                     bool lazy_specialize = true);
+  static CodePtr DefaultCodeForType(const AbstractType& type,
+                                    bool lazy_specialize = true);
 
 #if !defined(DART_PRECOMPILED_RUNTIME)
   static void SpecializeStubFor(Thread* thread, const AbstractType& type);
@@ -48,34 +52,34 @@ class TypeTestingStubGenerator {
 
   // Creates new stub for [type] (and registers the tuple in object store
   // array) or returns default stub.
-  RawCode* OptimizedCodeForType(const AbstractType& type);
+  CodePtr OptimizedCodeForType(const AbstractType& type);
 
  private:
 #if !defined(TARGET_ARCH_IA32)
 #if !defined(DART_PRECOMPILED_RUNTIME)
-  RawCode* BuildCodeForType(const Type& type);
-  static void BuildOptimizedTypeTestStub(compiler::Assembler* assembler,
-                                         HierarchyInfo* hi,
-                                         const Type& type,
-                                         const Class& type_class);
+  CodePtr BuildCodeForType(const Type& type);
+  static void BuildOptimizedTypeTestStub(
+      compiler::Assembler* assembler,
+      compiler::UnresolvedPcRelativeCalls* unresolved_calls,
+      const Code& slow_type_test_stub,
+      HierarchyInfo* hi,
+      const Type& type,
+      const Class& type_class);
 
   static void BuildOptimizedTypeTestStubFastCases(
       compiler::Assembler* assembler,
       HierarchyInfo* hi,
       const Type& type,
-      const Class& type_class,
-      Register instance_reg,
-      Register class_id_reg);
+      const Class& type_class);
 
   static void BuildOptimizedSubtypeRangeCheck(compiler::Assembler* assembler,
                                               const CidRangeVector& ranges,
-                                              Register class_id_reg,
-                                              Register instance_reg,
                                               bool smi_is_ok);
 
   static void BuildOptimizedSubclassRangeCheckWithTypeArguments(
       compiler::Assembler* assembler,
       HierarchyInfo* hi,
+      const Type& type,
       const Class& type_class,
       const TypeArguments& type_parameters,
       const TypeArguments& type_arguments);
@@ -83,17 +87,15 @@ class TypeTestingStubGenerator {
   static void BuildOptimizedSubclassRangeCheckWithTypeArguments(
       compiler::Assembler* assembler,
       HierarchyInfo* hi,
+      const Type& type,
       const Class& type_class,
       const TypeArguments& type_parameters,
       const TypeArguments& type_arguments,
       const Register class_id_reg,
-      const Register instance_reg,
       const Register instance_type_args_reg);
 
   static void BuildOptimizedSubclassRangeCheck(compiler::Assembler* assembler,
                                                const CidRangeVector& ranges,
-                                               Register class_id_reg,
-                                               Register instance_reg,
                                                compiler::Label* check_failed);
 
   static void BuildOptimizedTypeArgumentValueCheck(
@@ -101,18 +103,6 @@ class TypeTestingStubGenerator {
       HierarchyInfo* hi,
       const AbstractType& type_arg,
       intptr_t type_param_value_offset_i,
-      compiler::Label* check_failed);
-
-  static void BuildOptimizedTypeArgumentValueCheck(
-      compiler::Assembler* assembler,
-      HierarchyInfo* hi,
-      const AbstractType& type_arg,
-      intptr_t type_param_value_offset_i,
-      const Register class_id_reg,
-      const Register instance_type_args_reg,
-      const Register instantiator_type_args_reg,
-      const Register function_type_args_reg,
-      const Register type_arg_reg,
       compiler::Label* check_failed);
 
 #endif  // !defined(DART_PRECOMPILED_RUNTIME)
@@ -257,7 +247,7 @@ class TypeArgumentInstantiator {
         type_arguments_handles_(zone),
         type_handles_(zone) {}
 
-  RawTypeArguments* Instantiate(
+  TypeArgumentsPtr Instantiate(
       const Class& klass,
       const TypeArguments& type_arguments,
       const TypeArguments& instantiator_type_arguments) {
@@ -270,7 +260,7 @@ class TypeArgumentInstantiator {
       const Class& klass,
       const TypeArguments& type_arguments);
 
-  RawAbstractType* InstantiateType(const AbstractType& type);
+  AbstractTypePtr InstantiateType(const AbstractType& type);
 
   Class& klass_;
   AbstractType& type_;
@@ -386,10 +376,12 @@ class TypeUsageInfo : public ThreadStackResource {
   Class& klass_;
 };
 
+#if !defined(DART_PRECOMPILED_RUNTIME)
 void RegisterTypeArgumentsUse(const Function& function,
                               TypeUsageInfo* type_usage_info,
                               const Class& klass,
                               Definition* type_arguments);
+#endif
 
 #if !defined(PRODUCT) && !defined(DART_PRECOMPILED_RUNTIME)
 

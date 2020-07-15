@@ -8,10 +8,9 @@ import 'package:test_reflective_loader/test_reflective_loader.dart';
 
 import 'fix_processor.dart';
 
-main() {
+void main() {
   defineReflectiveSuite(() {
     defineReflectiveTests(ImportLibraryShowTest);
-    defineReflectiveTests(ImportLibraryShowWithExtensionMethodsTest);
   });
 }
 
@@ -20,7 +19,28 @@ class ImportLibraryShowTest extends FixProcessorTest {
   @override
   FixKind get kind => DartFixKind.IMPORT_LIBRARY_SHOW;
 
-  test_package() async {
+  Future<void> test_override_samePackage() async {
+    addSource('/home/test/lib/lib.dart', '''
+class A {}
+extension E on int {
+  String m() => '';
+}
+''');
+    await resolveTestUnit(r'''
+import 'lib.dart' show A;
+void f(A a) {
+  print('$a ${E(3).m()}');
+}
+''');
+    await assertHasFix(r'''
+import 'lib.dart' show A, E;
+void f(A a) {
+  print('$a ${E(3).m()}');
+}
+''');
+  }
+
+  Future<void> test_package() async {
     addSource('/home/test/lib/lib.dart', '''
 class A {}
 class B {}
@@ -43,7 +63,7 @@ main() {
 ''');
   }
 
-  test_sdk() async {
+  Future<void> test_sdk() async {
     await resolveTestUnit(r'''
 import 'dart:collection' show HashMap;
 main() {
@@ -61,41 +81,8 @@ main() {
 }
 ''');
   }
-}
 
-@reflectiveTest
-class ImportLibraryShowWithExtensionMethodsTest extends FixProcessorTest {
-  @override
-  FixKind get kind => DartFixKind.IMPORT_LIBRARY_SHOW;
-
-  @override
-  void setUp() {
-    createAnalysisOptionsFile(experiments: ['extension-methods']);
-    super.setUp();
-  }
-
-  test_override_samePackage() async {
-    addSource('/home/test/lib/lib.dart', '''
-class A {}
-extension E on int {
-  String m() => '';
-}
-''');
-    await resolveTestUnit(r'''
-import 'lib.dart' show A;
-void f(A a) {
-  print('$a ${E(3).m()}');
-}
-''');
-    await assertHasFix(r'''
-import 'lib.dart' show A, E;
-void f(A a) {
-  print('$a ${E(3).m()}');
-}
-''');
-  }
-
-  test_static_samePackage() async {
+  Future<void> test_static_samePackage() async {
     addSource('/home/test/lib/lib.dart', '''
 class A {}
 extension E on int {

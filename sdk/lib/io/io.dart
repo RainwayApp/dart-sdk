@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// @dart = 2.6
-
 /**
  * File, socket, HTTP, and other I/O support for non-web applications.
  *
@@ -23,7 +21,7 @@
  *     import 'dart:io';
  *
  * For an introduction to I/O in Dart, see the [dart:io library
- * tour](https://www.dartlang.org/dart-vm/io-library-tour).
+ * tour](https://dart.dev/guides/libraries/library-tour#dartio).
  *
  * ## File, Directory, and Link
  *
@@ -199,9 +197,10 @@ import 'dart:math';
 import 'dart:typed_data';
 
 export 'dart:_http';
+@Deprecated("Import BytesBuilder from dart:typed_data instead")
+export 'dart:_internal' show BytesBuilder;
 export 'dart:_internal' show HttpStatus;
 
-part 'bytes_builder.dart';
 part 'common.dart';
 part 'data_transformer.dart';
 part 'directory.dart';

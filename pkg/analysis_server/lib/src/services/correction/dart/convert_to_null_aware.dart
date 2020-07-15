@@ -2,22 +2,36 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+import 'package:analysis_server/src/services/correction/assist.dart';
 import 'package:analysis_server/src/services/correction/dart/abstract_producer.dart';
+import 'package:analysis_server/src/services/correction/fix.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/token.dart';
 import 'package:analyzer/dart/element/element.dart';
+import 'package:analyzer_plugin/utilities/assist/assist.dart';
 import 'package:analyzer_plugin/utilities/change_builder/change_builder_dart.dart';
+import 'package:analyzer_plugin/utilities/fixes/fixes.dart';
 import 'package:analyzer_plugin/utilities/range_factory.dart';
 
 class ConvertToNullAware extends CorrectionProducer {
   @override
+  AssistKind get assistKind => DartAssistKind.CONVERT_TO_NULL_AWARE;
+
+  @override
+  FixKind get fixKind => DartFixKind.CONVERT_TO_NULL_AWARE;
+
+  @override
   Future<void> compute(DartChangeBuilder builder) async {
-    AstNode node = this.node;
+    var node = this.node;
+    if (node.parent is BinaryExpression &&
+        node.parent.parent is ConditionalExpression) {
+      node = node.parent.parent;
+    }
     if (node is! ConditionalExpression) {
       return;
     }
     ConditionalExpression conditional = node;
-    Expression condition = conditional.condition.unParenthesized;
+    var condition = conditional.condition.unParenthesized;
     SimpleIdentifier identifier;
     Expression nullExpression;
     Expression nonNullExpression;
@@ -28,8 +42,8 @@ class ConvertToNullAware extends CorrectionProducer {
       // Identify the variable being compared to `null`, or return if the
       // condition isn't a simple comparison of `null` to a variable's value.
       //
-      Expression leftOperand = condition.leftOperand;
-      Expression rightOperand = condition.rightOperand;
+      var leftOperand = condition.leftOperand;
+      var rightOperand = condition.rightOperand;
       if (leftOperand is NullLiteral && rightOperand is SimpleIdentifier) {
         identifier = rightOperand;
       } else if (rightOperand is NullLiteral &&
@@ -60,7 +74,7 @@ class ConvertToNullAware extends CorrectionProducer {
       if (nullExpression.unParenthesized is! NullLiteral) {
         return;
       }
-      Expression unwrappedExpression = nonNullExpression.unParenthesized;
+      var unwrappedExpression = nonNullExpression.unParenthesized;
       Expression target;
       Token operator;
       if (unwrappedExpression is MethodInvocation) {
@@ -88,4 +102,7 @@ class ConvertToNullAware extends CorrectionProducer {
       });
     }
   }
+
+  /// Return an instance of this class. Used as a tear-off in `FixProcessor`.
+  static ConvertToNullAware newInstance() => ConvertToNullAware();
 }

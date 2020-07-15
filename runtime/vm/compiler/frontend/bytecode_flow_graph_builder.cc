@@ -5,15 +5,13 @@
 #include "vm/compiler/frontend/bytecode_flow_graph_builder.h"
 
 #include "vm/compiler/backend/il_printer.h"
-#include "vm/compiler/ffi.h"
+#include "vm/compiler/ffi/callback.h"
 #include "vm/compiler/frontend/bytecode_reader.h"
 #include "vm/compiler/frontend/prologue_builder.h"
 #include "vm/compiler/jit/compiler.h"
 #include "vm/object_store.h"
 #include "vm/stack_frame.h"
 #include "vm/stack_frame_kbc.h"
-
-#if !defined(DART_PRECOMPILED_RUNTIME)
 
 #define B (flow_graph_builder_)
 #define Z (zone_)
@@ -822,7 +820,7 @@ void BytecodeFlowGraphBuilder::BuildDirectCallCommon(bool is_unchecked_call) {
       BuildFfiAsFunction();
       return;
     case MethodRecognizer::kFfiNativeCallbackFunction:
-      if (FLAG_precompiled_mode) {
+      if (CompilerState::Current().is_aot()) {
         BuildFfiNativeCallbackFunction();
         return;
       }
@@ -916,7 +914,7 @@ static void ComputeTokenKindAndCheckedArguments(
     *checked_argument_count = 2;
     *token_kind = Token::kIS;
   } else if (Library::IsPrivateCoreLibName(name, Symbols::_instanceOf())) {
-    ASSERT(arg_desc.Count() == 5);
+    ASSERT(arg_desc.Count() == 4);
     *token_kind = Token::kIS;
   }
 }
@@ -1151,7 +1149,7 @@ void BytecodeFlowGraphBuilder::BuildCreateArrayTOS() {
 }
 
 const Slot& ClosureSlotByField(const Field& field) {
-  const intptr_t offset = field.Offset();
+  const intptr_t offset = field.HostOffset();
   if (offset == Closure::instantiator_type_arguments_offset()) {
     return Slot::Closure_instantiator_type_arguments();
   } else if (offset == Closure::function_type_arguments_offset()) {
@@ -1178,7 +1176,7 @@ void BytecodeFlowGraphBuilder::BuildStoreFieldTOS() {
 
   const Field& field = Field::Cast(ConstantAt(cp_index, 1).value());
   ASSERT(Smi::Cast(ConstantAt(cp_index).value()).Value() * kWordSize ==
-         field.Offset());
+         field.HostOffset());
 
   if (field.Owner() == isolate()->object_store()->closure_class()) {
     // Stores to _Closure fields are lower-level.
@@ -1204,13 +1202,13 @@ void BytecodeFlowGraphBuilder::BuildLoadFieldTOS() {
 
   const Field& field = Field::Cast(ConstantAt(cp_index, 1).value());
   ASSERT(Smi::Cast(ConstantAt(cp_index).value()).Value() * kWordSize ==
-         field.Offset());
+         field.HostOffset());
 
   if (field.Owner() == isolate()->object_store()->closure_class()) {
     // Loads from _Closure fields are lower-level.
     code_ += B->LoadNativeField(ClosureSlotByField(field));
   } else {
-    code_ += B->LoadField(field);
+    code_ += B->LoadField(field, /*calls_initializer=*/false);
   }
 }
 
@@ -1292,7 +1290,7 @@ void BytecodeFlowGraphBuilder::BuildInitLateField() {
 
   const Field& field = Field::Cast(ConstantAt(cp_index, 1).value());
   ASSERT(Smi::Cast(ConstantAt(cp_index).value()).Value() * kWordSize ==
-         field.Offset());
+         field.HostOffset());
 
   code_ += B->Constant(Object::sentinel());
   code_ += B->StoreInstanceField(
@@ -1321,7 +1319,7 @@ void BytecodeFlowGraphBuilder::BuildLoadStatic() {
     code_ += B->Constant(value);
     return;
   }
-  code_ += B->LoadStaticField(field);
+  code_ += B->LoadStaticField(field, /*calls_initializer=*/false);
 }
 
 void BytecodeFlowGraphBuilder::BuildStoreIndexedTOS() {
@@ -1370,15 +1368,26 @@ void BytecodeFlowGraphBuilder::BuildAssertAssignable() {
 
   LoadStackSlots(5);
 
+  const AbstractType& dst_type =
+      AbstractType::Cast(B->Peek(/*depth=*/3)->AsConstant()->value());
+  if (dst_type.IsTopTypeForSubtyping()) {
+    code_ += B->Drop();  // dst_name
+    code_ += B->Drop();  // function_type_args
+    code_ += B->Drop();  // instantiator_type_args
+    code_ += B->Drop();  // dst_type
+    // Leave value on top.
+    return;
+  }
+
   const String& dst_name = String::Cast(PopConstant().value());
   Value* function_type_args = Pop();
   Value* instantiator_type_args = Pop();
-  const AbstractType& dst_type = AbstractType::Cast(PopConstant().value());
+  Value* dst_type_value = Pop();
   Value* value = Pop();
 
   AssertAssignableInstr* instr = new (Z) AssertAssignableInstr(
-      position_, value, instantiator_type_args, function_type_args, dst_type,
-      dst_name, B->GetNextDeoptId(), nnbd_mode());
+      position_, value, dst_type_value, instantiator_type_args,
+      function_type_args, dst_name, B->GetNextDeoptId());
 
   code_ <<= instr;
 
@@ -1393,14 +1402,14 @@ void BytecodeFlowGraphBuilder::BuildAssertSubtype() {
   LoadStackSlots(5);
 
   const String& dst_name = String::Cast(PopConstant().value());
-  const AbstractType& super_type = AbstractType::Cast(PopConstant().value());
-  const AbstractType& sub_type = AbstractType::Cast(PopConstant().value());
+  Value* super_type = Pop();
+  Value* sub_type = Pop();
   Value* function_type_args = Pop();
   Value* instantiator_type_args = Pop();
 
-  AssertSubtypeInstr* instr = new (Z) AssertSubtypeInstr(
-      position_, instantiator_type_args, function_type_args, sub_type,
-      super_type, dst_name, B->GetNextDeoptId(), nnbd_mode());
+  AssertSubtypeInstr* instr = new (Z)
+      AssertSubtypeInstr(position_, instantiator_type_args, function_type_args,
+                         sub_type, super_type, dst_name, B->GetNextDeoptId());
   code_ <<= instr;
 }
 
@@ -1409,7 +1418,8 @@ void BytecodeFlowGraphBuilder::BuildNullCheck() {
     UNIMPLEMENTED();  // TODO(alexmarkov): interpreter
   }
 
-  const String& selector = String::Cast(ConstantAt(DecodeOperandD()).value());
+  const String& selector =
+      String::CheckedZoneHandle(Z, ConstantAt(DecodeOperandD()).value().raw());
 
   LocalVariable* receiver_temp = B->MakeTemporary();
   code_ +=
@@ -1638,7 +1648,7 @@ void BytecodeFlowGraphBuilder::BuildReturnTOS() {
   BuildDebugStepCheck();
   LoadStackSlots(1);
   ASSERT(code_.is_open());
-  intptr_t yield_index = RawPcDescriptors::kInvalidYieldIndex;
+  intptr_t yield_index = PcDescriptorsLayout::kInvalidYieldIndex;
   if (function().IsAsyncClosure() || function().IsAsyncGenClosure()) {
     if (pc_ == last_yield_point_pc_) {
       // The return might actually be a yield point, if so we need to attach the
@@ -1928,7 +1938,7 @@ void BytecodeFlowGraphBuilder::BuildFfiNativeCallbackFunction() {
       TypeArguments::Cast(B->Peek(/*depth=*/2)->AsConstant()->value());
   ASSERT(type_args.IsInstantiated() && type_args.Length() == 1);
   const Function& native_sig = Function::Handle(
-      Z, Type::Cast(AbstractType::Handle(Z, type_args.TypeAt(0))).signature());
+      Z, Type::CheckedHandle(Z, type_args.TypeAt(0)).signature());
 
   const Closure& target_closure =
       Closure::Cast(B->Peek(/*depth=*/1)->AsConstant()->value());
@@ -1959,7 +1969,7 @@ intptr_t BytecodeFlowGraphBuilder::GetTryIndex(const PcDescriptors& descriptors,
                                                intptr_t pc) {
   const uword pc_offset =
       KernelBytecode::BytecodePcToOffset(pc, /* is_return_address = */ true);
-  PcDescriptors::Iterator iter(descriptors, RawPcDescriptors::kAnyKind);
+  PcDescriptors::Iterator iter(descriptors, PcDescriptorsLayout::kAnyKind);
   intptr_t try_index = kInvalidTryIndex;
   while (iter.MoveNext()) {
     const intptr_t current_try_index = iter.TryIndex();
@@ -2051,7 +2061,7 @@ void BytecodeFlowGraphBuilder::CollectControlFlow(
     pc += (KernelBytecode::Next(instr) - instr);
   }
 
-  PcDescriptors::Iterator iter(descriptors, RawPcDescriptors::kAnyKind);
+  PcDescriptors::Iterator iter(descriptors, PcDescriptorsLayout::kAnyKind);
   while (iter.MoveNext()) {
     const intptr_t start_pc = KernelBytecode::OffsetToBytecodePc(
         iter.PcOffset(), /* is_return_address = */ true);
@@ -2106,7 +2116,7 @@ UncheckedEntryPointStyle BytecodeFlowGraphBuilder::ChooseEntryPointStyle(
     const KBCInstr* jump_if_unchecked) {
   ASSERT(KernelBytecode::IsJumpIfUncheckedOpcode(jump_if_unchecked));
 
-  if (!function().MayHaveUncheckedEntryPoint(isolate())) {
+  if (!function().MayHaveUncheckedEntryPoint()) {
     return UncheckedEntryPointStyle::kNone;
   }
 
@@ -2347,5 +2357,3 @@ FlowGraph* BytecodeFlowGraphBuilder::BuildGraph() {
 
 }  // namespace kernel
 }  // namespace dart
-
-#endif  // !defined(DART_PRECOMPILED_RUNTIME)
