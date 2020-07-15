@@ -77,6 +77,10 @@ config("dart_os_config") {
   } else if (target_os == "ios") {
     defines += [ "TARGET_OS_MACOS" ]
     defines += [ "TARGET_OS_MACOS_IOS" ]
+  } else if (target_os == "tvos") {
+    defines += [ "TARGET_OS_MACOS" ]
+    defines += [ "TARGET_OS_MACOS_IOS" ]
+    defines += [ "TARGET_OS_MACOS_TVOS" ]
   } else if (target_os == "linux") {
     defines += [ "TARGET_OS_LINUX" ]
   } else if (target_os == "mac") {
